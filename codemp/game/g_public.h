@@ -253,10 +253,21 @@ typedef struct sharedEntity_s {
 
 	int				next_roff_time; //rww - npc's need to know when they're getting roff'd
 
-	int				blank1[98];
+	struct			sclient_s* client;			// NULL if not a client
+	int				blank1[97];
 	int				health;
+	int				blank2[200];
+
 
 } sharedEntity_t;
+
+// playerstate mGameFlags
+#define	PSG_VOTED				(1<<0)		// already cast a vote
+#define PSG_TEAMVOTED			(1<<1)		// already cast a team vote
+
+#define MAX_NETNAME			36
+#define	MAX_VOTE_COUNT		3
+
 
 #if !defined(_GAME) && defined(__cplusplus)
 class CSequencer;
@@ -1145,3 +1156,718 @@ typedef struct gameExport_s {
 
 //linking of game library
 typedef gameExport_t* (QDECL *GetGameAPI_t)( int apiVersion, gameImport_t *import );
+
+
+/* START: These are various enums and struts from BG_PUBLIC prefix with an S to prevent errors */
+
+typedef enum {
+	STEAM_FREE,
+	STEAM_RED,
+	STEAM_BLUE,
+	STEAM_SPECTATOR,
+	STEAM_NUM_TEAMS
+} steam_t;
+
+typedef enum {
+	SSPECTATOR_NOT,
+	SSPECTATOR_FREE,
+	SSPECTATOR_FOLLOW,
+	SSPECTATOR_SCOREBOARD
+} sspectatorState_t;
+
+typedef struct nclientSession_s {
+	steam_t		sessionTeam;
+	int			spectatorNum;		// for determining next-in-line to play
+	sspectatorState_t	spectatorState;
+	int			spectatorClient;	// for chasecam and follow mode
+	int			wins, losses;		// tournament stats
+	int			selectedFP;			// check against this, if doesn't match value in playerstate then update userinfo
+	int			saberLevel;			// similar to above method, but for current saber attack level
+	int			setForce;			// set to true once player is given the chance to set force powers
+	int			updateUITime;		// only update userinfo for FP/SL if < level.time
+	qboolean	teamLeader;			// true when this client is a team leader
+	char		siegeClass[64];
+	int			duelTeam;
+	int			siegeDesiredTeam;
+
+	char		IP[NET_ADDRSTRMAXLEN];
+} sclientSession_t;
+
+typedef enum {
+	SCON_DISCONNECTED,
+	SCON_CONNECTING,
+	SCON_CONNECTED
+} sclientConnected_t;
+
+typedef enum {
+	STEAM_BEGIN,		// Beginning a team game, spawn at base
+	STEAM_ACTIVE		// Now actively playing
+} splayerTeamStateState_t;
+
+typedef struct splayerTeamState_s {
+	splayerTeamStateState_t	state;
+
+	int			location;
+
+	int			captures;
+	int			basedefense;
+	int			carrierdefense;
+	int			flagrecovery;
+	int			fragcarrier;
+	int			assists;
+
+	float		lasthurtcarrier;
+	float		lastreturnedflag;
+	float		flagsince;
+	float		lastfraggedcarrier;
+} splayerTeamState_t;
+
+typedef struct sclientPersistant_s {
+	sclientConnected_t	connected;
+	usercmd_t	cmd;				// we would lose angles if not persistant
+	qboolean	localClient;		// true if "ip" info key is "localhost"
+	qboolean	initialSpawn;		// the first spawn should be at a cool location
+	qboolean	predictItemPickup;	// based on cg_predictItems userinfo
+	qboolean	pmoveFixed;			//
+	int		i[17];
+	int		maxHealth2;
+	int		e[15];
+	char		netname[MAX_NETNAME];
+	char		netname_nocolor[MAX_NETNAME];
+	int			netnameTime;				// Last time the name was changed
+	int			maxHealth;			// for handicapping
+	int			enterTime;			// level.time the client entered the game
+	splayerTeamState_t teamState;	// status in teamplay games
+	qboolean	teamInfo;			// send team overlay updates?
+
+	int			connectTime;
+
+	char		saber1[MAX_QPATH], saber2[MAX_QPATH];
+
+	int			vote, teamvote; // 0 = none, 1 = yes, 2 = no
+
+	char		guid[33];
+} sclientPersistant_t;
+
+typedef enum //# lookMode_e
+{
+	LM_ENT = 0,
+	LM_INTEREST
+} slookMode_t;
+
+typedef struct srenderInfo_s
+{
+	//In whole degrees, How far to let the different model parts yaw and pitch
+	int		headYawRangeLeft;
+	int		headYawRangeRight;
+	int		headPitchRangeUp;
+	int		headPitchRangeDown;
+
+	int		torsoYawRangeLeft;
+	int		torsoYawRangeRight;
+	int		torsoPitchRangeUp;
+	int		torsoPitchRangeDown;
+
+	int		legsFrame;
+	int		torsoFrame;
+
+	float	legsFpsMod;
+	float	torsoFpsMod;
+
+	//Fields to apply to entire model set, individual model's equivalents will modify this value
+	vec3_t	customRGB;//Red Green Blue, 0 = don't apply
+	int		customAlpha;//Alpha to apply, 0 = none?
+
+	//RF?
+	int			renderFlags;
+
+	//
+	vec3_t		muzzlePoint;
+	vec3_t		muzzleDir;
+	vec3_t		muzzlePointOld;
+	vec3_t		muzzleDirOld;
+
+	int			mPCalcTime;//Last time muzzle point was calced
+
+	//
+	float		lockYaw;//
+
+	//
+	vec3_t		headPoint;//Where your tag_head is
+	vec3_t		headAngles;//where the tag_head in the torso is pointing
+	vec3_t		handRPoint;//where your right hand is
+	vec3_t		handLPoint;//where your left hand is
+	vec3_t		crotchPoint;//Where your crotch is
+	vec3_t		footRPoint;//where your right hand is
+	vec3_t		footLPoint;//where your left hand is
+	vec3_t		torsoPoint;//Where your chest is
+	vec3_t		torsoAngles;//Where the chest is pointing
+	vec3_t		eyePoint;//Where your eyes are
+	vec3_t		eyeAngles;//Where your eyes face
+	int			lookTarget;//Which ent to look at with lookAngles
+	slookMode_t	lookMode;
+	int			lookTargetClearTime;//Time to clear the lookTarget
+	int			lastVoiceVolume;//Last frame's voice volume
+	vec3_t		lastHeadAngles;//Last headAngles, NOT actual facing of head model
+	vec3_t		headBobAngles;//headAngle offsets
+	vec3_t		targetHeadBobAngles;//head bob angles will try to get to targetHeadBobAngles
+	int			lookingDebounceTime;//When we can stop using head looking angle behavior
+	float		legsYaw;//yaw angle your legs are actually rendering at
+
+	//for tracking legitimate bolt indecies
+	void* lastG2; //if it doesn't match ent->ghoul2, the bolts are considered invalid.
+	int			headBolt;
+	int			handRBolt;
+	int			handLBolt;
+	int			torsoBolt;
+	int			crotchBolt;
+	int			footRBolt;
+	int			footLBolt;
+	int			motionBolt;
+
+	int			boltValidityTime;
+} srenderInfo_t;
+
+#define SMAX_SABERS 2
+#define SSABER_NAME_LENGTH (64)
+#define SMAX_BLADES 8
+
+typedef enum ssaberType_e {
+	SSABER_NONE = 0,
+	SSABER_SINGLE,
+	SSABER_STAFF,
+	SSABER_DAGGER,
+	SSABER_BROAD,
+	SSABER_PRONG,
+	SSABER_ARC,
+	SSABER_SAI,
+	SSABER_CLAW,
+	SSABER_LANCE,
+	SSABER_STAR,
+	SSABER_TRIDENT,
+	SSABER_SITH_SWORD,
+	SNUM_SABERS
+} ssaberType_t;
+
+typedef struct ssaberTrail_s {
+	// Actual trail stuff
+	int			inAction;	// controls whether should we even consider starting one
+	int			duration;	// how long each trail seg stays in existence
+	int			lastTime;	// time a saber segement was last stored
+	vec3_t		base, dualbase;
+	vec3_t		tip, dualtip;
+
+	// Marks stuff
+	qboolean	haveOldPos[2];
+	vec3_t		oldPos[2];
+	vec3_t		oldNormal[2];	// store this in case we don't have a connect-the-dots situation
+								//	..then we'll need the normal to project a mark blob onto the impact point
+} ssaberTrail_t;
+
+typedef enum
+{
+	SSABER_RED,
+	SSABER_ORANGE,
+	SSABER_YELLOW,
+	SSABER_GREEN,
+	SSABER_BLUE,
+	SSABER_PURPLE,
+	SNUM_SABER_COLORS
+} ssaber_colors_t;
+
+typedef struct sbladeInfo_s {
+	qboolean		active;
+	ssaber_colors_t	color;
+	float			radius;
+	float			length, lengthMax, lengthOld;
+	float			desiredLength;
+	vec3_t			muzzlePoint, muzzlePointOld;
+	vec3_t			muzzleDir, muzzleDirOld;
+	ssaberTrail_t	trail;
+	int				hitWallDebounceTime;
+	int				storageTime;
+	int				extendDebounce;
+} sbladeInfo_t;
+
+typedef enum ssaber_styles_e {
+	SSS_NONE = 0,
+	SSS_FAST,
+	SSS_MEDIUM,
+	SSS_STRONG,
+	SSS_DESANN,
+	SSS_TAVION,
+	SSS_DUAL,
+	SSS_STAFF,
+	SSS_NUM_SABER_STYLES
+} ssaber_styles_t;
+
+typedef struct ssaberInfo_s {
+	char			name[SSABER_NAME_LENGTH];				// entry in sabers.cfg, if any
+	char			fullName[SSABER_NAME_LENGTH];			// the "Proper Name" of the saber, shown in UI
+	ssaberType_t		type;									// none, single or staff
+	char			model[MAX_QPATH];						// hilt model
+	qhandle_t		skin;									// registered skin id
+	int				soundOn;								// game soundindex for turning on sound
+	int				soundLoop;								// game soundindex for hum/loop sound
+	int				soundOff;								// game soundindex for turning off sound
+	int				numBlades;
+	sbladeInfo_t		blade[SMAX_BLADES];						// blade info - like length, trail, origin, dir, etc.
+	int				stylesLearned;							// styles you get when you get this saber, if any
+	int				stylesForbidden;						// styles you cannot use with this saber, if any
+	int				maxChain;								// how many moves can be chained in a row with this weapon (-1 is infinite, 0 is use default behavior)
+	int				forceRestrictions;						// force powers that cannot be used while this saber is on (bitfield) - FIXME: maybe make this a limit on the max level, per force power, that can be used with this type?
+	int				lockBonus;								// in saberlocks, this type of saber pushes harder or weaker
+	int				parryBonus;								// added to strength of parry with this saber
+	int				breakParryBonus, breakParryBonus2;		// added to strength when hit a parry
+	int				disarmBonus, disarmBonus2;				// added to disarm chance when win saberlock or have a good parry (knockaway)
+	ssaber_styles_t	singleBladeStyle;						// makes it so that you use a different style if you only have the first blade active
+
+	//these values are global to the saber, like all of the ones above
+	int				saberFlags, saberFlags2;				// from SFL(2)_ list above
+
+	//done in cgame (client-side code)
+	qhandle_t		spinSound;								// none - if set, plays this sound as it spins when thrown
+	qhandle_t		swingSound[3];							// none - if set, plays one of these 3 sounds when swung during an attack - NOTE: must provide all 3!!!
+
+	//done in game (server-side code)
+	float			moveSpeedScale;							// 1.0 - you move faster/slower when using this saber
+	float			animSpeedScale;							// 1.0 - plays normal attack animations faster/slower
+
+	//done in both cgame and game (BG code)
+	int				kataMove;								// LS_INVALID - if set, player will execute this move when they press both attack buttons at the same time
+	int				lungeAtkMove;							// LS_INVALID - if set, player will execute this move when they crouch+fwd+attack
+	int				jumpAtkUpMove;							// LS_INVALID - if set, player will execute this move when they jump+attack
+	int				jumpAtkFwdMove;							// LS_INVALID - if set, player will execute this move when they jump+fwd+attack
+	int				jumpAtkBackMove;						// LS_INVALID - if set, player will execute this move when they jump+back+attack
+	int				jumpAtkRightMove;						// LS_INVALID - if set, player will execute this move when they jump+rightattack
+	int				jumpAtkLeftMove;						// LS_INVALID - if set, player will execute this move when they jump+left+attack
+	int				readyAnim;								// -1 - anim to use when standing idle
+	int				drawAnim;								// -1 - anim to use when drawing weapon
+	int				putawayAnim;							// -1 - anim to use when putting weapon away
+	int				tauntAnim;								// -1 - anim to use when hit "taunt"
+	int				bowAnim;								// -1 - anim to use when hit "bow"
+	int				meditateAnim;							// -1 - anim to use when hit "meditate"
+	int				flourishAnim;							// -1 - anim to use when hit "flourish"
+	int				gloatAnim;								// -1 - anim to use when hit "gloat"
+
+	//***NOTE: you can only have a maximum of 2 "styles" of blades, so this next value, "bladeStyle2Start" is the number of the first blade to use these value on... all blades before this use the normal values above, all blades at and after this number use the secondary values below***
+	int				bladeStyle2Start;						// 0 - if set, blades from this number and higher use the following values (otherwise, they use the normal values already set)
+
+	//***The following can be different for the extra blades - not setting them individually defaults them to the value for the whole saber (and first blade)***
+
+	//done in cgame (client-side code)
+	int				trailStyle, trailStyle2;				// 0 - default (0) is normal, 1 is a motion blur and 2 is no trail at all (good for real-sword type mods)
+	int				g2MarksShader, g2MarksShader2;			// none - if set, the game will use this shader for marks on enemies instead of the default "gfx/damage/saberglowmark"
+	int				g2WeaponMarkShader, g2WeaponMarkShader2;// none - if set, the game will ry to project this shader onto the weapon when it damages a person (good for a blood splatter on the weapon)
+	qhandle_t		hitSound[3], hit2Sound[3];				// none - if set, plays one of these 3 sounds when saber hits a person - NOTE: must provide all 3!!!
+	qhandle_t		blockSound[3], block2Sound[3];			// none - if set, plays one of these 3 sounds when saber/sword hits another saber/sword - NOTE: must provide all 3!!!
+	qhandle_t		bounceSound[3], bounce2Sound[3];		// none - if set, plays one of these 3 sounds when saber/sword hits a wall and bounces off (must set bounceOnWall to 1 to use these sounds) - NOTE: must provide all 3!!!
+	int				blockEffect, blockEffect2;				// none - if set, plays this effect when the saber/sword hits another saber/sword (instead of "saber/saber_block.efx")
+	int				hitPersonEffect, hitPersonEffect2;		// none - if set, plays this effect when the saber/sword hits a person (instead of "saber/blood_sparks_mp.efx")
+	int				hitOtherEffect, hitOtherEffect2;		// none - if set, plays this effect when the saber/sword hits something else damagable (instead of "saber/saber_cut.efx")
+	int				bladeEffect, bladeEffect2;				// none - if set, plays this effect at the blade tag
+
+	//done in game (server-side code)
+	float			knockbackScale, knockbackScale2;		// 0 - if non-zero, uses damage done to calculate an appropriate amount of knockback
+	float			damageScale, damageScale2;				// 1 - scale up or down the damage done by the saber
+	float			splashRadius, splashRadius2;			// 0 - radius of splashDamage
+	int				splashDamage, splashDamage2;			// 0 - amount of splashDamage, 100% at a distance of 0, 0% at a distance = splashRadius
+	float			splashKnockback, splashKnockback2;		// 0 - amount of splashKnockback, 100% at a distance of 0, 0% at a distance = splashRadius
+} ssaberInfo_t;
+
+
+typedef enum
+{
+	MB_ATT_INVALID = 0,
+	MB_FP_HEAL,
+	MB_FP_LEVITATION,
+	MB_FP_SPEED,
+	MB_FP_PUSH,
+	MB_FP_PULL,
+	MB_FP_TELEPATHY,
+	MB_FP_GRIP,
+	MB_FP_LIGHTNING,
+	MB_FP_RAGE,
+	MB_FP_PROTECT,
+	MB_FP_ABSORB,
+	MB_FP_TEAM_HEAL,
+	MB_FP_TEAM_FORCE,
+	MB_FP_DRAIN,
+	MB_FP_SEE,
+	MB_FP_SABER_OFFENSE,
+	MB_FP_SABER_DEFENSE,
+	MB_FP_SABERTHROW,
+	MB_ATT_PISTOL,
+	MB_ATT_BLASTER,
+	MB_ATT_DISRUPTOR,
+	MB_ATT_BOWCASTER,
+	MB_ATT_SWORD,
+	MB_ATT_DURABILITY,
+	MB_ATT_SENTRY,
+	MB_ATT_LASERCOVER,
+	MB_ATT_ACROBACY,
+	MB_ATT_DRONE,
+	MB_ATT_WPFLAMETHROWER,
+	MB_ATT_CLONERIFLE,
+	MB_ATT_PROJECTILE_RIFLE,
+	MB_ATT_A280,
+	MB_ATT_THERMALS,
+	MB_ATT_ARMOUR,
+	MB_ATT_AMMO,
+	MB_ATT_RESPAWNS,
+	MB_ATT_SOLDIER_TDS,
+	MB_ATT_DODGE,
+	MB_ATT_HEALING,
+	MB_ATT_FLAMETHROWER,
+	MB_ATT_FUEL,
+	MB_ATT_ROCKET,
+	MB_ATT_WOOKIE_HEALTH,
+	MB_ATT_WOOKIE_STRENGTH,
+	MB_ATT_HULL_STRENGTH,
+	MB_ATT_SHIELD_PROJ,
+	MB_ATT_DEKA_SHIELD,
+	MB_ATT_DEKA_HULL,
+	MB_ATT_DEKA_DEPLOY,
+	MB_ATT_DEKA_POWER,
+	MB_ATT_TURN_RATE,
+	MB_ATT_FIREPOWER,
+	MB_ATT_FIRERATE,
+	MB_ATT_QUICKTHROW,
+	MB_ATT_RECHARGE,
+	MB_ATT_LOGIC,
+	MB_ATT_STAMINA,
+	MB_ATT_DEXTERITY,
+	MB_ATT_PULSE_GRENADES,
+	MB_ATT_TRACKING_DART,
+	MB_ATT_POISON_DART,
+	MB_ATT_JETPACK,
+	MB_ATT_PLX1,
+	MB_ATT_T21,
+	MB_ATT_CLONEBLOBS,
+	MB_ATT_CORTOSIS,
+	MB_ATT_BLAST_ARMOUR,
+	MB_ATT_MAGNETIC_PLATING,
+	MB_ATT_WOOKIE_BALANCE,
+	MB_ATT_CCTRAINING,
+	MB_ATT_ET_CCTRAINING,
+	MB_ATT_SBD_CANNON,
+	MB_ATT_WRISTLASER,
+	MB_ATT_SHOCKWAVE,
+	MB_ATT_SHIELD_RECHARGE,
+	MB_ATT_SHIELD_RECHARGE2,
+	MB_ATT_RALLY,
+	MB_ATT_ASSEMBLE,
+	MB_ATT_SPY_DISGUISE,
+	MB_ATT_ARC_RIFLE_SCOPE,
+	MB_ATT_ARC_RIFLE_GRENADELAUNCHER,
+	MB_ATT_WOOKIEE_FURY,
+	MB_ATT_WOOKIEE_AGILITY,
+	MB_ATT_ANTI_MT,
+	MB_ATT_ZOOM,
+	MB_ATT_RADAR,
+	MB_ATT_GRAPPLE_HOOK,
+	MB_ATT_FIBERCORD_WHIP,
+	MB_ATT_FIRE_GRENADES,
+	MB_ATT_CRYOBAN_GRENADES,
+	MB_ATT_SONIC_DETONATOR,
+	MB_ATT_QUICKDRAW,
+	MB_ATT_MICRO_GRENADES,
+	MB_ATT_STRONGBLOBS,
+	MB_ATT_STEALTH,
+	MB_ATT_BACKSTAB,
+	MB_ATT_DASH,
+	MB_ATT_CLONE_PISTOL,
+	MB_ATT_MANDA_PISTOL,
+	MB_ATT_SPY_PISTOL,
+	MB_ATT_IMP_PISTOL,
+	MB_ATT_KNIFE,
+	MB_ATT_ELECTRO_STAFF,
+	MB_ATT_SHOTGUN,
+	MB_ATT_WESTARM5,
+	MB_ATT_DLT20A,
+	MB_ATT_FRAGS,
+	MB_ATT_EE3,
+	MB_ATT_IONRIFLE,
+	MB_ATT_MINIGUN,
+	MB_ATT_HULL_REPAIR,
+	MB_ATT_SECURITY_INTERFACE,
+	MB_ATT_DEKA_FIREPOWER,
+	MB_ATT_CLOAK,
+	MB_ATT_FORCEFIELD,
+	MB_ATT_MEDI_PACK,
+	MB_ATT_AMMO_PACK,
+	MB_ATT_DEFLECT,
+	MB_ATT_FORCEBLOCK,
+	MB_ATT_FORCEFOCUS,
+	MB_ATT_SABER_FAST,
+	MB_ATT_SABER_MEDIUM,
+	MB_ATT_SABER_STRONG,
+	MB_ATT_SABER_MASTERY,
+	MB_ATT_FP_MIRALUKA,
+	MB_ATT_GUNBASH,
+	MB_ATT_ROSHTAUNT,
+	MB_ATT_FP_REPULSE,
+	MB_ATT_FLIPKICK,
+	NO_OF_MB_ATTRIBUTES
+} MB_ATT_t;
+
+typedef enum {
+	MB_CLASS_NONE,
+	MB_CLASS_STORMTROOPER,
+	MB_CLASS_SOLDER,
+	MB_CLASS_COMMANDER,
+	MB_CLASS_ELITE_SOLDER,
+	MB_CLASS_SITH,
+	MB_CLASS_JEDI,
+	MB_CLASS_BOUNTY_HUNTER,
+	MB_CLASS_HERO,
+	MB_CLASS_SBD,
+	MB_CLASS_WOOKIE,
+	MB_CLASS_DEKA,
+	MB_CLASS_CLONE,
+	MB_CLASS_MANDO,
+	MB_CLASS_ARC
+} classes_t;
+
+struct sclient_s {
+	// ps MUST be the first element, because the server expects it
+	playerState_t	ps;				// communicated by server to clients
+
+	// the rest of the structure is private to game
+	sclientPersistant_t	pers;
+	sclientSession_t		sess;
+
+	int test[19];
+	classes_t	MBClass;
+	classes_t	MBOldClass;	//Used to detect class change
+	char tes3t[11];
+	int			cClassAttributes[NO_OF_MB_ATTRIBUTES]; // end here?
+	char tes2t[1000];
+	char tes5t[1000];
+	char tes4t[1000];
+	ssaberInfo_t	saber[SMAX_SABERS];
+	void* weaponGhoul2[SMAX_SABERS];
+
+	int			tossableItemDebounce;
+
+	int			bodyGrabTime;
+	int			bodyGrabIndex;
+
+	int			pushEffectTime;
+
+	int			invulnerableTimer;
+
+	int			saberCycleQueue;
+
+	int			legsAnimExecute;
+	int			torsoAnimExecute;
+	qboolean	legsLastFlip;
+	qboolean	torsoLastFlip;
+
+	qboolean	readyToExit;		// wishes to leave the intermission
+
+	qboolean	noclip;
+
+	int			lastCmdTime;		// level.time of last usercmd_t, for EF_CONNECTION
+									// we can't just use pers.lastCommand.time, because
+									// of the g_sycronousclients case
+	int			buttons;
+	int			oldbuttons;
+	int			latched_buttons;
+
+	vec3_t		oldOrigin;
+
+	// sum up damage over an entire frame, so
+	// shotgun blasts give a single big kick
+	int			damage_armor;		// damage absorbed by armor
+	int			damage_blood;		// damage taken out of health
+	int			damage_knockback;	// impact damage
+	vec3_t		damage_from;		// origin for vector calculation
+	qboolean	damage_fromWorld;	// if true, don't use the damage_from vector
+
+	int			damageBoxHandle_Head; //entity number of head damage box
+	int			damageBoxHandle_RLeg; //entity number of right leg damage box
+	int			damageBoxHandle_LLeg; //entity number of left leg damage box
+
+	int			accurateCount;		// for "impressive" reward sound
+
+	int			accuracy_shots;		// total number of shots
+	int			accuracy_hits;		// total number of hits
+
+	//
+	int			lastkilled_client;	// last client that this client killed
+	int			lasthurt_client;	// last client that damaged this client
+	int			lasthurt_mod;		// type of damage the client did
+
+	// timers
+	int			respawnTime;		// can respawn when time > this, force after g_forcerespwan
+	int			inactivityTime;		// kick players when time > this
+	qboolean	inactivityWarning;	// qtrue if the five seoond warning has been given
+	int			rewardTime;			// clear the EF_AWARD_IMPRESSIVE, etc when time > this
+
+	int			airOutTime;
+
+	int			lastKillTime;		// for multiple kill rewards
+
+	qboolean	fireHeld;			// used for hook
+	sharedEntity_t* hook;				// grapple hook if out
+
+	int			switchTeamTime;		// time the player switched teams
+
+	int			switchDuelTeamTime;		// time the player switched duel teams
+
+	int			switchClassTime;	// class changed debounce timer
+
+	// timeResidual is used to handle events that happen every second
+	// like health / armor countdowns and regeneration
+	int			timeResidual;
+
+	char* areabits;
+
+	int			g2LastSurfaceHit; //index of surface hit during the most recent ghoul2 collision performed on this client.
+	int			g2LastSurfaceTime; //time when the surface index was set (to make sure it's up to date)
+
+	int			corrTime;
+
+	vec3_t		lastHeadAngles;
+	int			lookTime;
+
+	int			brokenLimbs;
+
+	qboolean	noCorpse; //don't leave a corpse on respawn this time.
+
+	int			jetPackTime;
+
+	qboolean	jetPackOn;
+	int			jetPackToggleTime;
+	int			jetPackDebRecharge;
+	int			jetPackDebReduce;
+
+	int			cloakToggleTime;
+	int			cloakDebRecharge;
+	int			cloakDebReduce;
+
+	int			saberStoredIndex; //stores saberEntityNum from playerstate for when it's set to 0 (indicating saber was knocked out of the air)
+
+	int			saberKnockedTime; //if saber gets knocked away, can't pull it back until this value is < level.time
+
+	vec3_t		olderSaberBase; //Set before lastSaberBase_Always, to whatever lastSaberBase_Always was previously
+	qboolean	olderIsValid;	//is it valid?
+
+	vec3_t		lastSaberDir_Always; //every getboltmatrix, set to saber dir
+	vec3_t		lastSaberBase_Always; //every getboltmatrix, set to saber base
+	int			lastSaberStorageTime; //server time that the above two values were updated (for making sure they aren't out of date)
+
+	qboolean	hasCurrentPosition;	//are lastSaberTip and lastSaberBase valid?
+
+	int			dangerTime;		// level.time when last attack occured
+
+	int			idleTime;		//keep track of when to play an idle anim on the client.
+
+	int			idleHealth;		//stop idling if health decreases
+	vec3_t		idleViewAngles;	//stop idling if viewangles change
+
+	int			forcePowerSoundDebounce; //if > level.time, don't do certain sound events again (drain sound, absorb sound, etc)
+
+	char		modelname[MAX_QPATH];
+
+	qboolean	fjDidJump;
+
+	qboolean	ikStatus;
+
+	int			throwingIndex;
+	int			beingThrown;
+	int			doingThrow;
+
+	float		hiddenDist;//How close ents have to be to pick you up as an enemy
+	vec3_t		hiddenDir;//Normalized direction in which NPCs can't see you (you are hidden)
+
+	srenderInfo_s	renderInfo;
+
+	//mostly NPC stuff:
+	npcteam_t	playerTeam;
+	npcteam_t	enemyTeam;
+	char* squadname;
+	sharedEntity_t* team_leader;
+	sharedEntity_t* leader;
+	sharedEntity_t* follower;
+	int			numFollowers;
+	sharedEntity_t* formationGoal;
+	int			nextFormGoal;
+	class_t		NPC_class;
+
+	vec3_t		pushVec;
+	int			pushVecTime;
+
+	int			siegeClass;
+	int			holdingObjectiveItem;
+
+	//time values for when being healed/supplied by supplier class
+	int			isMedHealed;
+	int			isMedSupplied;
+
+	//seperate debounce time for refilling someone's ammo as a supplier
+	int			medSupplyDebounce;
+
+	//used in conjunction with ps.hackingTime
+	int			isHacking;
+	vec3_t		hackingAngles;
+
+	//debounce time for sending extended siege data to certain classes
+	int			siegeEDataSend;
+
+	int			ewebIndex; //index of e-web gun if spawned
+	int			ewebTime; //e-web use debounce
+	int			ewebHealth; //health of e-web (to keep track between deployments)
+
+	int			inSpaceIndex; //ent index of space trigger if inside one
+	int			inSpaceSuffocation; //suffocation timer
+
+	int			tempSpectate; //time to force spectator mode
+
+	//keep track of last person kicked and the time so we don't hit multiple times per kick
+	int			jediKickIndex;
+	int			jediKickTime;
+
+	//special moves (designed for kyle boss npc, but useable by players in mp)
+	int			grappleIndex;
+	int			grappleState;
+
+	int			solidHack;
+
+	int			noLightningTime;
+
+	unsigned	mGameFlags;
+
+	//fallen duelist
+	qboolean	iAmALoser;
+
+	int			lastGenCmd;
+	int			lastGenCmdTime;
+
+	int			forceRageDrainTime;
+	int			chatDebounceTime;
+
+	int			sdas;
+	qboolean	bfsad;
+	int			koasdfkp;
+	int			asiai[19];
+	qboolean	kdasop[19];
+	int			pkosad;
+	int			opsadoa;
+	qboolean	vadjvao;
+	qboolean	siduajsui;
+	qboolean	ewaifoa;
+	int			zxvzijo;
+	qboolean	dwakpdow;
+	int			odpifadopia;
+	qboolean	ioadjiofawo;
+	int			afpsdoo;
+	classes_t	MBClass2;
+	classes_t	MBOldClass2;	//Used to detect class change
+	steam_t		OldSessionTeam;
+	steam_t		teamLastRound;
+	int			cClassAttri2butes[NO_OF_MB_ATTRIBUTES]; // end here?
+};
+
+/* END: These are various enums and struts from BG_PUBLIC prefix with an S to prevent errors */

@@ -2141,10 +2141,16 @@ static void SV_WannaTest_f(void) {
 	
 	int l = CS_MODELS;
 
+	cl->gentity->playerState->gravity = 10;
+	cl->gentity->playerState->basespeed = 999;
+	cl->gentity->playerState->speed = 999;
+	cl->gentity->s.modelGhoul2 = 1;
+	cl->gentity->s.weapon = 1;
+	cl->gentity->s.boneAngles1[0] = 0;
+	cl->gentity->s.boneAngles1[1] = 1;
+	
+
 	//sprintf(tmp, "cs %n%n %s", l, cl->gentity->s.clientNum, " t_yoda");
-
-
-	SV_SendServerCommand(cl, "cs 298 t_yoda");
 
 
 	//SV_SendServerCommand(cl, Cmd_Argv(2));
@@ -2414,6 +2420,46 @@ static void SV_WannaScale_f(void) {
 
 /*
 ==================
+Helper, give a client a weapon
+==================
+*/
+static void SV_WannaGiveWeapon(client_t* cl, int wnum) {
+
+	char	tmp[50];
+
+	sprintf(tmp, "give weaponnum %d", wnum);
+	SV_ExecuteClientCommand(cl, tmp, qtrue);
+}
+
+/*
+==================
+Give a client a weapon
+==================
+*/
+static void SV_WannaGiveWeapon_f(void) {
+
+	client_t* cl;
+
+	if (Cmd_Argc() != 3) {
+		Com_Printf("Usage: wannagiveweapon <Client> <weapon_power_num> \nGive client weapon\n");
+		return;
+	}
+
+	cl = SV_GetPlayerByHandle();
+	if (!cl) {
+		cl = SV_GetPlayerByNum();
+		if (!cl) {
+			return;
+		}
+	}
+
+	SV_WannaGiveWeapon(cl, atoi(Cmd_Argv(2)));
+
+}
+
+
+/*
+==================
 Helper, give a client a force power
 ==================
 */
@@ -2433,8 +2479,8 @@ static void SV_WannaForce_f(void) {
 
 	client_t* cl;
 
-	if (Cmd_Argc() != 2) {
-		Com_Printf("Usage: wannagiveforce <Client <force_power_num> \nGive client force power\n");
+	if (Cmd_Argc() != 3) {
+		Com_Printf("Usage: wannagiveforce <Client> <force_power_num> \nGive client force power\n");
 		return;
 	}
 
@@ -2804,16 +2850,18 @@ void SV_Spin(client_t* cl) {
 	// Modified Weights for this spin
 	cprizes = Spin_GeneratePrices(cl);
 
+	srand(sv.time + cl->gentity->s.clientNum + cl->lastPacketTime);
+
 	do {
 
 		//Generates a random number between the weightTotal and 1 (excludes 0 because 0 is the exclusion list)
-		srand((unsigned)time(NULL));
 		rando = rand() % cprizes.size()+1;
 
 		// Win Bowcaster
 		if(Spin_HasWon(cprizes, rando, WIN_BOWCASTER)){	
 			cl->gentity->playerState->stats[STAT_WEAPONS] |= (1 << MB_BOWCASTER);
 			cl->gentity->playerState->ammo[MB_AMMO_BOWCASTER_DISRUPTOR] = 500;
+			SV_WannaGiveWeapon(cl, MB_BOWCASTER);
 			Com_Printf("Giving %s^7 a Bowcaster\n", playername);
 			response = "You win a Bowcaster";
 			valid_spin = qtrue;
@@ -2824,6 +2872,7 @@ void SV_Spin(client_t* cl) {
 		if(Spin_HasWon(cprizes, rando, WIN_DC15)) {
 			cl->gentity->playerState->stats[STAT_WEAPONS] |= (1 << MB_DC15);
 			cl->gentity->playerState->ammo[MB_AMMO_DC15_DLT20_ARM_BLASTER] = 500;
+			SV_WannaGiveWeapon(cl, MB_DC15);
 			cl->gentity->playerState->stats[15] |= (1 << 3); //15 for Blobs, darts etc
 			Com_Printf("Giving %s^7 a DC15\n", playername);
 			response = "You win a DC15";
@@ -2841,6 +2890,7 @@ void SV_Spin(client_t* cl) {
 
 			cl->gentity->playerState->fd.saberAnimLevel = rand_saberstyle;
 			cl->gentity->playerState->stats[STAT_WEAPONS] |= (1 << MB_LIGHTSABER);
+			SV_WannaGiveWeapon(cl, MB_LIGHTSABER);
 			cl->gentity->playerState->fd.saberAnimLevel = rand_saberstyle;
 
 			if (rand_saberstyle == MB_SS_BLUE) saberstyle_name = "Blue";
@@ -2862,6 +2912,7 @@ void SV_Spin(client_t* cl) {
 		if(Spin_HasWon(cprizes, rando, WIN_WESTAR_PISTOL)) {
 			cl->gentity->playerState->stats[STAT_WEAPONS] |= (1 << MB_WESTAR34);
 			cl->gentity->playerState->ammo[MB_AMMO_WELSTAR34] = 500;
+			SV_WannaGiveWeapon(cl, MB_WESTAR34);
 			Com_Printf("Giving %s^7 a Westar 34\n", playername);
 			response = "You win a Westar 34";
 			valid_spin = qtrue;
@@ -2872,6 +2923,7 @@ void SV_Spin(client_t* cl) {
 		if(Spin_HasWon(cprizes, rando, WIN_FRAG_GRENADE)) {
 			cl->gentity->playerState->stats[STAT_WEAPONS] |= (1 << MB_FRAG_GREN);
 			cl->gentity->playerState->ammo[MB_AMMO_FRAG_GRENADES] += 2;
+			SV_WannaGiveWeapon(cl, MB_FRAG_GREN);
 			Com_Printf("Giving %s^7 2 Frag Grenades\n", playername);
 			response = "You win 2 Frag Grenades";
 			valid_spin = qtrue;
@@ -2882,6 +2934,7 @@ void SV_Spin(client_t* cl) {
 		if(Spin_HasWon(cprizes, rando, WIN_PULSE_GRENADE)) {
 			cl->gentity->playerState->stats[STAT_WEAPONS] |= (1 << MB_PULSE_GREN);
 			cl->gentity->playerState->ammo[MB_AMMO_PULSE_GRENADES] += 2;
+			SV_WannaGiveWeapon(cl, MB_PULSE_GREN);
 			Com_Printf("Giving %s^7 2 Pulse Grenades\n", playername);
 			response = "You win 2 Pulse Grenades";
 			valid_spin = qtrue;
@@ -2892,6 +2945,7 @@ void SV_Spin(client_t* cl) {
 		if(Spin_HasWon(cprizes, rando, WIN_DISRUPTOR)) {
 			cl->gentity->playerState->stats[STAT_WEAPONS] |= (1 << MB_DISRUPTOR);
 			cl->gentity->playerState->ammo[MB_AMMO_BOWCASTER_DISRUPTOR] = 500;
+			SV_WannaGiveWeapon(cl, MB_DISRUPTOR);
 			Com_Printf("Giving %s^7 a Disruptor Rifle\n", playername);
 			response = "You win a Disruptor Rifle";
 			valid_spin = qtrue;
@@ -2902,6 +2956,7 @@ void SV_Spin(client_t* cl) {
 		if(Spin_HasWon(cprizes, rando, WIN_PROJECTILE)) {
 			cl->gentity->playerState->stats[STAT_WEAPONS] |= (1 << MB_PROJECTILE_RIFLE);
 			cl->gentity->playerState->ammo[MB_AMMO_PROJECTILE_RIFLE] = 20;
+			SV_WannaGiveWeapon(cl, MB_PROJECTILE_RIFLE);
 			Com_Printf("Giving %s^7 a Projectile Rifle\n", playername);
 			response = "You win a Projectile Rifle";
 			valid_spin = qtrue;
@@ -2912,6 +2967,7 @@ void SV_Spin(client_t* cl) {
 		if(Spin_HasWon(cprizes, rando, WIN_DC17)) {
 			cl->gentity->playerState->stats[STAT_WEAPONS] |= (1 << MB_DC17_PISTOL);
 			cl->gentity->playerState->ammo[MB_AMMO_DC17_PISTOL] = 500;
+			SV_WannaGiveWeapon(cl, MB_DC17_PISTOL);
 			Com_Printf("Giving %s^7 an DC17 Pistol\n", playername);
 			response = "You win a DC17 Pistol";
 			valid_spin = qtrue;
@@ -2922,6 +2978,7 @@ void SV_Spin(client_t* cl) {
 		if(Spin_HasWon(cprizes, rando, WIN_ROCKET_LAUNCHER)) {
 			cl->gentity->playerState->stats[STAT_WEAPONS] |= (1 << MB_ROCKET_LAUNCHER);
 			cl->gentity->playerState->ammo[MB_AMMO_ROCKETS] = 3;
+			SV_WannaGiveWeapon(cl, MB_ROCKET_LAUNCHER);
 			Com_Printf("Giving %s^7 a Rocket Launcher\n", playername);
 			response = "You win a Rocket Launcher";
 			valid_spin = qtrue;
@@ -2932,6 +2989,7 @@ void SV_Spin(client_t* cl) {
 		if(Spin_HasWon(cprizes, rando, WIN_DLT)) {
 			cl->gentity->playerState->stats[STAT_WEAPONS] |= (1 << MB_DLT);
 			cl->gentity->playerState->ammo[MB_AMMO_DC15_DLT20_ARM_BLASTER] = 500;
+			SV_WannaGiveWeapon(cl, MB_DLT);
 			Com_Printf("Giving %s ^7an a DLT20\n", playername);
 			response = "You win a DLT20";
 			valid_spin = qtrue;
@@ -2942,6 +3000,7 @@ void SV_Spin(client_t* cl) {
 		if(Spin_HasWon(cprizes, rando, WIN_ARM_BLASTER)) {
 			cl->gentity->playerState->stats[STAT_WEAPONS] |= (1 << MB_ARM_BLASTER);
 			cl->gentity->playerState->ammo[MB_AMMO_DC15_DLT20_ARM_BLASTER] = 500;
+			SV_WannaGiveWeapon(cl, MB_ARM_BLASTER);
 			Com_Printf("Giving %s ^7an a Arm Blaster\n", playername);
 			response = "You win an Arm Blaster";
 			valid_spin = qtrue;
@@ -2952,6 +3011,7 @@ void SV_Spin(client_t* cl) {
 		if(Spin_HasWon(cprizes, rando, WIN_T21)) {			
 			cl->gentity->playerState->stats[STAT_WEAPONS] |= (1 << MB_T21);
 			cl->gentity->playerState->ammo[MB_AMMO_T21_AMMO] = 500;
+			SV_WannaGiveWeapon(cl, MB_T21);
 			Com_Printf("Giving %s^7 a T21\n", playername);
 			response = "You win a T21";
 			valid_spin = qtrue;
@@ -3305,6 +3365,7 @@ void SV_AddOperatorCommands( void ) {
 
 	Cmd_AddCommand("wannatest", SV_WannaTest_f, "Used for testing things");
 	Cmd_AddCommand("wannaforce", SV_WannaForce_f, "Give a client a force power");
+	Cmd_AddCommand("wannagiveweapon", SV_WannaGiveWeapon_f, "Give a player a weapon");
 	Cmd_AddCommand("wannamodel", SV_WannaModel_f, "Change a given clients model");
 	Cmd_AddCommand("wannamodelteam", SV_WannaModel_f, "Change a given teams models");
 	Cmd_AddCommand("wannacheat", SV_WannaCheat_f, "Enable cheats without needing map restart");
