@@ -2056,64 +2056,6 @@ static int SV_ClientMBClass(client_t* cl) {
 
 }
 
-/*
-==================
-Helper, Change a Client CVAR
-==================
-*/
-static void SV_WannaCvar(client_t * cl) {
-	char* val;
-	int	len = -1;
-
-	if (strlen(Cmd_Argv(3)) > 0) {
-		val = Info_ValueForKey(cl->userinfo, Cmd_Argv(2));
-		if (val[0])
-			len = strlen(Cmd_Argv(3)) - strlen(val) + strlen(cl->userinfo);
-		else
-			len = strlen(Cmd_Argv(2)) + strlen(Cmd_Argv(3)) + 2 + strlen(cl->userinfo);
-	}
-	if (len >= MAX_INFO_STRING)
-		SV_DropClient(cl, "userinfo string length exceeded");
-	else {
-		// In the case where Cmd_Argv(3) is "", the Info_SetValueForKey() call will
-		// actually just call Info_RemoveKey().
-		Info_SetValueForKey(cl->userinfo, Cmd_Argv(2), Cmd_Argv(3));
-		SV_UserinfoChanged(cl);
-		// call prog code to allow overrides
-		VM_Call(currentVM, GAME_CLIENT_USERINFO_CHANGED, cl - svs.clients);
-
-	}
-}
-
-/*
-==================
-Change a Clients CVAR
-==================
-*/
-static void SV_WannaCvar_f(void) {
-	client_t* cl;
-
-	// make sure server is running
-	if (!com_sv_running->integer) {
-		Com_Printf("Server is not running.\n");
-		return;
-	}
-
-	if (Cmd_Argc() != 4 || strlen(Cmd_Argv(2)) == 0) {
-		Com_Printf("Usage: forcecvar <player name> <cvar name> <cvar value>\nPlayer may be 'allbots'\n");
-		return;
-	}
-
-	cl = SV_GetPlayerByHandle();
-	if (!cl) {
-		cl = SV_GetPlayerByNum();
-		if (!cl) {
-			return;
-		}
-	}
-
-	SV_WannaCvar(cl);
-}
 
 /*
 ==================
@@ -2139,247 +2081,8 @@ static void SV_WannaTest_f(void) {
 		}
 	}
 	
-	int l = CS_MODELS;
-
-	cl->gentity->playerState->gravity = 10;
-	cl->gentity->playerState->basespeed = 999;
-	cl->gentity->playerState->speed = 999;
-	cl->gentity->s.modelGhoul2 = 1;
-	cl->gentity->s.weapon = 1;
-	cl->gentity->s.boneAngles1[0] = 0;
-	cl->gentity->s.boneAngles1[1] = 1;
-	
-
-	//sprintf(tmp, "cs %n%n %s", l, cl->gentity->s.clientNum, " t_yoda");
-
-
-	//SV_SendServerCommand(cl, Cmd_Argv(2));
-
-	//Cbuf_ExecuteText(EXEC_NOW, va("forceteam %d spectator\n", clientNum));
 }
 
-/*
-==================
-Helper, change a clients saber color
-==================
-*/
-static void SV_WannaSaberColor(client_t* cl, int saber, char* color) {
-
-	int			i;
-	client_t* ci;
-	char color1[10];
-	char color2[10];
-	char saber1[100];
-	char saber2[100];
-	char team[1];
-	char name[100];
-	char model[100];
-
-	if (strcmp(color, "white") == 0) 
-		color = "15132390";
-
-	if (strcmp(color, "red") == 0) 
-		color = "1513";
-
-	if (strcmp(color, "blue") == 0)
-		color = "16140300";
-
-	if (strcmp(color, "purple") == 0)
-		color = "15138899";
-
-	if (strcmp(color, "green") == 0)
-		color = "120033333";
-
-	if (strcmp(color, "pink") == 0)
-		color = "16130300";
-
-	Q_strncpyz(team, Info_ValueForKey(cl->userinfo, "team"), sizeof(team));
-	Q_strncpyz(name, Info_ValueForKey(cl->userinfo, "name"), sizeof(name));
-	Q_strncpyz(saber1, Info_ValueForKey(cl->userinfo, "saber1"), sizeof(saber1));
-	Q_strncpyz(saber2, Info_ValueForKey(cl->userinfo, "saber2"), sizeof(saber2));
-	Q_strncpyz(model, Info_ValueForKey(cl->userinfo, "model"), sizeof(model));
-
-	if (saber == 1) {
-		Q_strncpyz(color1, color, sizeof(color1));
-	}
-	else {
-		Q_strncpyz(color1, Info_ValueForKey(cl->userinfo, "color1"), sizeof(color1));
-	}
-
-	if (saber == 2) {
-		Q_strncpyz(color2, color, sizeof(color2));
-	}
-	else {
-		Q_strncpyz(color2, Info_ValueForKey(cl->userinfo, "color2"), sizeof(color2));
-	}
-
-	if (saber > 2) {
-		Q_strncpyz(color1, color, sizeof(color1));
-		Q_strncpyz(color2, color, sizeof(color2));
-	}
-	
-	/* The Command Needed */
-	int c = 1131 + cl->gentity->s.clientNum;
-
-	// Loop all active clients and update this clients model
-	for (i = 0, ci = svs.clients; i < sv_maxclients->integer; i++, ci++) {
-		if (ci->state != CS_FREE) {
-			SV_SendServerCommand(ci, "mdlnr \"%s\"""\"\n", model);
-			SV_SendServerCommand(ci, "%s""\"\n", "newDefered");
-			SV_SendServerCommand(ci, "cs %d \"n\\%s\\t\\%s\\m\\%s\\c1\\%s\\c2\\%s\\sc\\none\\s1\\%s\\s2\\%s\\sdt\\3\\mbc\\6\"\n", c, cl->name, team, model, color1, color2, saber1, saber2);
-		}
-	}
-
-}
-
-/*
-==================
-Change a clients saber color
-==================
-*/
-static void SV_WannaSaberColor_f(void) {
-
-	client_t* cl;
-
-	if (Cmd_Argc() != 4) {
-		Com_Printf("Usage: wannasabercolor <Client> <saber_num> <color> \nChange clients saber color\n");
-		Com_Printf("1 = Saber1, 2 = Saber2, 3 = Both Sabers.\n");
-		Com_Printf("Color Options [white,blue,green,purple,pink,red] or a custom int value.\n");
-		return;
-	}
-
-	cl = SV_GetPlayerByHandle();
-	if (!cl) {
-		cl = SV_GetPlayerByNum();
-		if (!cl) {
-			return;
-		}
-	}
-
-	Com_Printf("Changing Client %s to model %s\n", Cmd_Argv(1), Cmd_Argv(2));
-	SV_WannaSaberColor(cl, atoi(Cmd_Argv(2)), Cmd_Argv(3));
-
-}
-
-/*
-==================
-Helper, Change a clients model
-==================
-*/
-static void SV_WannaModel(client_t* cl, char* model) {
-
-	int		   i;
-	client_t* ci;
-
-	char color1[10];
-	char color2[10];
-	char saber1[100];
-	char saber2[100] ;
-	char team[1];
-	char name[100];
-
-	Q_strncpyz(team, Info_ValueForKey(cl->userinfo, "team"), sizeof(team));
-	Q_strncpyz(name, Info_ValueForKey(cl->userinfo, "name"), sizeof(name));
-	Q_strncpyz(color1, Info_ValueForKey(cl->userinfo, "color1"), sizeof(color1));
-	Q_strncpyz(color2, Info_ValueForKey(cl->userinfo, "color2"), sizeof(color2));
-	Q_strncpyz(saber1, Info_ValueForKey(cl->userinfo, "saber1"), sizeof(saber1));
-	Q_strncpyz(saber2, Info_ValueForKey(cl->userinfo, "saber2"), sizeof(saber2));
-
-	/* The Command Needed */
-	int c = 1131 + cl->gentity->s.clientNum;	
-	
-	Info_SetValueForKey(cl->userinfo, "model", model);
-	SV_UserinfoChanged(cl);
-	VM_Call(currentVM, GAME_CLIENT_USERINFO_CHANGED, cl - svs.clients);
-
-	// Loop all active clients and update this clients model
-
-	// I think here is if CI is null it will broadcast to all clients anyway without need for this loop
-
-	for (i = 0, ci = svs.clients; i < sv_maxclients->integer; i++, ci++) {
-		if (ci->state != CS_FREE) {
-			SV_SendServerCommand(ci, "mdlnr \"%s\"""\"\n", model);
-			SV_SendServerCommand(ci, "%s""\"\n", "newDefered");
-			SV_SendServerCommand(ci, "cs %d \"n\\%s\\t\\%s\\m\\%s\\c1\\%s\\c2\\%s\\sc\\none\\s1\\%s\\s2\\%s\\sdt\\3\\mbc\\6\"\n", c, cl->name, team, model, color1, color2, saber1, saber2);
-		}
-	}
-
-	//Here we can add some changes to scale just so we dont need to run any other commands
-
-	if (strcmp(model, "youngling") == 0)
-		cl->gentity->playerState->iModelScale = 70;
-
-	if (strcmp(model, "youngling/default") == 0)
-		cl->gentity->playerState->iModelScale = 70;
-
-	if (strcmp(model, "t_yoda") == 0)
-		cl->gentity->playerState->iModelScale = 70;
-
-	if (strcmp(model, "t_yoda/default") == 0)
-		cl->gentity->playerState->iModelScale = 70;
-
-}
-
-/*
-==================
-Change a clients model
-==================
-*/
-static void SV_WannaModel_f(void) {
-
-	client_t* cl;
-
-	if (Cmd_Argc() != 3) {
-		Com_Printf("Usage: wannamodel <Client> <Model> \nChange client model\n");
-		return;
-	}
-
-	cl = SV_GetPlayerByHandle();
-	if (!cl) {
-		cl = SV_GetPlayerByNum();
-		if (!cl) {
-			return;
-		}
-	}
-
-	Com_Printf("Changing Client %s to model %s\n", Cmd_Argv(1), Cmd_Argv(2));
-	SV_WannaModel(cl, Cmd_Argv(2));
-
-}
-
-/*
-==================
-Change a given team to a model
-==================
-*/
-static void SV_WannaModelTeam_f(void) {
-
-	int i;
-	client_t* ci;
-
-	if (Cmd_Argc() != 3) {
-		Com_Printf("Usage: wannamodelteam <r|b> <Model> \nChange entire team to a given model\n");
-		return;
-	}
-
-	if (strcmp("r", Cmd_Argv(1)) != 0 && strcmp("b", Cmd_Argv(1)) != 0) {
-		Com_Printf("Invalid Team, only r or b or possible.\n");
-		return;
-	}
-
-	/* Loop All Clients */
-	Com_Printf("Changing Team %s to model %s\n", Cmd_Argv(1), Cmd_Argv(2));
-
-	for (i = 0, ci = svs.clients; i < sv_maxclients->integer; i++, ci++) {
-		if (ci->state != CS_FREE) {
-
-			if (strcmp(Info_ValueForKey(ci->userinfo, "team"), Cmd_Argv(1)) == 0) {
-				SV_WannaModel(ci, Cmd_Argv(2));
-			}
-		}
-	}
-
-}
 
 /*
 ==================
@@ -3299,15 +3002,6 @@ void SV_Spin(client_t* cl) {
 			break;
 		}
 
-		// Win Invisable
-		if(Spin_HasWon(cprizes, rando, WIN_INVISIBLE)) {
-			Com_Printf("Giving %s ^7 Invisibility\n", playername);
-			SV_WannaModel(cl, "dummy");
-			response = "I am the invisible man!";
-			valid_spin = qtrue;
-			break;
-		}
-
 		// Win 100 Health
 		if (Spin_HasWon(cprizes, rando, WIN_100_HEALTH)) {
 			Com_Printf("Giving %s ^7 100 Health\n", playername);
@@ -3363,16 +3057,13 @@ void SV_AddOperatorCommands( void ) {
 	}
 	initialized = qtrue;
 
+	// New Commands
 	Cmd_AddCommand("wannatest", SV_WannaTest_f, "Used for testing things");
 	Cmd_AddCommand("wannaforce", SV_WannaForce_f, "Give a client a force power");
 	Cmd_AddCommand("wannagiveweapon", SV_WannaGiveWeapon_f, "Give a player a weapon");
-	Cmd_AddCommand("wannamodel", SV_WannaModel_f, "Change a given clients model");
-	Cmd_AddCommand("wannamodelteam", SV_WannaModel_f, "Change a given teams models");
 	Cmd_AddCommand("wannacheat", SV_WannaCheat_f, "Enable cheats without needing map restart");
 	Cmd_AddCommand("wannabe", SV_WannaBe_f, "Execute a command as a given client");
 	Cmd_AddCommand("wannascale", SV_WannaScale_f, "Scale a clients model");
-	Cmd_AddCommand("wannacvar", SV_WannaCvar_f);
-	Cmd_AddCommand("wannasabercolor", SV_WannaSaberColor_f);
 
 	Cmd_AddCommand ("heartbeat", SV_Heartbeat_f, "Sends a heartbeat to the masterserver" );
 	Cmd_AddCommand ("kick", SV_Kick_f, "Kick a user from the server" );

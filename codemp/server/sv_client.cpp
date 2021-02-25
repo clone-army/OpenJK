@@ -1304,14 +1304,6 @@ void SV_ExecuteClientCommand( client_t *cl, const char *s, qboolean clientOK ) {
 
 		}
 
-		// If the command has SMOD, we pass to our smod extensions, will return qtrue if continue to process 
-		// using legacy smod code
-		if (strcmp("smod", Cmd_Argv(0)) == 0) {
-			if (SV_Smod(cl, s) == qfalse) {
-				return;
-			}
-		}
-
 		// pass unknown strings to the game
 		if (!u->name && sv.state == SS_GAME && (cl->state == CS_ACTIVE || cl->state == CS_PRIMED)) {
 			// strip \r \n and ;
