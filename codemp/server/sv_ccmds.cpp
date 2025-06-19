@@ -2174,7 +2174,7 @@ static void SV_WannaGiveWeaponsAll(client_t* cl) {
 		}
 
 		// Give the weapon to the client
-		cl->gentity->playerState->weapons |= (1 << weapon);
+		//cl->gentity->playerState->weapons |= (1 << weapon);
 		SV_WannaGiveWeapon(cl, weapon);
     }
 }
