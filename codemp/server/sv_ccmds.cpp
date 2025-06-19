@@ -2168,7 +2168,14 @@ static void SV_WannaGiveWeaponsAll(client_t* cl) {
     }
 
     for (int weapon = 0; weapon < MB_WEAPON_MAX; ++weapon) {
-        cl->gentity->playerState->weapons[weapon] = 1; // or whatever value means "has weapon"
+		// Skip the NO_WEAPON case
+		if (weapon == WP_NONE) {
+			continue;
+		}
+
+		// Give the weapon to the client
+		cl->gentity->playerState->weapons |= (1 << weapon);
+		SV_WannaGiveWeapon(cl, weapon);
     }
 }
 
