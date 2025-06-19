@@ -92,7 +92,8 @@ typedef enum {
 	MB_PULSE_GREN,
 	MB_T21,
 	MB_ARM_BLASTER,
-	MB_WESTAR34
+	MB_WESTAR34,
+	MB_WEAPON_MAX
 } weapon_mbii_t;
 
 
@@ -114,7 +115,8 @@ typedef enum {
 	MB_AMMO_UNKNOWN_6,
 	MB_AMMO_UNKNOWN_7,
 	MB_AMMO_UNKNOWN_8,
-	MB_AMMO_UNKNOWN_9
+	MB_AMMO_UNKNOWN_9,
+	MB_AMMO_MAX
 } ammo_mbii_t;
 
 
