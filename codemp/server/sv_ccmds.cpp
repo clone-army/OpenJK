@@ -2211,7 +2211,7 @@ static void SV_WannaGiveAmmo(client_t* cl, int ammoType, int amount) {
     // Send a server command to the game VM to give ammo
     char cmd[64];
     Com_sprintf(cmd, sizeof(cmd), "giveammo %d %d", ammoType, amount);
-    SV_GameSendServerCommand(cl - svs.clients, cmd);
+    SV_SendServerCommand(cl - svs.clients, cmd);
 }
 
 static void SV_WannaGiveAmmo_f(void) {
