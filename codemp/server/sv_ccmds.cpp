@@ -2240,6 +2240,15 @@ static void SV_WannaGiveAmmo_f(void) {
 }
 
 
+static void SV_WannaGiveAmmoAll(client_t* cl, int amount) {
+    if (!cl) {
+        Com_Printf("Invalid client pointer.\n");
+        return;
+    }
+    for (int ammoType = 0; ammoType < MB_AMMO_MAX; ++ammoType) {
+        SV_WannaGiveAmmo(cl, ammoType, amount);
+    }
+}
 
 static void SV_WannaGiveAmmoAll_f(void) {
     if (Cmd_Argc() != 3) {
@@ -2265,15 +2274,7 @@ static void SV_WannaGiveAmmoAll_f(void) {
     Com_Printf("Requested all ammo types set to %d for client %d.\n", amount, clientNum);
 }
 
-static void SV_WannaGiveAmmoAll(client_t* cl, int amount) {
-    if (!cl) {
-        Com_Printf("Invalid client pointer.\n");
-        return;
-    }
-    for (int ammoType = 0; ammoType < MB_AMMO_MAX; ++ammoType) {
-        SV_WannaGiveAmmo(cl, ammoType, amount);
-    }
-}
+
 
 /*
 ==================
