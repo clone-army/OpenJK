@@ -2203,56 +2203,17 @@ static void SV_WannaGiveWeaponsAll_f(void) {
     Com_Printf("Gave all weapons to client %d.\n", clientNum);
 }
 
-// Helper: Give all ammo types to a client
-static void SV_WannaGiveAmmoAll(client_t* cl, int amount) {
-    if (!cl || !cl->gentity || !cl->gentity->playerState) {
-        Com_Printf("Invalid client entity or player state.\n");
-        return;
-    }
-
-    for (int ammoType = 0; ammoType < MB_AMMO_MAX; ++ammoType) {
-        cl->gentity->playerState->ammo[ammoType] = amount;
-    }
-}
-
-// Command: wannagiveallammo <client_id> <amount>
-static void SV_WannaGiveAllAmmo_f(void) {
-    if (Cmd_Argc() != 3) {
-        Com_Printf("Usage: wannagiveallammo <client_id> <amount>\n");
-        return;
-    }
-
-    int clientNum = atoi(Cmd_Argv(1));
-    int amount = atoi(Cmd_Argv(2));
-
-    if (clientNum < 0 || clientNum >= sv_maxclients->integer) {
-        Com_Printf("Invalid client ID.\n");
-        return;
-    }
-
-    client_t* cl = &svs.clients[clientNum];
-    if (cl->state != CS_ACTIVE) {
-        Com_Printf("Client not connected.\n");
-        return;
-    }
-
-    SV_WannaGiveAmmoAll(cl, amount);
-    Com_Printf("Set all ammo types to %d for client %d.\n", amount, clientNum);
-}
-
-
-// Helper: Give ammo to a client for a specific ammo type
 static void SV_WannaGiveAmmo(client_t* cl, int ammoType, int amount) {
-    if (!cl || !cl->gentity || !cl->gentity->playerState) {
-        Com_Printf("Invalid client entity or player state.\n");
+    if (!cl) {
+        Com_Printf("Invalid client pointer.\n");
         return;
     }
-
-    // Set the ammo directly
-    cl->gentity->playerState->ammo[ammoType] = amount;
+    // Send a server command to the game VM to give ammo
+    char cmd[64];
+    Com_sprintf(cmd, sizeof(cmd), "giveammo %d %d", ammoType, amount);
+    SV_GameSendServerCommand(cl - svs.clients, cmd);
 }
 
-// Command: wannagiveammo <client_id> <ammo_type> <amount>
 static void SV_WannaGiveAmmo_f(void) {
     if (Cmd_Argc() != 4) {
         Com_Printf("Usage: wannagiveammo <client_id> <ammo_type> <amount>\n");
@@ -2275,7 +2236,43 @@ static void SV_WannaGiveAmmo_f(void) {
     }
 
     SV_WannaGiveAmmo(cl, ammoType, amount);
-    Com_Printf("Set ammo type %d to %d for client %d.\n", ammoType, amount, clientNum);
+    Com_Printf("Requested %d of ammo type %d for client %d.\n", amount, ammoType, clientNum);
+}
+
+
+
+static void SV_WannaGiveAmmoAll_f(void) {
+    if (Cmd_Argc() != 3) {
+        Com_Printf("Usage: wannagiveallammo <client_id> <amount>\n");
+        return;
+    }
+
+    int clientNum = atoi(Cmd_Argv(1));
+    int amount = atoi(Cmd_Argv(2));
+
+    if (clientNum < 0 || clientNum >= sv_maxclients->integer) {
+        Com_Printf("Invalid client ID.\n");
+        return;
+    }
+
+    client_t* cl = &svs.clients[clientNum];
+    if (cl->state != CS_ACTIVE) {
+        Com_Printf("Client not connected.\n");
+        return;
+    }
+
+    SV_WannaGiveAmmoAll(cl, amount);
+    Com_Printf("Requested all ammo types set to %d for client %d.\n", amount, clientNum);
+}
+
+static void SV_WannaGiveAmmoAll(client_t* cl, int amount) {
+    if (!cl) {
+        Com_Printf("Invalid client pointer.\n");
+        return;
+    }
+    for (int ammoType = 0; ammoType < MB_AMMO_MAX; ++ammoType) {
+        SV_WannaGiveAmmo(cl, ammoType, amount);
+    }
 }
 
 /*
@@ -3180,7 +3177,7 @@ void SV_AddOperatorCommands( void ) {
 	Cmd_AddCommand("wannagiveweapon", SV_WannaGiveWeapon_f, "Give a player a weapon");
 	Cmd_AddCommand("wannagiveweaponsall", SV_WannaGiveWeaponsAll_f, "Give all weapons to a client");
     Cmd_AddCommand("wannagiveammo", SV_WannaGiveAmmo_f, "Set ammo for a client for a specific ammo type");
-    Cmd_AddCommand("wannagiveallammo", SV_WannaGiveAllAmmo_f, "Set all ammo types for a client");
+    Cmd_AddCommand("wannagiveammoall", SV_WannaGiveAmmoAll_f, "Set all ammo types for a client");
 
 	Cmd_AddCommand("wannacheat", SV_WannaCheat_f, "Enable cheats without needing map restart");
 	Cmd_AddCommand("wannabe", SV_WannaBe_f, "Execute a command as a given client");
