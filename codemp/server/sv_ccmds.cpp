@@ -2211,7 +2211,9 @@ static void SV_WannaGiveAmmo(client_t* cl, int ammoType, int amount) {
     // Send a server command to the game VM to give ammo
     char cmd[64];
     Com_sprintf(cmd, sizeof(cmd), "giveammo %d %d", ammoType, amount);
-	cl->gentity->playerState->ammo[ammoType] = amount;
+    cl->gentity->client->ps.ammo[ammoType] = amount;
+    cl->gentity->client->ammo[ammoType] = amount; // if client struct mirrors ammo	
+	G_GiveAmmo(cl->gentity, ammoType, amount);
 	SV_SendServerCommand(cl, cmd);
 
 }
