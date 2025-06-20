@@ -2212,7 +2212,8 @@ static void SV_WannaGiveAmmo(client_t* cl, int ammoType, int amount) {
     char cmd[64];
     Com_sprintf(cmd, sizeof(cmd), "giveammo %d %d", ammoType, amount);
     cl->gentity->client->ps.ammo[ammoType] = amount;
-    cl->gentity->client->ammo[ammoType] = amount; // if client struct mirrors ammo	
+
+	cl->gentity->playerState->ammo[ammoType] += 2;
 	SV_SendServerCommand(cl, cmd);
 
 }
