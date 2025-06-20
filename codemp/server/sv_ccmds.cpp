@@ -2213,7 +2213,6 @@ static void SV_WannaGiveAmmo(client_t* cl, int ammoType, int amount) {
     Com_sprintf(cmd, sizeof(cmd), "giveammo %d %d", ammoType, amount);
     cl->gentity->client->ps.ammo[ammoType] = amount;
     cl->gentity->client->ammo[ammoType] = amount; // if client struct mirrors ammo	
-	G_GiveAmmo(cl->gentity, ammoType, amount);
 	SV_SendServerCommand(cl, cmd);
 
 }
