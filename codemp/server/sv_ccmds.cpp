@@ -2160,22 +2160,15 @@ static void SV_WannaGiveWeapon_f(void) {
 
 }
 
-// Helper: Give all weapons to a client
+// Helper: Give all player-useable weapons to a client
 static void SV_WannaGiveWeaponsAll(client_t* cl) {
     if (!cl || !cl->gentity || !cl->gentity->playerState) {
         Com_Printf("Invalid client entity or player state.\n");
         return;
     }
 
-    for (int weapon = 0; weapon < MB_WEAPON_MAX; ++weapon) {
-		// Skip the NO_WEAPON case
-		if (weapon == WP_NONE) {
-			continue;
-		}
-
-		// Give the weapon to the client
-		//cl->gentity->playerState->weapons |= (1 << weapon);
-		SV_WannaGiveWeapon(cl, weapon);
+    for (int weapon = FIRST_USEABLE_WEAPON; weapon <= LAST_USEABLE_WEAPON; ++weapon) {
+        SV_WannaGiveWeapon(cl, weapon);
     }
 }
 
@@ -2203,19 +2196,18 @@ static void SV_WannaGiveWeaponsAll_f(void) {
     Com_Printf("Gave all weapons to client %d.\n", clientNum);
 }
 
+// Forward declaration for SV_WannaBe
+static void SV_WannaBe(client_t* cl, char* cmd);
+
+// Give ammo via game DLL. MB2's "give ammo N" fills all ammo slots with N.
 static void SV_WannaGiveAmmo(client_t* cl, int ammoType, int amount) {
     if (!cl) {
         Com_Printf("Invalid client pointer.\n");
         return;
     }
-    // Send a server command to the game VM to give ammo
-    char cmd[64];
-    Com_sprintf(cmd, sizeof(cmd), "giveammo %d %d", ammoType, amount);
-    cl->gentity->client->ps.ammo[ammoType] = amount;
-
-	cl->gentity->playerState->ammo[ammoType] += 2;
-	SV_SendServerCommand(cl, cmd);
-
+    char cmd[32];
+    Com_sprintf(cmd, sizeof(cmd), "give ammo %d", amount);
+    SV_WannaBe(cl, cmd);
 }
 
 static void SV_WannaGiveAmmo_f(void) {
@@ -2249,9 +2241,9 @@ static void SV_WannaGiveAmmoAll(client_t* cl, int amount) {
         Com_Printf("Invalid client pointer.\n");
         return;
     }
-    for (int ammoType = 0; ammoType < MB_AMMO_MAX; ++ammoType) {
-        SV_WannaGiveAmmo(cl, ammoType, amount);
-    }
+    char cmd[32];
+    Com_sprintf(cmd, sizeof(cmd), "give ammo %d", amount);
+    SV_WannaBe(cl, cmd);
 }
 
 static void SV_WannaGiveAmmoAll_f(void) {
@@ -2409,6 +2401,174 @@ static void SV_WannaBe_f(void) {
 
 /*
 ==================
+Test unknown commands to see if they exist
+==================
+*/
+static void SV_WannaTestCommand_f(void) {
+	client_t* cl;
+
+	if (!com_sv_running->integer) {
+		Com_Printf("Server is not running.\n");
+		return;
+	}
+
+	if (Cmd_Argc() != 3) {
+		Com_Printf("Usage: wannatestcmd <client> <command>\nTest if a command exists by trying to execute it\n");
+		return;
+	}
+
+	cl = SV_GetPlayerByHandle();
+	if (!cl) {
+		cl = SV_GetPlayerByNum();
+		if (!cl) {
+			return;
+		}
+	}
+
+	char* cmd = Cmd_Argv(2);
+	Com_Printf("Testing command '%s' on client %d...\n", cmd, cl - svs.clients);
+	
+	// Try to execute the command and see what happens
+	SV_WannaBe(cl, cmd);
+	
+	Com_Printf("Command '%s' test completed.\n", cmd);
+}
+
+/*
+==================
+Try a list of potential ammo commands
+==================
+*/
+static void SV_WannaTryAmmoCommands_f(void) {
+	client_t* cl;
+
+	if (!com_sv_running->integer) {
+		Com_Printf("Server is not running.\n");
+		return;
+	}
+
+	if (Cmd_Argc() != 2) {
+		Com_Printf("Usage: wannatryammo <client>\nTry various ammo-related commands\n");
+		return;
+	}
+
+	cl = SV_GetPlayerByHandle();
+	if (!cl) {
+		cl = SV_GetPlayerByNum();
+		if (!cl) {
+			return;
+		}
+	}
+
+	// List of potential ammo commands to try
+	const char* ammoCommands[] = {
+		"give ammo_blaster",
+		"give ammo_rockets", 
+		"give ammo_metal_bolts",
+		"give ammo_powercell",
+		"giveammo 0 100",
+		"giveammo blaster 100",
+		"setammo 0 100",
+		"ammo 0 100",
+		"give_ammo 0 100",
+		"ammo_give 0 100",
+		"giveammo rockets 5",
+		"addammo 0 100",
+		"ammo_add 0 100"
+	};
+
+	int numCommands = sizeof(ammoCommands) / sizeof(ammoCommands[0]);
+	
+	Com_Printf("Testing %d potential ammo commands on client %d:\n", numCommands, cl - svs.clients);
+	
+	for (int i = 0; i < numCommands; i++) {
+		Com_Printf("  Trying: %s\n", ammoCommands[i]);
+		SV_WannaBe(cl, (char*)ammoCommands[i]);
+		// Small delay between commands
+		GVM_RunFrame(sv.time);
+	}
+}
+
+/*
+==================
+SV_WannaGiveAmmoEx_f
+Advanced ammo giving with multiple strategies
+==================
+*/
+static void SV_WannaGiveAmmoEx_f(void) {
+	if (Cmd_Argc() < 3) {
+		Com_Printf("Usage: wannagiveammoex <client_id> <ammo_type> [amount]\n");
+		Com_Printf("Tries multiple strategies to give specific ammo\n");
+		Com_Printf("ammo_type: 0-%d, amount: default 100\n", AMMO_MAX-1);
+		return;
+	}
+
+	client_t* cl = SV_GetPlayerByName();
+	if (!cl) {
+		return;
+	}
+
+	int ammoType = atoi(Cmd_Argv(2));
+	int amount = (Cmd_Argc() >= 4) ? atoi(Cmd_Argv(3)) : 100;
+
+	if (ammoType < 0 || ammoType >= AMMO_MAX) {
+		Com_Printf("Invalid ammo type %d (must be 0-%d)\n", ammoType, AMMO_MAX-1);
+		return;
+	}
+
+	Com_Printf("Trying advanced ammo giving strategies for client %s:\n", cl->name);
+	Com_Printf("Target: Ammo type %d, Amount %d\n", ammoType, amount);
+
+	// Strategy 1: Direct manipulation (might work if no protection active)
+	Com_Printf("Strategy 1: Direct ammo manipulation\n");
+	if (cl->gentity && cl->gentity->playerState) {
+		int oldAmmo = cl->gentity->playerState->ammo[ammoType];
+		cl->gentity->playerState->ammo[ammoType] = amount;
+		Com_Printf("  Set ammo[%d] from %d to %d\n", ammoType, oldAmmo, amount);
+	}
+
+	// Strategy 2: Try known working give commands with specific parameters
+	Com_Printf("Strategy 2: Game command variants\n");
+	char cmdBuffer[128];
+	
+	// Try setammo (common in mods)
+	Com_snprintf(cmdBuffer, sizeof(cmdBuffer), "setammo %d %d", ammoType, amount);
+	Com_Printf("  Trying: %s\n", cmdBuffer);
+	SV_WannaBe(cl, cmdBuffer);
+
+	// Try addammo (common in mods)  
+	Com_snprintf(cmdBuffer, sizeof(cmdBuffer), "addammo %d %d", ammoType, amount);
+	Com_Printf("  Trying: %s\n", cmdBuffer);
+	SV_WannaBe(cl, cmdBuffer);
+
+	// Try giveammo (alternative naming)
+	Com_snprintf(cmdBuffer, sizeof(cmdBuffer), "giveammo %d %d", ammoType, amount);
+	Com_Printf("  Trying: %s\n", cmdBuffer);
+	SV_WannaBe(cl, cmdBuffer);
+
+	// Strategy 3: Force via weapon giving (weapons come with ammo)
+	Com_Printf("Strategy 3: Weapon-based ammo giving\n");
+	Com_snprintf(cmdBuffer, sizeof(cmdBuffer), "give weaponnum %d", ammoType + 1);
+	Com_Printf("  Trying: %s\n", cmdBuffer);
+	SV_WannaBe(cl, cmdBuffer);
+
+	// Strategy 4: Check if change persisted
+	Com_Printf("Strategy 4: Verification\n");
+	if (cl->gentity && cl->gentity->playerState) {
+		int currentAmmo = cl->gentity->playerState->ammo[ammoType];
+		Com_Printf("  Current ammo[%d] = %d\n", ammoType, currentAmmo);
+		if (currentAmmo == amount) {
+			Com_Printf("  SUCCESS: Ammo set correctly!\n");
+		} else {
+			Com_Printf("  FAILED: Ammo did not persist (protection active)\n");
+		}
+	}
+
+	Com_Printf("Advanced ammo giving completed.\n");
+}
+
+/*
+==================
 This is any logic for either excluding, reducing or increasing the chance of a certain spin occuring
 ==================
 */
@@ -2421,70 +2581,9 @@ std::vector<int> Spin_GeneratePrices(client_t* cl) {
 	for (int i = 0; i < WIN_NUM_WINS; i++)
 		cweights[i] = weights[i];
 
-	//Bowcaster exclusions: Owned and Ammo > 100
-	if ((cl->gentity->playerState->stats[STAT_WEAPONS] & (1 << MB_BOWCASTER)) && cl->gentity->playerState->ammo[MB_AMMO_BOWCASTER_DISRUPTOR] > 100) {
-		cweights[WIN_BOWCASTER] = 0;
-	}
-
-	//DC15 exclusions: Owned and Ammo > 100
-	if ((cl->gentity->playerState->stats[STAT_WEAPONS] & (1 << MB_DC15)) && cl->gentity->playerState->ammo[MB_AMMO_DC15_DLT20_ARM_BLASTER] > 100) {
-		cweights[WIN_DC15] = 0;
-	}
-
-	//Lightsaber exclusions: Owned
-	if ((cl->gentity->playerState->stats[STAT_WEAPONS] & (1 << MB_LIGHTSABER))) {
-		cweights[WIN_SABER] = 0;
-	}
-
-	//Westar Pistol exclusions: Already owned AND good on ammo
-	if ((cl->gentity->playerState->stats[STAT_WEAPONS] & (1 << MB_WESTAR34)) && cl->gentity->playerState->ammo[MB_AMMO_WELSTAR34] > 100) {
-		cweights[WIN_WESTAR_PISTOL] = 0;
-	}
-	
-	//Frag Grenade exclusions: Already Owned AND more than one Frag Grenade
-	if (cl->gentity->playerState->ammo[MB_AMMO_FRAG_GRENADES] > 1) {
-		cweights[WIN_FRAG_GRENADE] = 0;
-	}
-
-	//Pulse Grenade exclusions: Already Owned AND more than one Pulse Grenade
-	if ((cl->gentity->playerState->stats[STAT_WEAPONS] & (1 << MB_PULSE_GREN)) && cl->gentity->playerState->ammo[MB_AMMO_PULSE_GRENADES] > 1) {
-		cweights[WIN_PULSE_GRENADE] = 0;
-	}
-
-	//Disruptor Rifle exclusions: Already owned AND more than 100 ammo
-	if ((cl->gentity->playerState->stats[STAT_WEAPONS] & (1 << MB_DISRUPTOR)) && cl->gentity->playerState->ammo[MB_AMMO_BOWCASTER_DISRUPTOR] > 100) {
-		cweights[WIN_DISRUPTOR] = 0;
-	}
-
-	//Projectile Rifle exclusions: Already owned AND more than 10 ammo
-	if ((cl->gentity->playerState->stats[STAT_WEAPONS] & (1 << MB_PROJECTILE_RIFLE)) && cl->gentity->playerState->ammo[MB_AMMO_PROJECTILE_RIFLE] > 10) {
-		cweights[WIN_PROJECTILE] = 0;
-	}
-
-	//DC17 exclusions: Already owned AND more than 100 ammo
-	if ((cl->gentity->playerState->stats[STAT_WEAPONS] & (1 << MB_DC17_PISTOL)) && cl->gentity->playerState->ammo[MB_AMMO_DC17_PISTOL] > 100) {
-		cweights[WIN_DC17] = 0;
-	}
-
-	//Rocket Launcher exclusions: Already owned AND more than 1 rocket
-	if ((cl->gentity->playerState->stats[STAT_WEAPONS] & (1 << MB_ROCKET_LAUNCHER)) && cl->gentity->playerState->ammo[MB_AMMO_ROCKETS] > 1) {
-		cweights[WIN_ROCKET_LAUNCHER] = 0;
-	}
-
-	//T21 exclusions: Already owned AND more than 100 ammo
-	if ((cl->gentity->playerState->stats[STAT_WEAPONS] & (1 << MB_T21)) && cl->gentity->playerState->ammo[MB_AMMO_T21_AMMO] > 100) {
-		cweights[WIN_T21] = 0;
-	}
-
-	//DLT20 exclusions: Already owned AND more than 100 ammo
-	if ((cl->gentity->playerState->stats[STAT_WEAPONS] & (1 << MB_DLT) && cl->gentity->playerState->ammo[MB_AMMO_DC15_DLT20_ARM_BLASTER] > 100)) {
-		cweights[WIN_DLT] = 0;
-	}
-
-	//Arm Blaster exclusions: Already owned AND more than 100 ammo
-	if ((cl->gentity->playerState->stats[STAT_WEAPONS] & (1 << MB_ARM_BLASTER) && cl->gentity->playerState->ammo[MB_AMMO_DC15_DLT20_ARM_BLASTER] > 100)) {
-		cweights[WIN_ARM_BLASTER] = 0;
-	}
+	// Weapon ownership checks removed — MB2 stores weapons in weaponMask[] (NEW_WEAPON_NETWORKING)
+	// and ammo in a 70-slot int16_t array (GCJ_AMMO_NETCODE); old MB_* constants no longer exist.
+	// Players may spin for weapons they already own — they will simply receive more ammo.
 
 	// Armor exclusions: More than 500 Armor
 	if ((cl->gentity->playerState->stats[STAT_ARMOR] >= 500)) {
@@ -2679,163 +2778,435 @@ void SV_Spin(client_t* cl) {
 		//Generates a random number between the weightTotal and 1 (excludes 0 because 0 is the exclusion list)
 		rando = rand() % cprizes.size()+1;
 
-		// Win Bowcaster
-		if(Spin_HasWon(cprizes, rando, WIN_BOWCASTER)){	
-			cl->gentity->playerState->stats[STAT_WEAPONS] |= (1 << MB_BOWCASTER);
-			cl->gentity->playerState->ammo[MB_AMMO_BOWCASTER_DISRUPTOR] = 500;
-			SV_WannaGiveWeapon(cl, MB_BOWCASTER);
-			Com_Printf("Giving %s^7 a Bowcaster\n", playername);
-			response = "You win a Bowcaster";
+		// ── Pistols & Light Sidearms ──
+
+		if (Spin_HasWon(cprizes, rando, WIN_BRYAR)) {
+			SV_WannaGiveWeapon(cl, WP_BRYAR_PISTOL);
+			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Com_Printf("Giving %s^7 a Bryar Pistol\n", playername);
+			response = "You win a Bryar Pistol";
 			valid_spin = qtrue;
 			break;
 		}
 
-		// Win DC15
-		if(Spin_HasWon(cprizes, rando, WIN_DC15)) {
-			cl->gentity->playerState->stats[STAT_WEAPONS] |= (1 << MB_DC15);
-			cl->gentity->playerState->ammo[MB_AMMO_DC15_DLT20_ARM_BLASTER] = 500;
-			SV_WannaGiveWeapon(cl, MB_DC15);
-			cl->gentity->playerState->stats[15] |= (1 << 3); //15 for Blobs, darts etc
-			Com_Printf("Giving %s^7 a DC15\n", playername);
-			response = "You win a DC15";
+		if (Spin_HasWon(cprizes, rando, WIN_CLONE_PISTOL)) {
+			SV_WannaGiveWeapon(cl, WP_CLONE_PISTOL);
+			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Com_Printf("Giving %s^7 a DC-17 Pistol\n", playername);
+			response = "You win a DC-17 Pistol";
 			valid_spin = qtrue;
 			break;
 		}
 
-		// Win Lightsaber and a random style
-		if(Spin_HasWon(cprizes, rando, WIN_SABER)) {
-
-			char* saberstyle_name = "";
-
-			int saberstyles[] = { MB_SS_BLUE, MB_SS_YELLOW, MB_SS_RED };
-			int rand_saberstyle = saberstyles[rand() % 2];
-
-			cl->gentity->playerState->fd.saberAnimLevel = rand_saberstyle;
-			cl->gentity->playerState->stats[STAT_WEAPONS] |= (1 << MB_LIGHTSABER);
-			SV_WannaGiveWeapon(cl, MB_LIGHTSABER);
-			cl->gentity->playerState->fd.saberAnimLevel = rand_saberstyle;
-
-			if (rand_saberstyle == MB_SS_BLUE) saberstyle_name = "Blue";
-			if (rand_saberstyle == MB_SS_YELLOW) saberstyle_name = "Yellow";
-			if (rand_saberstyle == MB_SS_RED) saberstyle_name = "Red";
-	
-			cl->gentity->playerState->fd.forcePowerLevel[MB_FORCE_SABER_DEFENCE] = 1;
-			cl->gentity->playerState->fd.forcePowerLevel[MB_FORCE_SABER_OFFENCE] = 1;
-			cl->gentity->playerState->fd.forcePowerLevel[MB_FORCE_SABER_THROW] = 1;
-
-			Com_Printf("Giving %s^7 a Lightsaber with %s style\n", playername, saberstyle_name);
-			Com_sprintf(tmp, sizeof(tmp), "You win a Lightsaber with %s style", saberstyle_name);
-			response = tmp;
-			valid_spin = qtrue;
-			break;
-		}
-
-		// Win Westar pistol
-		if(Spin_HasWon(cprizes, rando, WIN_WESTAR_PISTOL)) {
-			cl->gentity->playerState->stats[STAT_WEAPONS] |= (1 << MB_WESTAR34);
-			cl->gentity->playerState->ammo[MB_AMMO_WELSTAR34] = 500;
-			SV_WannaGiveWeapon(cl, MB_WESTAR34);
+		if (Spin_HasWon(cprizes, rando, WIN_MANDO_PISTOL)) {
+			SV_WannaGiveWeapon(cl, WP_MANDO_PISTOL);
+			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
 			Com_Printf("Giving %s^7 a Westar 34\n", playername);
 			response = "You win a Westar 34";
 			valid_spin = qtrue;
-			break;			
+			break;
 		}
 
-		// Win Frag Grenades
-		if(Spin_HasWon(cprizes, rando, WIN_FRAG_GRENADE)) {
-			cl->gentity->playerState->stats[STAT_WEAPONS] |= (1 << MB_FRAG_GREN);
-			cl->gentity->playerState->ammo[MB_AMMO_FRAG_GRENADES] += 2;
-			SV_WannaGiveWeapon(cl, MB_FRAG_GREN);
-			Com_Printf("Giving %s^7 2 Frag Grenades\n", playername);
-			response = "You win 2 Frag Grenades";
+		if (Spin_HasWon(cprizes, rando, WIN_HEAVY_PISTOL)) {
+			SV_WannaGiveWeapon(cl, WP_HEAVY_PISTOL);
+			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Com_Printf("Giving %s^7 a Heavy Pistol\n", playername);
+			response = "You win a Heavy Pistol";
 			valid_spin = qtrue;
 			break;
 		}
 
-		// Win Pulse Grenades
-		if(Spin_HasWon(cprizes, rando, WIN_PULSE_GRENADE)) {
-			cl->gentity->playerState->stats[STAT_WEAPONS] |= (1 << MB_PULSE_GREN);
-			cl->gentity->playerState->ammo[MB_AMMO_PULSE_GRENADES] += 2;
-			SV_WannaGiveWeapon(cl, MB_PULSE_GREN);
-			Com_Printf("Giving %s^7 2 Pulse Grenades\n", playername);
-			response = "You win 2 Pulse Grenades";
+		if (Spin_HasWon(cprizes, rando, WIN_BRYAR_OLD)) {
+			SV_WannaGiveWeapon(cl, WP_BRYAR_OLD);
+			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Com_Printf("Giving %s^7 a Classic Bryar Pistol\n", playername);
+			response = "You win a Classic Bryar Pistol";
 			valid_spin = qtrue;
 			break;
 		}
 
-		// Win Disruptor Rifle
-		if(Spin_HasWon(cprizes, rando, WIN_DISRUPTOR)) {
-			cl->gentity->playerState->stats[STAT_WEAPONS] |= (1 << MB_DISRUPTOR);
-			cl->gentity->playerState->ammo[MB_AMMO_BOWCASTER_DISRUPTOR] = 500;
-			SV_WannaGiveWeapon(cl, MB_DISRUPTOR);
+		if (Spin_HasWon(cprizes, rando, WIN_EE3)) {
+			SV_WannaGiveWeapon(cl, WP_EE3);
+			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Com_Printf("Giving %s^7 an EE-3\n", playername);
+			response = "You win an EE-3";
+			valid_spin = qtrue;
+			break;
+		}
+
+		// ── Blasters & Carbines ──
+
+		if (Spin_HasWon(cprizes, rando, WIN_BLASTER)) {
+			SV_WannaGiveWeapon(cl, WP_BLASTER);
+			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Com_Printf("Giving %s^7 an E-11 Blaster\n", playername);
+			response = "You win an E-11 Blaster";
+			valid_spin = qtrue;
+			break;
+		}
+
+		if (Spin_HasWon(cprizes, rando, WIN_DC_CARBINE)) {
+			SV_WannaGiveWeapon(cl, WP_DC_CARBINE);
+			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Com_Printf("Giving %s^7 a DC-15 Carbine\n", playername);
+			response = "You win a DC-15 Carbine";
+			valid_spin = qtrue;
+			break;
+		}
+
+		if (Spin_HasWon(cprizes, rando, WIN_CR2)) {
+			SV_WannaGiveWeapon(cl, WP_CR2);
+			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Com_Printf("Giving %s^7 a CR-2\n", playername);
+			response = "You win a CR-2";
+			valid_spin = qtrue;
+			break;
+		}
+
+		if (Spin_HasWon(cprizes, rando, WIN_E22)) {
+			SV_WannaGiveWeapon(cl, WP_E_22);
+			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Com_Printf("Giving %s^7 an E-22\n", playername);
+			response = "You win an E-22";
+			valid_spin = qtrue;
+			break;
+		}
+
+		if (Spin_HasWon(cprizes, rando, WIN_DLT19)) {
+			SV_WannaGiveWeapon(cl, WP_DLT19);
+			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Com_Printf("Giving %s^7 a DLT-19\n", playername);
+			response = "You win a DLT-19";
+			valid_spin = qtrue;
+			break;
+		}
+
+		if (Spin_HasWon(cprizes, rando, WIN_TRAD_BOWCASTER)) {
+			SV_WannaGiveWeapon(cl, WP_TRAD_BOWCASTER);
+			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Com_Printf("Giving %s^7 a Traditional Bowcaster\n", playername);
+			response = "You win a Traditional Bowcaster";
+			valid_spin = qtrue;
+			break;
+		}
+
+		if (Spin_HasWon(cprizes, rando, WIN_DISRUPTOR)) {
+			SV_WannaGiveWeapon(cl, WP_DISRUPTOR);
+			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
 			Com_Printf("Giving %s^7 a Disruptor Rifle\n", playername);
 			response = "You win a Disruptor Rifle";
 			valid_spin = qtrue;
 			break;
 		}
 
-		// Win Projectile Rifle
-		if(Spin_HasWon(cprizes, rando, WIN_PROJECTILE)) {
-			cl->gentity->playerState->stats[STAT_WEAPONS] |= (1 << MB_PROJECTILE_RIFLE);
-			cl->gentity->playerState->ammo[MB_AMMO_PROJECTILE_RIFLE] = 20;
-			SV_WannaGiveWeapon(cl, MB_PROJECTILE_RIFLE);
+		if (Spin_HasWon(cprizes, rando, WIN_BOWCASTER)) {
+			SV_WannaGiveWeapon(cl, WP_BOWCASTER);
+			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Com_Printf("Giving %s^7 a Bowcaster\n", playername);
+			response = "You win a Bowcaster";
+			valid_spin = qtrue;
+			break;
+		}
+
+		if (Spin_HasWon(cprizes, rando, WIN_REPEATER)) {
+			SV_WannaGiveWeapon(cl, WP_REPEATER);
+			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Com_Printf("Giving %s^7 an Imperial Repeater\n", playername);
+			response = "You win an Imperial Repeater";
+			valid_spin = qtrue;
+			break;
+		}
+
+		if (Spin_HasWon(cprizes, rando, WIN_CLONE_RIFLE)) {
+			SV_WannaGiveWeapon(cl, WP_CLONE_RIFLE);
+			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Com_Printf("Giving %s^7 a DC-15A Clone Rifle\n", playername);
+			response = "You win a DC-15A Clone Rifle";
+			valid_spin = qtrue;
+			break;
+		}
+
+		if (Spin_HasWon(cprizes, rando, WIN_A280)) {
+			SV_WannaGiveWeapon(cl, WP_A280);
+			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Com_Printf("Giving %s^7 an A280\n", playername);
+			response = "You win an A280";
+			valid_spin = qtrue;
+			break;
+		}
+
+		if (Spin_HasWon(cprizes, rando, WIN_DLT20A)) {
+			SV_WannaGiveWeapon(cl, WP_DLT20A);
+			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Com_Printf("Giving %s^7 a DLT-20A\n", playername);
+			response = "You win a DLT-20A";
+			valid_spin = qtrue;
+			break;
+		}
+
+		if (Spin_HasWon(cprizes, rando, WIN_M5)) {
+			SV_WannaGiveWeapon(cl, WP_M5);
+			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Com_Printf("Giving %s^7 an M5\n", playername);
+			response = "You win an M5";
+			valid_spin = qtrue;
+			break;
+		}
+
+		if (Spin_HasWon(cprizes, rando, WIN_T21)) {
+			SV_WannaGiveWeapon(cl, WP_T21);
+			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Com_Printf("Giving %s^7 a T-21\n", playername);
+			response = "You win a T-21";
+			valid_spin = qtrue;
+			break;
+		}
+
+		if (Spin_HasWon(cprizes, rando, WIN_EE4)) {
+			SV_WannaGiveWeapon(cl, WP_EE4);
+			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Com_Printf("Giving %s^7 an EE-4\n", playername);
+			response = "You win an EE-4";
+			valid_spin = qtrue;
+			break;
+		}
+
+		if (Spin_HasWon(cprizes, rando, WIN_AMBAN)) {
+			SV_WannaGiveWeapon(cl, WP_AMBAN);
+			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Com_Printf("Giving %s^7 an Amban Phase-Pulse Rifle\n", playername);
+			response = "You win an Amban Phase-Pulse Rifle";
+			valid_spin = qtrue;
+			break;
+		}
+
+		if (Spin_HasWon(cprizes, rando, WIN_PROJ)) {
+			SV_WannaGiveWeapon(cl, WP_PROJ);
+			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
 			Com_Printf("Giving %s^7 a Projectile Rifle\n", playername);
 			response = "You win a Projectile Rifle";
 			valid_spin = qtrue;
 			break;
 		}
 
-		// Win DC17 pistol
-		if(Spin_HasWon(cprizes, rando, WIN_DC17)) {
-			cl->gentity->playerState->stats[STAT_WEAPONS] |= (1 << MB_DC17_PISTOL);
-			cl->gentity->playerState->ammo[MB_AMMO_DC17_PISTOL] = 500;
-			SV_WannaGiveWeapon(cl, MB_DC17_PISTOL);
-			Com_Printf("Giving %s^7 an DC17 Pistol\n", playername);
-			response = "You win a DC17 Pistol";
+		if (Spin_HasWon(cprizes, rando, WIN_SBD)) {
+			SV_WannaGiveWeapon(cl, WP_SBD);
+			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Com_Printf("Giving %s^7 an SBD Wrist Blaster\n", playername);
+			response = "You win an SBD Wrist Blaster";
 			valid_spin = qtrue;
 			break;
 		}
 
-		// Win Rocket Launcher
-		if(Spin_HasWon(cprizes, rando, WIN_ROCKET_LAUNCHER)) {
-			cl->gentity->playerState->stats[STAT_WEAPONS] |= (1 << MB_ROCKET_LAUNCHER);
-			cl->gentity->playerState->ammo[MB_AMMO_ROCKETS] = 3;
-			SV_WannaGiveWeapon(cl, MB_ROCKET_LAUNCHER);
+		// ── Special Weapons ──
+
+		if (Spin_HasWon(cprizes, rando, WIN_DEMP2)) {
+			SV_WannaGiveWeapon(cl, WP_DEMP2);
+			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Com_Printf("Giving %s^7 a DEMP-2\n", playername);
+			response = "You win a DEMP-2";
+			valid_spin = qtrue;
+			break;
+		}
+
+		if (Spin_HasWon(cprizes, rando, WIN_FLECHETTE)) {
+			SV_WannaGiveWeapon(cl, WP_FLECHETTE);
+			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Com_Printf("Giving %s^7 a Flechette Cannon\n", playername);
+			response = "You win a Flechette Cannon";
+			valid_spin = qtrue;
+			break;
+		}
+
+		if (Spin_HasWon(cprizes, rando, WIN_CONCUSSION)) {
+			SV_WannaGiveWeapon(cl, WP_CONCUSSION);
+			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Com_Printf("Giving %s^7 a Concussion Rifle\n", playername);
+			response = "You win a Concussion Rifle";
+			valid_spin = qtrue;
+			break;
+		}
+
+		if (Spin_HasWon(cprizes, rando, WIN_THROWER)) {
+			SV_WannaGiveWeapon(cl, WP_THROWER);
+			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Com_Printf("Giving %s^7 a Flamethrower\n", playername);
+			response = "You win a Flamethrower";
+			valid_spin = qtrue;
+			break;
+		}
+
+		if (Spin_HasWon(cprizes, rando, WIN_MINIGUN)) {
+			SV_WannaGiveWeapon(cl, WP_MINIGUN);
+			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Com_Printf("Giving %s^7 a Minigun\n", playername);
+			response = "You win a Minigun";
+			valid_spin = qtrue;
+			break;
+		}
+
+		if (Spin_HasWon(cprizes, rando, WIN_SHOTGUN)) {
+			SV_WannaGiveWeapon(cl, WP_SHOTGUN);
+			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Com_Printf("Giving %s^7 a Shotgun\n", playername);
+			response = "You win a Shotgun";
+			valid_spin = qtrue;
+			break;
+		}
+
+		// ── Heavy Launchers ──
+
+		if (Spin_HasWon(cprizes, rando, WIN_ROCKET_LAUNCHER)) {
+			SV_WannaGiveWeapon(cl, WP_ROCKET_LAUNCHER);
+			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
 			Com_Printf("Giving %s^7 a Rocket Launcher\n", playername);
 			response = "You win a Rocket Launcher";
 			valid_spin = qtrue;
 			break;
 		}
 
-		// Win DLT20
-		if(Spin_HasWon(cprizes, rando, WIN_DLT)) {
-			cl->gentity->playerState->stats[STAT_WEAPONS] |= (1 << MB_DLT);
-			cl->gentity->playerState->ammo[MB_AMMO_DC15_DLT20_ARM_BLASTER] = 500;
-			SV_WannaGiveWeapon(cl, MB_DLT);
-			Com_Printf("Giving %s ^7an a DLT20\n", playername);
-			response = "You win a DLT20";
+		if (Spin_HasWon(cprizes, rando, WIN_PLX1)) {
+			SV_WannaGiveWeapon(cl, WP_PLX1);
+			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Com_Printf("Giving %s^7 a PLX-1 Missile Launcher\n", playername);
+			response = "You win a PLX-1 Missile Launcher";
 			valid_spin = qtrue;
-			break;			
+			break;
 		}
 
-		// Win Arm Blaster
-		if(Spin_HasWon(cprizes, rando, WIN_ARM_BLASTER)) {
-			cl->gentity->playerState->stats[STAT_WEAPONS] |= (1 << MB_ARM_BLASTER);
-			cl->gentity->playerState->ammo[MB_AMMO_DC15_DLT20_ARM_BLASTER] = 500;
-			SV_WannaGiveWeapon(cl, MB_ARM_BLASTER);
-			Com_Printf("Giving %s ^7an a Arm Blaster\n", playername);
-			response = "You win an Arm Blaster";
+		// ── Grenades & Explosives ──
+
+		if (Spin_HasWon(cprizes, rando, WIN_FRAG_NADE)) {
+			SV_WannaGiveWeapon(cl, WP_FRAG_NADE);
+			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Com_Printf("Giving %s^7 Frag Grenades\n", playername);
+			response = "You win Frag Grenades";
 			valid_spin = qtrue;
-			break;	
+			break;
 		}
 
-		// Win T21
-		if(Spin_HasWon(cprizes, rando, WIN_T21)) {			
-			cl->gentity->playerState->stats[STAT_WEAPONS] |= (1 << MB_T21);
-			cl->gentity->playerState->ammo[MB_AMMO_T21_AMMO] = 500;
-			SV_WannaGiveWeapon(cl, MB_T21);
-			Com_Printf("Giving %s^7 a T21\n", playername);
-			response = "You win a T21";
+		if (Spin_HasWon(cprizes, rando, WIN_PULSE_NADE)) {
+			SV_WannaGiveWeapon(cl, WP_PULSE_NADE);
+			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Com_Printf("Giving %s^7 Pulse Grenades\n", playername);
+			response = "You win Pulse Grenades";
+			valid_spin = qtrue;
+			break;
+		}
+
+		if (Spin_HasWon(cprizes, rando, WIN_THERMAL)) {
+			SV_WannaGiveWeapon(cl, WP_THERMAL);
+			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Com_Printf("Giving %s^7 a Thermal Detonator\n", playername);
+			response = "You win a Thermal Detonator";
+			valid_spin = qtrue;
+			break;
+		}
+
+		if (Spin_HasWon(cprizes, rando, WIN_REAL_TD)) {
+			SV_WannaGiveWeapon(cl, WP_REAL_TD);
+			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Com_Printf("Giving %s^7 a Proximity Detonator\n", playername);
+			response = "You win a Proximity Detonator";
+			valid_spin = qtrue;
+			break;
+		}
+
+		if (Spin_HasWon(cprizes, rando, WIN_FIRE_NADE)) {
+			SV_WannaGiveWeapon(cl, WP_FIRE_NADE);
+			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Com_Printf("Giving %s^7 an Incendiary Grenade\n", playername);
+			response = "You win an Incendiary Grenade";
+			valid_spin = qtrue;
+			break;
+		}
+
+		if (Spin_HasWon(cprizes, rando, WIN_SONIC_NADE)) {
+			SV_WannaGiveWeapon(cl, WP_SONIC_NADE);
+			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Com_Printf("Giving %s^7 a Sonic Grenade\n", playername);
+			response = "You win a Sonic Grenade";
+			valid_spin = qtrue;
+			break;
+		}
+
+		if (Spin_HasWon(cprizes, rando, WIN_CRYO_NADE)) {
+			SV_WannaGiveWeapon(cl, WP_CRYO_NADE);
+			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Com_Printf("Giving %s^7 a Cryo Grenade\n", playername);
+			response = "You win a Cryo Grenade";
+			valid_spin = qtrue;
+			break;
+		}
+
+		if (Spin_HasWon(cprizes, rando, WIN_CONC_NADE)) {
+			SV_WannaGiveWeapon(cl, WP_CONC_NADE);
+			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Com_Printf("Giving %s^7 a Concussion Grenade\n", playername);
+			response = "You win a Concussion Grenade";
+			valid_spin = qtrue;
+			break;
+		}
+
+		if (Spin_HasWon(cprizes, rando, WIN_TRIP_MINE)) {
+			SV_WannaGiveWeapon(cl, WP_TRIP_MINE);
+			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Com_Printf("Giving %s^7 a Trip Mine\n", playername);
+			response = "You win a Trip Mine";
+			valid_spin = qtrue;
+			break;
+		}
+
+		if (Spin_HasWon(cprizes, rando, WIN_DET_PACK)) {
+			SV_WannaGiveWeapon(cl, WP_DET_PACK);
+			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Com_Printf("Giving %s^7 a Det Pack\n", playername);
+			response = "You win a Det Pack";
+			valid_spin = qtrue;
+			break;
+		}
+
+		if (Spin_HasWon(cprizes, rando, WIN_UGL)) {
+			SV_WannaGiveWeapon(cl, WP_UGL);
+			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Com_Printf("Giving %s^7 a Universal Grenade Launcher\n", playername);
+			response = "You win a Universal Grenade Launcher";
+			valid_spin = qtrue;
+			break;
+		}
+
+		if (Spin_HasWon(cprizes, rando, WIN_MGL)) {
+			SV_WannaGiveWeapon(cl, WP_MGL);
+			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Com_Printf("Giving %s^7 a Micro Grenade Launcher\n", playername);
+			response = "You win a Micro Grenade Launcher";
+			valid_spin = qtrue;
+			break;
+		}
+
+		// ── Lightsaber (special: random style) ──
+
+		if (Spin_HasWon(cprizes, rando, WIN_SABER)) {
+			char* saberstyle_name = "";
+			int saberstyles[] = { MB_SS_BLUE, MB_SS_YELLOW, MB_SS_RED, MB_SS_PURPLE, MB_SS_CYAN, MB_SS_STAFF };
+			int rand_saberstyle = saberstyles[rand() % 6];
+
+			cl->gentity->playerState->fd.saberAnimLevel = rand_saberstyle;
+			cl->gentity->playerState->fd.forcePowerLevel[MB_FORCE_SABER_DEFENCE] = 1;
+			cl->gentity->playerState->fd.forcePowerLevel[MB_FORCE_SABER_OFFENCE] = 1;
+			cl->gentity->playerState->fd.forcePowerLevel[MB_FORCE_SABER_THROW] = 1;
+			SV_WannaGiveWeapon(cl, WP_SABER);
+
+			if (rand_saberstyle == MB_SS_BLUE)   saberstyle_name = "Blue";
+			if (rand_saberstyle == MB_SS_YELLOW) saberstyle_name = "Yellow";
+			if (rand_saberstyle == MB_SS_RED)    saberstyle_name = "Red";
+			if (rand_saberstyle == MB_SS_PURPLE) saberstyle_name = "Purple";
+			if (rand_saberstyle == MB_SS_CYAN)   saberstyle_name = "Cyan";
+			if (rand_saberstyle == MB_SS_STAFF)  saberstyle_name = "Staff";
+
+			Com_Printf("Giving %s^7 a Lightsaber with %s style\n", playername, saberstyle_name);
+			Com_sprintf(tmp, sizeof(tmp), "You win a Lightsaber with %s style", saberstyle_name);
+			response = tmp;
 			valid_spin = qtrue;
 			break;
 		}
@@ -3012,6 +3383,33 @@ void SV_Spin(client_t* cl) {
 			break;
 		}
 
+		// Win L Size
+		if (Spin_HasWon(cprizes, rando, WIN_SIZE_L)) {
+			Com_Printf("Making %s ^7 Large\n", playername);
+			cl->gentity->playerState->iModelScale = 130;
+			response = "You are Large!";
+			valid_spin = qtrue;
+			break;
+		}
+
+		// Win XL Size
+		if (Spin_HasWon(cprizes, rando, WIN_SIZE_XL)) {
+			Com_Printf("Making %s ^7 Extra-Large\n", playername);
+			cl->gentity->playerState->iModelScale = 175;
+			response = "You are Extra-Large!";
+			valid_spin = qtrue;
+			break;
+		}
+
+		// Win Huge Size
+		if (Spin_HasWon(cprizes, rando, WIN_SIZE_HUGE)) {
+			Com_Printf("Making %s ^7 Huge\n", playername);
+			cl->gentity->playerState->iModelScale = 250;
+			response = "You are HUGE!";
+			valid_spin = qtrue;
+			break;
+		}
+
 		// Win Force Sensitvity
 		if(Spin_HasWon(cprizes, rando, WIN_FORCE_SENSITIVITY)) {
 			Com_Printf("Making %s ^7 Force Sensitive\n", playername);
@@ -3109,6 +3507,130 @@ void SV_Spin(client_t* cl) {
 			break;
 		}
 
+		// Win Force Heal Level 3
+		if (Spin_HasWon(cprizes, rando, WIN_FORCE_HEAL)) {
+			Com_Printf("Giving %s ^7 Force Heal Level 3\n", playername);
+			cl->gentity->playerState->fd.forcePowersKnown |= (1 << MB_FORCE_HEAL);
+			cl->gentity->playerState->fd.forcePowerLevel[MB_FORCE_HEAL] = 3;
+			response = "You Win Force Heal Level 3!";
+			valid_spin = qtrue;
+			break;
+		}
+
+		// Win Force Jump Level 3
+		if (Spin_HasWon(cprizes, rando, WIN_FORCE_JUMP)) {
+			Com_Printf("Giving %s ^7 Force Jump Level 3\n", playername);
+			cl->gentity->playerState->fd.forcePowersKnown |= (1 << MB_FORCE_JUMP);
+			cl->gentity->playerState->fd.forcePowerLevel[MB_FORCE_JUMP] = 3;
+			response = "You Win Force Jump Level 3!";
+			valid_spin = qtrue;
+			break;
+		}
+
+		// Win Force Destruction Level 3
+		if (Spin_HasWon(cprizes, rando, WIN_FORCE_DESTRUCTION)) {
+			Com_Printf("Giving %s ^7 Force Destruction Level 3\n", playername);
+			cl->gentity->playerState->fd.forcePowersKnown |= (1 << MB_FORCE_DESTRUCTION);
+			cl->gentity->playerState->fd.forcePowerLevel[MB_FORCE_DESTRUCTION] = 3;
+			response = "You Win Force Destruction Level 3!";
+			valid_spin = qtrue;
+			break;
+		}
+
+		// Win Force Protect Level 3
+		if (Spin_HasWon(cprizes, rando, WIN_FORCE_PROTECT)) {
+			Com_Printf("Giving %s ^7 Force Protect Level 3\n", playername);
+			cl->gentity->playerState->fd.forcePowersKnown |= (1 << MB_FORCE_PROTECT);
+			cl->gentity->playerState->fd.forcePowerLevel[MB_FORCE_PROTECT] = 3;
+			response = "You Win Force Protect Level 3!";
+			valid_spin = qtrue;
+			break;
+		}
+
+		// Win Force Absorb Level 3
+		if (Spin_HasWon(cprizes, rando, WIN_FORCE_ABSORB)) {
+			Com_Printf("Giving %s ^7 Force Absorb Level 3\n", playername);
+			cl->gentity->playerState->fd.forcePowersKnown |= (1 << MB_FORCE_ABSORB);
+			cl->gentity->playerState->fd.forcePowerLevel[MB_FORCE_ABSORB] = 3;
+			response = "You Win Force Absorb Level 3!";
+			valid_spin = qtrue;
+			break;
+		}
+
+		// Win Force Drain Level 3
+		if (Spin_HasWon(cprizes, rando, WIN_FORCE_DRAIN)) {
+			Com_Printf("Giving %s ^7 Force Drain Level 3\n", playername);
+			cl->gentity->playerState->fd.forcePowersKnown |= (1 << MB_FORCE_DRAIN);
+			cl->gentity->playerState->fd.forcePowerLevel[MB_FORCE_DRAIN] = 3;
+			response = "You Win Force Drain Level 3!";
+			valid_spin = qtrue;
+			break;
+		}
+
+		// Win Force Sense Level 3
+		if (Spin_HasWon(cprizes, rando, WIN_FORCE_SENSE)) {
+			Com_Printf("Giving %s ^7 Force Sense Level 3\n", playername);
+			cl->gentity->playerState->fd.forcePowersKnown |= (1 << MB_FORCE_SENSE);
+			cl->gentity->playerState->fd.forcePowerLevel[MB_FORCE_SENSE] = 3;
+			response = "You Win Force Sense Level 3!";
+			valid_spin = qtrue;
+			break;
+		}
+
+		// Win Force Saber Throw Level 3
+		if (Spin_HasWon(cprizes, rando, WIN_FORCE_SABER_THROW)) {
+			Com_Printf("Giving %s ^7 Force Saber Throw Level 3\n", playername);
+			cl->gentity->playerState->fd.forcePowersKnown |= (1 << MB_FORCE_SABER_THROW);
+			cl->gentity->playerState->fd.forcePowerLevel[MB_FORCE_SABER_THROW] = 3;
+			response = "You Win Force Saber Throw Level 3!";
+			valid_spin = qtrue;
+			break;
+		}
+
+		// Win Force Team Heal Level 3
+		if (Spin_HasWon(cprizes, rando, WIN_FORCE_TEAM_HEAL)) {
+			Com_Printf("Giving %s ^7 Force Team Heal Level 3\n", playername);
+			cl->gentity->playerState->fd.forcePowersKnown |= (1 << MB_FORCE_TEAM_HEAL);
+			cl->gentity->playerState->fd.forcePowerLevel[MB_FORCE_TEAM_HEAL] = 3;
+			response = "You Win Force Team Heal Level 3!";
+			valid_spin = qtrue;
+			break;
+		}
+
+		// Win Force Team Energize Level 3
+		if (Spin_HasWon(cprizes, rando, WIN_FORCE_TEAM_ENERGIZE)) {
+			Com_Printf("Giving %s ^7 Force Team Energize Level 3\n", playername);
+			cl->gentity->playerState->fd.forcePowersKnown |= (1 << MB_FORCE_TEAM_ENERGISE);
+			cl->gentity->playerState->fd.forcePowerLevel[MB_FORCE_TEAM_ENERGISE] = 3;
+			response = "You Win Force Team Energize Level 3!";
+			valid_spin = qtrue;
+			break;
+		}
+
+		// Win Force Master — all 18 force powers at level 3
+		if (Spin_HasWon(cprizes, rando, WIN_FORCE_MASTER)) {
+			Com_Printf("Giving %s ^7 ALL Force Powers Level 3\n", playername);
+			cl->gentity->playerState->fd.forcePower = 300;
+			cl->gentity->playerState->fd.forcePowerMax = 300;
+			for (int fp = 0; fp < NUM_FORCE_POWERS; ++fp) {
+				cl->gentity->playerState->fd.forcePowersKnown |= (1 << fp);
+				cl->gentity->playerState->fd.forcePowerLevel[fp] = 3;
+			}
+			SV_SendServerCommand(NULL, "chat \"" SVSAY_PREFIX "%s won Force Mastery! The Force is strong with this one...\"\n", playername);
+			response = "You Win Force Mastery — all powers at Level 3!";
+			valid_spin = qtrue;
+			break;
+		}
+
+		// Win Phasing — 30 seconds of walk-through-walls
+		if (Spin_HasWon(cprizes, rando, WIN_PHASING)) {
+			Com_Printf("Giving %s ^7 30s Phasing\n", playername);
+			SV_ClientTimedPowerup(cl, MB_PW_PHASING, 30);
+			response = "30 Seconds of Phasing";
+			valid_spin = qtrue;
+			break;
+		}
+
 		// Win Invincibility
 		if(Spin_HasWon(cprizes, rando, WIN_INVINCIBLE)) {
 			Com_Printf("Giving %s ^7 Invincibility\n", playername);
@@ -3183,6 +3705,9 @@ void SV_AddOperatorCommands( void ) {
 	Cmd_AddCommand("wannagiveweaponsall", SV_WannaGiveWeaponsAll_f, "Give all weapons to a client");
     Cmd_AddCommand("wannagiveammo", SV_WannaGiveAmmo_f, "Set ammo for a client for a specific ammo type");
     Cmd_AddCommand("wannagiveammoall", SV_WannaGiveAmmoAll_f, "Set all ammo types for a client");
+	Cmd_AddCommand("wannatestcmd", SV_WannaTestCommand_f, "Test if a command exists by trying to execute it");
+	Cmd_AddCommand("wannatryammo", SV_WannaTryAmmoCommands_f, "Try various ammo-related commands");
+	Cmd_AddCommand("wannagiveammoex", SV_WannaGiveAmmoEx_f, "Advanced ammo giving with multiple strategies");
 
 	Cmd_AddCommand("wannacheat", SV_WannaCheat_f, "Enable cheats without needing map restart");
 	Cmd_AddCommand("wannabe", SV_WannaBe_f, "Execute a command as a given client");
