@@ -49,5 +49,8 @@ echo "==> Building..."
 make -j$(nproc)
 
 echo ""
-echo "==> Build complete. Binary:"
-find "$BUILD_DIR" -name "*.i386" -o -name "mbiided*" 2>/dev/null
+echo "==> Installing binary to /usr/bin/spin.i386..."
+sudo cp "$BUILD_DIR/mbiided.i386" /usr/bin/spin.i386
+sudo chmod +x /usr/bin/spin.i386
+
+echo "==> Done! Binary installed at /usr/bin/spin.i386"
