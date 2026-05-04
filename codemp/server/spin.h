@@ -1,3 +1,5 @@
+#pragma once
+
 // List all Possible Wins — updated for MB2 new weapon system
 
 #define SPIN_VERSION "2.000"
