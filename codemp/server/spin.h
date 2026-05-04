@@ -109,7 +109,7 @@ typedef enum {
 // Default weights — higher value = more common spin result
 // Spin_GeneratePrices may zero-out entries depending on player state
 
-int weights[WIN_NUM_WINS] = {
+static int weights[WIN_NUM_WINS] = {
 	// Pistols & Light Sidearms
 	30, // WIN_BRYAR
 	40, // WIN_CLONE_PISTOL
