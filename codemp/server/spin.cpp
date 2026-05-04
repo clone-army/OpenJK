@@ -7,6 +7,7 @@ entry point that is called by sv_client.cpp when a player types /spin.
 ===========================================================================
 */
 
+#include <cstdint>
 #include <thread>
 #include <array>
 #include <vector>
@@ -84,37 +85,45 @@ static void Spin_GiveWeaponAmmo(client_t* cl, weapon_t weapon)
 	playerState_t* ps = cl->gentity->playerState;
 	if (!ps) return;
 
+	// Struct layout mismatch: MB2 (GCJ_AMMO_NETCODE) stores ammo as
+	// int16_t ammo[70] at the same byte offset where the engine's
+	// playerState_t has int powerups[16].  The engine's ps->ammo[] field
+	// sits 64 bytes too deep (past powerups[16]).  We must cast ps->powerups
+	// to int16_t* so that AMMO_* enum indices address the correct 2-byte
+	// slots in MB2's in-memory playerState_t layout.
+	int16_t* mb2ammo = (int16_t*)ps->powerups;
+
 	switch (weapon) {
 		// AMMO_PISTOL (max 60) — Bryar Pistol, Heavy Pistol
 		case WP_BRYAR_PISTOL:
 		case WP_HEAVY_PISTOL:
-			ps->ammo[AMMO_PISTOL] = 60; break;
+			mb2ammo[AMMO_PISTOL] = 60; break;
 
 		// AMMO_WESTAR (max 175) — Mando Pistol, Classic Bryar
 		case WP_MANDO_PISTOL:
 		case WP_BRYAR_OLD:
-			ps->ammo[AMMO_WESTAR] = 175; break;
+			mb2ammo[AMMO_WESTAR] = 175; break;
 
 		// AMMO_CLONEPISTOL (max 175)
 		case WP_CLONE_PISTOL:
-			ps->ammo[AMMO_CLONEPISTOL] = 175; break;
+			mb2ammo[AMMO_CLONEPISTOL] = 175; break;
 
 		// AMMO_EE3 (max 150)
 		case WP_EE3:
-			ps->ammo[AMMO_EE3] = 150; break;
+			mb2ammo[AMMO_EE3] = 150; break;
 
 		// AMMO_BLASTER (max 120) — E-11, DC-15 Carbine
 		case WP_BLASTER:
 		case WP_DC_CARBINE:
-			ps->ammo[AMMO_BLASTER] = 120; break;
+			mb2ammo[AMMO_BLASTER] = 120; break;
 
 		// AMMO_CR2 (max 150)
 		case WP_CR2:
-			ps->ammo[AMMO_CR2] = 150; break;
+			mb2ammo[AMMO_CR2] = 150; break;
 
 		// AMMO_E22 (max 150)
 		case WP_E_22:
-			ps->ammo[AMMO_E22] = 150; break;
+			mb2ammo[AMMO_E22] = 150; break;
 
 		// AMMO_METAL_BOLTS (max 150) — DLT-19, Repeater, A280, DLT-20A, M5, SBD
 		case WP_DLT19:
@@ -123,116 +132,116 @@ static void Spin_GiveWeaponAmmo(client_t* cl, weapon_t weapon)
 		case WP_DLT20A:
 		case WP_M5:
 		case WP_SBD:
-			ps->ammo[AMMO_METAL_BOLTS] = 150; break;
+			mb2ammo[AMMO_METAL_BOLTS] = 150; break;
 
 		// AMMO_TRAD_CASTER (max 150)
 		case WP_TRAD_BOWCASTER:
-			ps->ammo[AMMO_TRAD_CASTER] = 150; break;
+			mb2ammo[AMMO_TRAD_CASTER] = 150; break;
 
 		// AMMO_POWERCELL (max 150) — Disruptor
 		case WP_DISRUPTOR:
-			ps->ammo[AMMO_POWERCELL] = 150; break;
+			mb2ammo[AMMO_POWERCELL] = 150; break;
 
 		// AMMO_BOWCASTER (max 175)
 		case WP_BOWCASTER:
-			ps->ammo[AMMO_BOWCASTER] = 175; break;
+			mb2ammo[AMMO_BOWCASTER] = 175; break;
 
 		// AMMO_CLONERIFLE (max 150)
 		case WP_CLONE_RIFLE:
-			ps->ammo[AMMO_CLONERIFLE] = 150; break;
+			mb2ammo[AMMO_CLONERIFLE] = 150; break;
 
 		// AMMO_THROWER (max 100)
 		case WP_THROWER:
-			ps->ammo[AMMO_THROWER] = 100; break;
+			mb2ammo[AMMO_THROWER] = 100; break;
 
 		// AMMO_MINIGUN (max 150)
 		case WP_MINIGUN:
-			ps->ammo[AMMO_MINIGUN] = 150; break;
+			mb2ammo[AMMO_MINIGUN] = 150; break;
 
 		// AMMO_DEMP2 (max 100)
 		case WP_DEMP2:
-			ps->ammo[AMMO_DEMP2] = 100; break;
+			mb2ammo[AMMO_DEMP2] = 100; break;
 
 		// AMMO_SHOTGUN (max 100)
 		case WP_SHOTGUN:
-			ps->ammo[AMMO_SHOTGUN] = 100; break;
+			mb2ammo[AMMO_SHOTGUN] = 100; break;
 
 		// AMMO_FLECHETTE (max 100)
 		case WP_FLECHETTE:
-			ps->ammo[AMMO_FLECHETTE] = 100; break;
+			mb2ammo[AMMO_FLECHETTE] = 100; break;
 
 		// AMMO_T21 (max 150)
 		case WP_T21:
-			ps->ammo[AMMO_T21] = 150; break;
+			mb2ammo[AMMO_T21] = 150; break;
 
 		// AMMO_HOMING (max 100) — Rocket Launcher
 		case WP_ROCKET_LAUNCHER:
-			ps->ammo[AMMO_HOMING] = 100; break;
+			mb2ammo[AMMO_HOMING] = 100; break;
 
 		// AMMO_ROCKETS (max 6) — PLX-1
 		case WP_PLX1:
-			ps->ammo[AMMO_ROCKETS] = 6; break;
+			mb2ammo[AMMO_ROCKETS] = 6; break;
 
 		// AMMO_EE4 (max 150)
 		case WP_EE4:
-			ps->ammo[AMMO_EE4] = 150; break;
+			mb2ammo[AMMO_EE4] = 150; break;
 
 		// AMMO_AMBAN (max 12)
 		case WP_AMBAN:
-			ps->ammo[AMMO_AMBAN] = 12; break;
+			mb2ammo[AMMO_AMBAN] = 12; break;
 
 		// AMMO_PROJECTILE (max 10)
 		case WP_PROJ:
-			ps->ammo[AMMO_PROJECTILE] = 10; break;
+			mb2ammo[AMMO_PROJECTILE] = 10; break;
 
 		// AMMO_CONCUSSION (max 100)
 		case WP_CONCUSSION:
-			ps->ammo[AMMO_CONCUSSION] = 100; break;
+			mb2ammo[AMMO_CONCUSSION] = 100; break;
 
 		// ── Grenades / Explosives ────────────────────────────────────────────
 		// AMMO_THERMAL (max 3)
 		case WP_THERMAL:
-			ps->ammo[AMMO_THERMAL] = 3; break;
+			mb2ammo[AMMO_THERMAL] = 3; break;
 
 		// AMMO_FRAG_NADE (max 1)
 		case WP_FRAG_NADE:
-			ps->ammo[AMMO_FRAG_NADE] = 1; break;
+			mb2ammo[AMMO_FRAG_NADE] = 1; break;
 
 		// AMMO_REAL_TD (max 1)
 		case WP_REAL_TD:
-			ps->ammo[AMMO_REAL_TD] = 1; break;
+			mb2ammo[AMMO_REAL_TD] = 1; break;
 
 		// AMMO_TRIPMINE (max 3)
 		case WP_TRIP_MINE:
-			ps->ammo[AMMO_TRIPMINE] = 3; break;
+			mb2ammo[AMMO_TRIPMINE] = 3; break;
 
 		// AMMO_PULSE_NADE (max 1)
 		case WP_PULSE_NADE:
-			ps->ammo[AMMO_PULSE_NADE] = 1; break;
+			mb2ammo[AMMO_PULSE_NADE] = 1; break;
 
 		// AMMO_FIRE_NADE (max 1)
 		case WP_FIRE_NADE:
-			ps->ammo[AMMO_FIRE_NADE] = 1; break;
+			mb2ammo[AMMO_FIRE_NADE] = 1; break;
 
 		// AMMO_SONIC_NADE (max 1)
 		case WP_SONIC_NADE:
-			ps->ammo[AMMO_SONIC_NADE] = 1; break;
+			mb2ammo[AMMO_SONIC_NADE] = 1; break;
 
 		// AMMO_CRYO_NADE (max 1)
 		case WP_CRYO_NADE:
-			ps->ammo[AMMO_CRYO_NADE] = 1; break;
+			mb2ammo[AMMO_CRYO_NADE] = 1; break;
 
 		// AMMO_CONC_NADE (max 1)
 		case WP_CONC_NADE:
-			ps->ammo[AMMO_CONC_NADE] = 1; break;
+			mb2ammo[AMMO_CONC_NADE] = 1; break;
 
 		// AMMO_DETPACK (max 3)
 		case WP_DET_PACK:
-			ps->ammo[AMMO_DETPACK] = 3; break;
+			mb2ammo[AMMO_DETPACK] = 3; break;
 
 		// AMMO_STICKY_BOMBS (max 15) — MGL
 		case WP_MGL:
-			ps->ammo[AMMO_STICKY_BOMBS] = 15; break;
+			mb2ammo[AMMO_STICKY_BOMBS] = 15; break;
 
 		// WP_UGL uses AMMO_NONE (draws from carried grenades — no pool to fill)
 		case WP_UGL:
