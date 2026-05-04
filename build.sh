@@ -15,11 +15,17 @@ if [[ "$INSTALL_DEPS" == "1" ]]; then
     sudo dpkg --add-architecture i386
     sudo apt-get update
     sudo apt-get install -y \
-        build-essential cmake \
+        build-essential cmake curl \
         gcc-multilib g++-multilib \
         libjpeg-dev:i386 \
         libpng-dev:i386 \
         zlib1g-dev:i386
+
+    echo "==> Updating gsl-lite to v0.41.0..."
+    GSL_DIR="$OPENJK_DIR/lib/gsl-lite"
+    rm -rf "$GSL_DIR"/*
+    curl -L https://github.com/gsl-lite/gsl-lite/archive/refs/tags/v0.41.0.tar.gz \
+        | tar xz --strip-components=1 -C "$GSL_DIR"
 fi
 
 echo "==> Configuring CMake (i386)..."

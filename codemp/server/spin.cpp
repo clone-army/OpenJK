@@ -1,4 +1,4 @@
-/*
+﻿/*
 ===========================================================================
 spin.cpp — Spin mode logic for OpenJK / MB2
 
@@ -67,6 +67,177 @@ static void Spin_EnsureForcePool(client_t* cl)
 	if (cl->gentity->playerState->fd.forcePowerMax == 0) {
 		cl->gentity->playerState->fd.forcePowerMax = 100;
 		cl->gentity->playerState->fd.forcePower    = 100;
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Spin_GiveWeaponAmmo
+// Directly sets ps->ammo[] for the specific ammo type used by the given
+// weapon, capped to its in-game maximum.  Avoids "give ammo N" which floods
+// all 70+ ammo slots (including grenades capped at 1, rockets capped at 6).
+//
+// Ammo indices and maxes mirror weaponData[].ammoIndex / ammoData[].max
+// from moviebattles-master/game/bg_weapons.c.
+// ─────────────────────────────────────────────────────────────────────────────
+static void Spin_GiveWeaponAmmo(client_t* cl, weapon_t weapon)
+{
+	playerState_t* ps = cl->gentity->playerState;
+	if (!ps) return;
+
+	switch (weapon) {
+		// AMMO_PISTOL (max 60) — Bryar Pistol, Heavy Pistol
+		case WP_BRYAR_PISTOL:
+		case WP_HEAVY_PISTOL:
+			ps->ammo[AMMO_PISTOL] = 60; break;
+
+		// AMMO_WESTAR (max 175) — Mando Pistol, Classic Bryar
+		case WP_MANDO_PISTOL:
+		case WP_BRYAR_OLD:
+			ps->ammo[AMMO_WESTAR] = 175; break;
+
+		// AMMO_CLONEPISTOL (max 175)
+		case WP_CLONE_PISTOL:
+			ps->ammo[AMMO_CLONEPISTOL] = 175; break;
+
+		// AMMO_EE3 (max 150)
+		case WP_EE3:
+			ps->ammo[AMMO_EE3] = 150; break;
+
+		// AMMO_BLASTER (max 120) — E-11, DC-15 Carbine
+		case WP_BLASTER:
+		case WP_DC_CARBINE:
+			ps->ammo[AMMO_BLASTER] = 120; break;
+
+		// AMMO_CR2 (max 150)
+		case WP_CR2:
+			ps->ammo[AMMO_CR2] = 150; break;
+
+		// AMMO_E22 (max 150)
+		case WP_E_22:
+			ps->ammo[AMMO_E22] = 150; break;
+
+		// AMMO_METAL_BOLTS (max 150) — DLT-19, Repeater, A280, DLT-20A, M5, SBD
+		case WP_DLT19:
+		case WP_REPEATER:
+		case WP_A280:
+		case WP_DLT20A:
+		case WP_M5:
+		case WP_SBD:
+			ps->ammo[AMMO_METAL_BOLTS] = 150; break;
+
+		// AMMO_TRAD_CASTER (max 150)
+		case WP_TRAD_BOWCASTER:
+			ps->ammo[AMMO_TRAD_CASTER] = 150; break;
+
+		// AMMO_POWERCELL (max 150) — Disruptor
+		case WP_DISRUPTOR:
+			ps->ammo[AMMO_POWERCELL] = 150; break;
+
+		// AMMO_BOWCASTER (max 175)
+		case WP_BOWCASTER:
+			ps->ammo[AMMO_BOWCASTER] = 175; break;
+
+		// AMMO_CLONERIFLE (max 150)
+		case WP_CLONE_RIFLE:
+			ps->ammo[AMMO_CLONERIFLE] = 150; break;
+
+		// AMMO_THROWER (max 100)
+		case WP_THROWER:
+			ps->ammo[AMMO_THROWER] = 100; break;
+
+		// AMMO_MINIGUN (max 150)
+		case WP_MINIGUN:
+			ps->ammo[AMMO_MINIGUN] = 150; break;
+
+		// AMMO_DEMP2 (max 100)
+		case WP_DEMP2:
+			ps->ammo[AMMO_DEMP2] = 100; break;
+
+		// AMMO_SHOTGUN (max 100)
+		case WP_SHOTGUN:
+			ps->ammo[AMMO_SHOTGUN] = 100; break;
+
+		// AMMO_FLECHETTE (max 100)
+		case WP_FLECHETTE:
+			ps->ammo[AMMO_FLECHETTE] = 100; break;
+
+		// AMMO_T21 (max 150)
+		case WP_T21:
+			ps->ammo[AMMO_T21] = 150; break;
+
+		// AMMO_HOMING (max 100) — Rocket Launcher
+		case WP_ROCKET_LAUNCHER:
+			ps->ammo[AMMO_HOMING] = 100; break;
+
+		// AMMO_ROCKETS (max 6) — PLX-1
+		case WP_PLX1:
+			ps->ammo[AMMO_ROCKETS] = 6; break;
+
+		// AMMO_EE4 (max 150)
+		case WP_EE4:
+			ps->ammo[AMMO_EE4] = 150; break;
+
+		// AMMO_AMBAN (max 12)
+		case WP_AMBAN:
+			ps->ammo[AMMO_AMBAN] = 12; break;
+
+		// AMMO_PROJECTILE (max 10)
+		case WP_PROJ:
+			ps->ammo[AMMO_PROJECTILE] = 10; break;
+
+		// AMMO_CONCUSSION (max 100)
+		case WP_CONCUSSION:
+			ps->ammo[AMMO_CONCUSSION] = 100; break;
+
+		// ── Grenades / Explosives ────────────────────────────────────────────
+		// AMMO_THERMAL (max 3)
+		case WP_THERMAL:
+			ps->ammo[AMMO_THERMAL] = 3; break;
+
+		// AMMO_FRAG_NADE (max 1)
+		case WP_FRAG_NADE:
+			ps->ammo[AMMO_FRAG_NADE] = 1; break;
+
+		// AMMO_REAL_TD (max 1)
+		case WP_REAL_TD:
+			ps->ammo[AMMO_REAL_TD] = 1; break;
+
+		// AMMO_TRIPMINE (max 3)
+		case WP_TRIP_MINE:
+			ps->ammo[AMMO_TRIPMINE] = 3; break;
+
+		// AMMO_PULSE_NADE (max 1)
+		case WP_PULSE_NADE:
+			ps->ammo[AMMO_PULSE_NADE] = 1; break;
+
+		// AMMO_FIRE_NADE (max 1)
+		case WP_FIRE_NADE:
+			ps->ammo[AMMO_FIRE_NADE] = 1; break;
+
+		// AMMO_SONIC_NADE (max 1)
+		case WP_SONIC_NADE:
+			ps->ammo[AMMO_SONIC_NADE] = 1; break;
+
+		// AMMO_CRYO_NADE (max 1)
+		case WP_CRYO_NADE:
+			ps->ammo[AMMO_CRYO_NADE] = 1; break;
+
+		// AMMO_CONC_NADE (max 1)
+		case WP_CONC_NADE:
+			ps->ammo[AMMO_CONC_NADE] = 1; break;
+
+		// AMMO_DETPACK (max 3)
+		case WP_DET_PACK:
+			ps->ammo[AMMO_DETPACK] = 3; break;
+
+		// AMMO_STICKY_BOMBS (max 15) — MGL
+		case WP_MGL:
+			ps->ammo[AMMO_STICKY_BOMBS] = 15; break;
+
+		// WP_UGL uses AMMO_NONE (draws from carried grenades — no pool to fill)
+		case WP_UGL:
+		default:
+			break;
 	}
 }
 
@@ -252,7 +423,7 @@ void SV_Spin(client_t* cl) {
 
 		if (Spin_HasWon(cprizes, rando, WIN_BRYAR)) {
 			SV_WannaGiveWeapon(cl, WP_BRYAR_PISTOL);
-			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Spin_GiveWeaponAmmo(cl, WP_BRYAR_PISTOL);
 			Com_Printf("Giving %s^7 a Bryar Pistol\n", playername);
 			response = "You win a Bryar Pistol";
 			valid_spin = qtrue; break;
@@ -260,7 +431,7 @@ void SV_Spin(client_t* cl) {
 
 		if (Spin_HasWon(cprizes, rando, WIN_CLONE_PISTOL)) {
 			SV_WannaGiveWeapon(cl, WP_CLONE_PISTOL);
-			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Spin_GiveWeaponAmmo(cl, WP_CLONE_PISTOL);
 			Com_Printf("Giving %s^7 a DC-17 Pistol\n", playername);
 			response = "You win a DC-17 Pistol";
 			valid_spin = qtrue; break;
@@ -268,7 +439,7 @@ void SV_Spin(client_t* cl) {
 
 		if (Spin_HasWon(cprizes, rando, WIN_MANDO_PISTOL)) {
 			SV_WannaGiveWeapon(cl, WP_MANDO_PISTOL);
-			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Spin_GiveWeaponAmmo(cl, WP_MANDO_PISTOL);
 			Com_Printf("Giving %s^7 a Westar 34\n", playername);
 			response = "You win a Westar 34";
 			valid_spin = qtrue; break;
@@ -276,7 +447,7 @@ void SV_Spin(client_t* cl) {
 
 		if (Spin_HasWon(cprizes, rando, WIN_HEAVY_PISTOL)) {
 			SV_WannaGiveWeapon(cl, WP_HEAVY_PISTOL);
-			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Spin_GiveWeaponAmmo(cl, WP_HEAVY_PISTOL);
 			Com_Printf("Giving %s^7 a Heavy Pistol\n", playername);
 			response = "You win a Heavy Pistol";
 			valid_spin = qtrue; break;
@@ -284,7 +455,7 @@ void SV_Spin(client_t* cl) {
 
 		if (Spin_HasWon(cprizes, rando, WIN_BRYAR_OLD)) {
 			SV_WannaGiveWeapon(cl, WP_BRYAR_OLD);
-			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Spin_GiveWeaponAmmo(cl, WP_BRYAR_OLD);
 			Com_Printf("Giving %s^7 a Classic Bryar Pistol\n", playername);
 			response = "You win a Classic Bryar Pistol";
 			valid_spin = qtrue; break;
@@ -292,7 +463,7 @@ void SV_Spin(client_t* cl) {
 
 		if (Spin_HasWon(cprizes, rando, WIN_EE3)) {
 			SV_WannaGiveWeapon(cl, WP_EE3);
-			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Spin_GiveWeaponAmmo(cl, WP_EE3);
 			Com_Printf("Giving %s^7 an EE-3\n", playername);
 			response = "You win an EE-3";
 			valid_spin = qtrue; break;
@@ -302,7 +473,7 @@ void SV_Spin(client_t* cl) {
 
 		if (Spin_HasWon(cprizes, rando, WIN_BLASTER)) {
 			SV_WannaGiveWeapon(cl, WP_BLASTER);
-			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Spin_GiveWeaponAmmo(cl, WP_BLASTER);
 			Com_Printf("Giving %s^7 an E-11 Blaster\n", playername);
 			response = "You win an E-11 Blaster";
 			valid_spin = qtrue; break;
@@ -310,7 +481,7 @@ void SV_Spin(client_t* cl) {
 
 		if (Spin_HasWon(cprizes, rando, WIN_DC_CARBINE)) {
 			SV_WannaGiveWeapon(cl, WP_DC_CARBINE);
-			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Spin_GiveWeaponAmmo(cl, WP_DC_CARBINE);
 			Com_Printf("Giving %s^7 a DC-15 Carbine\n", playername);
 			response = "You win a DC-15 Carbine";
 			valid_spin = qtrue; break;
@@ -318,7 +489,7 @@ void SV_Spin(client_t* cl) {
 
 		if (Spin_HasWon(cprizes, rando, WIN_CR2)) {
 			SV_WannaGiveWeapon(cl, WP_CR2);
-			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Spin_GiveWeaponAmmo(cl, WP_CR2);
 			Com_Printf("Giving %s^7 a CR-2\n", playername);
 			response = "You win a CR-2";
 			valid_spin = qtrue; break;
@@ -326,7 +497,7 @@ void SV_Spin(client_t* cl) {
 
 		if (Spin_HasWon(cprizes, rando, WIN_E22)) {
 			SV_WannaGiveWeapon(cl, WP_E_22);
-			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Spin_GiveWeaponAmmo(cl, WP_E_22);
 			Com_Printf("Giving %s^7 an E-22\n", playername);
 			response = "You win an E-22";
 			valid_spin = qtrue; break;
@@ -334,7 +505,7 @@ void SV_Spin(client_t* cl) {
 
 		if (Spin_HasWon(cprizes, rando, WIN_DLT19)) {
 			SV_WannaGiveWeapon(cl, WP_DLT19);
-			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Spin_GiveWeaponAmmo(cl, WP_DLT19);
 			Com_Printf("Giving %s^7 a DLT-19\n", playername);
 			response = "You win a DLT-19";
 			valid_spin = qtrue; break;
@@ -342,7 +513,7 @@ void SV_Spin(client_t* cl) {
 
 		if (Spin_HasWon(cprizes, rando, WIN_TRAD_BOWCASTER)) {
 			SV_WannaGiveWeapon(cl, WP_TRAD_BOWCASTER);
-			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Spin_GiveWeaponAmmo(cl, WP_TRAD_BOWCASTER);
 			Com_Printf("Giving %s^7 a Traditional Bowcaster\n", playername);
 			response = "You win a Traditional Bowcaster";
 			valid_spin = qtrue; break;
@@ -350,7 +521,7 @@ void SV_Spin(client_t* cl) {
 
 		if (Spin_HasWon(cprizes, rando, WIN_DISRUPTOR)) {
 			SV_WannaGiveWeapon(cl, WP_DISRUPTOR);
-			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Spin_GiveWeaponAmmo(cl, WP_DISRUPTOR);
 			Com_Printf("Giving %s^7 a Disruptor Rifle\n", playername);
 			response = "You win a Disruptor Rifle";
 			valid_spin = qtrue; break;
@@ -358,7 +529,7 @@ void SV_Spin(client_t* cl) {
 
 		if (Spin_HasWon(cprizes, rando, WIN_BOWCASTER)) {
 			SV_WannaGiveWeapon(cl, WP_BOWCASTER);
-			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Spin_GiveWeaponAmmo(cl, WP_BOWCASTER);
 			Com_Printf("Giving %s^7 a Bowcaster\n", playername);
 			response = "You win a Bowcaster";
 			valid_spin = qtrue; break;
@@ -366,7 +537,7 @@ void SV_Spin(client_t* cl) {
 
 		if (Spin_HasWon(cprizes, rando, WIN_REPEATER)) {
 			SV_WannaGiveWeapon(cl, WP_REPEATER);
-			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Spin_GiveWeaponAmmo(cl, WP_REPEATER);
 			Com_Printf("Giving %s^7 an Imperial Repeater\n", playername);
 			response = "You win an Imperial Repeater";
 			valid_spin = qtrue; break;
@@ -374,7 +545,7 @@ void SV_Spin(client_t* cl) {
 
 		if (Spin_HasWon(cprizes, rando, WIN_CLONE_RIFLE)) {
 			SV_WannaGiveWeapon(cl, WP_CLONE_RIFLE);
-			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Spin_GiveWeaponAmmo(cl, WP_CLONE_RIFLE);
 			Com_Printf("Giving %s^7 a DC-15A Clone Rifle\n", playername);
 			response = "You win a DC-15A Clone Rifle";
 			valid_spin = qtrue; break;
@@ -382,7 +553,7 @@ void SV_Spin(client_t* cl) {
 
 		if (Spin_HasWon(cprizes, rando, WIN_A280)) {
 			SV_WannaGiveWeapon(cl, WP_A280);
-			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Spin_GiveWeaponAmmo(cl, WP_A280);
 			Com_Printf("Giving %s^7 an A280\n", playername);
 			response = "You win an A280";
 			valid_spin = qtrue; break;
@@ -390,7 +561,7 @@ void SV_Spin(client_t* cl) {
 
 		if (Spin_HasWon(cprizes, rando, WIN_DLT20A)) {
 			SV_WannaGiveWeapon(cl, WP_DLT20A);
-			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Spin_GiveWeaponAmmo(cl, WP_DLT20A);
 			Com_Printf("Giving %s^7 a DLT-20A\n", playername);
 			response = "You win a DLT-20A";
 			valid_spin = qtrue; break;
@@ -398,7 +569,7 @@ void SV_Spin(client_t* cl) {
 
 		if (Spin_HasWon(cprizes, rando, WIN_M5)) {
 			SV_WannaGiveWeapon(cl, WP_M5);
-			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Spin_GiveWeaponAmmo(cl, WP_M5);
 			Com_Printf("Giving %s^7 an M5\n", playername);
 			response = "You win an M5";
 			valid_spin = qtrue; break;
@@ -406,7 +577,7 @@ void SV_Spin(client_t* cl) {
 
 		if (Spin_HasWon(cprizes, rando, WIN_T21)) {
 			SV_WannaGiveWeapon(cl, WP_T21);
-			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Spin_GiveWeaponAmmo(cl, WP_T21);
 			Com_Printf("Giving %s^7 a T-21\n", playername);
 			response = "You win a T-21";
 			valid_spin = qtrue; break;
@@ -414,7 +585,7 @@ void SV_Spin(client_t* cl) {
 
 		if (Spin_HasWon(cprizes, rando, WIN_EE4)) {
 			SV_WannaGiveWeapon(cl, WP_EE4);
-			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Spin_GiveWeaponAmmo(cl, WP_EE4);
 			Com_Printf("Giving %s^7 an EE-4\n", playername);
 			response = "You win an EE-4";
 			valid_spin = qtrue; break;
@@ -422,7 +593,7 @@ void SV_Spin(client_t* cl) {
 
 		if (Spin_HasWon(cprizes, rando, WIN_AMBAN)) {
 			SV_WannaGiveWeapon(cl, WP_AMBAN);
-			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Spin_GiveWeaponAmmo(cl, WP_AMBAN);
 			Com_Printf("Giving %s^7 an Amban Phase-Pulse Rifle\n", playername);
 			response = "You win an Amban Phase-Pulse Rifle";
 			valid_spin = qtrue; break;
@@ -430,7 +601,7 @@ void SV_Spin(client_t* cl) {
 
 		if (Spin_HasWon(cprizes, rando, WIN_PROJ)) {
 			SV_WannaGiveWeapon(cl, WP_PROJ);
-			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Spin_GiveWeaponAmmo(cl, WP_PROJ);
 			Com_Printf("Giving %s^7 a Projectile Rifle\n", playername);
 			response = "You win a Projectile Rifle";
 			valid_spin = qtrue; break;
@@ -438,7 +609,7 @@ void SV_Spin(client_t* cl) {
 
 		if (Spin_HasWon(cprizes, rando, WIN_SBD)) {
 			SV_WannaGiveWeapon(cl, WP_SBD);
-			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Spin_GiveWeaponAmmo(cl, WP_SBD);
 			Com_Printf("Giving %s^7 an SBD Wrist Blaster\n", playername);
 			response = "You win an SBD Wrist Blaster";
 			valid_spin = qtrue; break;
@@ -448,7 +619,7 @@ void SV_Spin(client_t* cl) {
 
 		if (Spin_HasWon(cprizes, rando, WIN_DEMP2)) {
 			SV_WannaGiveWeapon(cl, WP_DEMP2);
-			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Spin_GiveWeaponAmmo(cl, WP_DEMP2);
 			Com_Printf("Giving %s^7 a DEMP-2\n", playername);
 			response = "You win a DEMP-2";
 			valid_spin = qtrue; break;
@@ -456,7 +627,7 @@ void SV_Spin(client_t* cl) {
 
 		if (Spin_HasWon(cprizes, rando, WIN_FLECHETTE)) {
 			SV_WannaGiveWeapon(cl, WP_FLECHETTE);
-			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Spin_GiveWeaponAmmo(cl, WP_FLECHETTE);
 			Com_Printf("Giving %s^7 a Flechette Cannon\n", playername);
 			response = "You win a Flechette Cannon";
 			valid_spin = qtrue; break;
@@ -464,7 +635,7 @@ void SV_Spin(client_t* cl) {
 
 		if (Spin_HasWon(cprizes, rando, WIN_CONCUSSION)) {
 			SV_WannaGiveWeapon(cl, WP_CONCUSSION);
-			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Spin_GiveWeaponAmmo(cl, WP_CONCUSSION);
 			Com_Printf("Giving %s^7 a Concussion Rifle\n", playername);
 			response = "You win a Concussion Rifle";
 			valid_spin = qtrue; break;
@@ -472,7 +643,7 @@ void SV_Spin(client_t* cl) {
 
 		if (Spin_HasWon(cprizes, rando, WIN_THROWER)) {
 			SV_WannaGiveWeapon(cl, WP_THROWER);
-			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Spin_GiveWeaponAmmo(cl, WP_THROWER);
 			Com_Printf("Giving %s^7 a Flamethrower\n", playername);
 			response = "You win a Flamethrower";
 			valid_spin = qtrue; break;
@@ -480,7 +651,7 @@ void SV_Spin(client_t* cl) {
 
 		if (Spin_HasWon(cprizes, rando, WIN_MINIGUN)) {
 			SV_WannaGiveWeapon(cl, WP_MINIGUN);
-			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Spin_GiveWeaponAmmo(cl, WP_MINIGUN);
 			Com_Printf("Giving %s^7 a Minigun\n", playername);
 			response = "You win a Minigun";
 			valid_spin = qtrue; break;
@@ -488,7 +659,7 @@ void SV_Spin(client_t* cl) {
 
 		if (Spin_HasWon(cprizes, rando, WIN_SHOTGUN)) {
 			SV_WannaGiveWeapon(cl, WP_SHOTGUN);
-			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Spin_GiveWeaponAmmo(cl, WP_SHOTGUN);
 			Com_Printf("Giving %s^7 a Shotgun\n", playername);
 			response = "You win a Shotgun";
 			valid_spin = qtrue; break;
@@ -498,7 +669,7 @@ void SV_Spin(client_t* cl) {
 
 		if (Spin_HasWon(cprizes, rando, WIN_ROCKET_LAUNCHER)) {
 			SV_WannaGiveWeapon(cl, WP_ROCKET_LAUNCHER);
-			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Spin_GiveWeaponAmmo(cl, WP_ROCKET_LAUNCHER);
 			Com_Printf("Giving %s^7 a Rocket Launcher\n", playername);
 			response = "You win a Rocket Launcher";
 			valid_spin = qtrue; break;
@@ -506,7 +677,7 @@ void SV_Spin(client_t* cl) {
 
 		if (Spin_HasWon(cprizes, rando, WIN_PLX1)) {
 			SV_WannaGiveWeapon(cl, WP_PLX1);
-			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Spin_GiveWeaponAmmo(cl, WP_PLX1);
 			Com_Printf("Giving %s^7 a PLX-1 Missile Launcher\n", playername);
 			response = "You win a PLX-1 Missile Launcher";
 			valid_spin = qtrue; break;
@@ -516,7 +687,7 @@ void SV_Spin(client_t* cl) {
 
 		if (Spin_HasWon(cprizes, rando, WIN_FRAG_NADE)) {
 			SV_WannaGiveWeapon(cl, WP_FRAG_NADE);
-			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Spin_GiveWeaponAmmo(cl, WP_FRAG_NADE);
 			Com_Printf("Giving %s^7 Frag Grenades\n", playername);
 			response = "You win Frag Grenades";
 			valid_spin = qtrue; break;
@@ -524,7 +695,7 @@ void SV_Spin(client_t* cl) {
 
 		if (Spin_HasWon(cprizes, rando, WIN_PULSE_NADE)) {
 			SV_WannaGiveWeapon(cl, WP_PULSE_NADE);
-			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Spin_GiveWeaponAmmo(cl, WP_PULSE_NADE);
 			Com_Printf("Giving %s^7 Pulse Grenades\n", playername);
 			response = "You win Pulse Grenades";
 			valid_spin = qtrue; break;
@@ -532,7 +703,7 @@ void SV_Spin(client_t* cl) {
 
 		if (Spin_HasWon(cprizes, rando, WIN_THERMAL)) {
 			SV_WannaGiveWeapon(cl, WP_THERMAL);
-			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Spin_GiveWeaponAmmo(cl, WP_THERMAL);
 			Com_Printf("Giving %s^7 a Thermal Detonator\n", playername);
 			response = "You win a Thermal Detonator";
 			valid_spin = qtrue; break;
@@ -540,7 +711,7 @@ void SV_Spin(client_t* cl) {
 
 		if (Spin_HasWon(cprizes, rando, WIN_REAL_TD)) {
 			SV_WannaGiveWeapon(cl, WP_REAL_TD);
-			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Spin_GiveWeaponAmmo(cl, WP_REAL_TD);
 			Com_Printf("Giving %s^7 a Proximity Detonator\n", playername);
 			response = "You win a Proximity Detonator";
 			valid_spin = qtrue; break;
@@ -548,7 +719,7 @@ void SV_Spin(client_t* cl) {
 
 		if (Spin_HasWon(cprizes, rando, WIN_FIRE_NADE)) {
 			SV_WannaGiveWeapon(cl, WP_FIRE_NADE);
-			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Spin_GiveWeaponAmmo(cl, WP_FIRE_NADE);
 			Com_Printf("Giving %s^7 an Incendiary Grenade\n", playername);
 			response = "You win an Incendiary Grenade";
 			valid_spin = qtrue; break;
@@ -556,7 +727,7 @@ void SV_Spin(client_t* cl) {
 
 		if (Spin_HasWon(cprizes, rando, WIN_SONIC_NADE)) {
 			SV_WannaGiveWeapon(cl, WP_SONIC_NADE);
-			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Spin_GiveWeaponAmmo(cl, WP_SONIC_NADE);
 			Com_Printf("Giving %s^7 a Sonic Grenade\n", playername);
 			response = "You win a Sonic Grenade";
 			valid_spin = qtrue; break;
@@ -564,7 +735,7 @@ void SV_Spin(client_t* cl) {
 
 		if (Spin_HasWon(cprizes, rando, WIN_CRYO_NADE)) {
 			SV_WannaGiveWeapon(cl, WP_CRYO_NADE);
-			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Spin_GiveWeaponAmmo(cl, WP_CRYO_NADE);
 			Com_Printf("Giving %s^7 a Cryo Grenade\n", playername);
 			response = "You win a Cryo Grenade";
 			valid_spin = qtrue; break;
@@ -572,7 +743,7 @@ void SV_Spin(client_t* cl) {
 
 		if (Spin_HasWon(cprizes, rando, WIN_CONC_NADE)) {
 			SV_WannaGiveWeapon(cl, WP_CONC_NADE);
-			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Spin_GiveWeaponAmmo(cl, WP_CONC_NADE);
 			Com_Printf("Giving %s^7 a Concussion Grenade\n", playername);
 			response = "You win a Concussion Grenade";
 			valid_spin = qtrue; break;
@@ -580,7 +751,7 @@ void SV_Spin(client_t* cl) {
 
 		if (Spin_HasWon(cprizes, rando, WIN_TRIP_MINE)) {
 			SV_WannaGiveWeapon(cl, WP_TRIP_MINE);
-			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Spin_GiveWeaponAmmo(cl, WP_TRIP_MINE);
 			Com_Printf("Giving %s^7 a Trip Mine\n", playername);
 			response = "You win a Trip Mine";
 			valid_spin = qtrue; break;
@@ -588,7 +759,7 @@ void SV_Spin(client_t* cl) {
 
 		if (Spin_HasWon(cprizes, rando, WIN_DET_PACK)) {
 			SV_WannaGiveWeapon(cl, WP_DET_PACK);
-			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Spin_GiveWeaponAmmo(cl, WP_DET_PACK);
 			Com_Printf("Giving %s^7 a Det Pack\n", playername);
 			response = "You win a Det Pack";
 			valid_spin = qtrue; break;
@@ -596,7 +767,7 @@ void SV_Spin(client_t* cl) {
 
 		if (Spin_HasWon(cprizes, rando, WIN_UGL)) {
 			SV_WannaGiveWeapon(cl, WP_UGL);
-			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Spin_GiveWeaponAmmo(cl, WP_UGL);
 			Com_Printf("Giving %s^7 a Universal Grenade Launcher\n", playername);
 			response = "You win a Universal Grenade Launcher";
 			valid_spin = qtrue; break;
@@ -604,7 +775,7 @@ void SV_Spin(client_t* cl) {
 
 		if (Spin_HasWon(cprizes, rando, WIN_MGL)) {
 			SV_WannaGiveWeapon(cl, WP_MGL);
-			SV_ExecuteClientCommand(cl, "give ammo 500", qtrue);
+			Spin_GiveWeaponAmmo(cl, WP_MGL);
 			Com_Printf("Giving %s^7 a Micro Grenade Launcher\n", playername);
 			response = "You win a Micro Grenade Launcher";
 			valid_spin = qtrue; break;
