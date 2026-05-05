@@ -53,10 +53,8 @@ static void SV_DrainDeferredCmds(void)
 		client_t* cl = &svs.clients[dc.clientNum];
 		if (cl->state == CS_ACTIVE && cl->gentity) {
 			Cvar_Set("sv_cheats", "1");
-			GVM_RunFrame(sv.time);
 			SV_ExecuteClientCommand(cl, dc.cmd.c_str(), qtrue);
 			Cvar_Set("sv_cheats", "0");
-			GVM_RunFrame(sv.time);
 		}
 		gDeferredCmds.erase(gDeferredCmds.begin() + i);
 	}
