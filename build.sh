@@ -50,8 +50,8 @@ make -j$(nproc)
 
 echo "==> Stopping TEST Instance"
 
-mbii -i test stop
-mbii -i test stop
+mbii -i chaos stop
+mbii -i chaos stop
 
 echo ""
 echo "==> Installing binary to /usr/bin/spin.i386..."
@@ -60,5 +60,5 @@ sudo chmod +x /usr/bin/spin.i386
 
 echo "==> Done! Binary installed at /usr/bin/spin.i386"
 
-echo "==> Restarting TEST Instance"
-mbii -i test start
+echo "==> Restarting chaos Instance"
+mbii -i chaos start
