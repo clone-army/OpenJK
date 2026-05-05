@@ -31,12 +31,12 @@ void SV_WannaGiveWeapon(client_t* cl, int wnum);
 // Internal helpers: delayed command execution and timed powerups
 // ─────────────────────────────────────────────────────────────────────────────
 
-void SV_ExecuteClientCommandDelayed_h(client_t* cl, char* cmd, int delay)
+void SV_ExecuteClientCommandDelayed_h(client_t* cl, std::string cmd, int delay)
 {
 	std::this_thread::sleep_for(std::chrono::seconds(delay));
 	Cvar_Set("sv_cheats", "1");
 	GVM_RunFrame(sv.time);
-	SV_ExecuteClientCommand(cl, cmd, qtrue);
+	SV_ExecuteClientCommand(cl, cmd.c_str(), qtrue);
 	Cvar_Set("sv_cheats", "0");
 	GVM_RunFrame(sv.time);
 }
@@ -48,9 +48,11 @@ void SV_ClientTimedPowerup_h(client_t* cl, int pu, int duration)
 	cl->gentity->playerState->powerups[pu] = -1;
 }
 
-void SV_ExecuteClientCommandDelayed(client_t* cl, char* cmd, int delay)
+void SV_ExecuteClientCommandDelayed(client_t* cl, const char* cmd, int delay)
 {
-	std::thread(SV_ExecuteClientCommandDelayed_h, cl, cmd, delay).detach();
+	// std::string copy ensures the command buffer lives for the lifetime of the thread,
+	// even if the caller passes a stack-allocated char[] that goes out of scope.
+	std::thread(SV_ExecuteClientCommandDelayed_h, cl, std::string(cmd), delay).detach();
 }
 
 void SV_ClientTimedPowerup(client_t* cl, int pu, int duration)
@@ -819,14 +821,14 @@ void SV_Spin(client_t* cl) {
 		// ── Equipment ───────────────────────────────────────────────────────
 
 		if (Spin_HasWon(cprizes, rando, WIN_100_ARMOR)) {
-			cl->gentity->playerState->stats[STAT_ARMOR] += 100;
+			SV_ExecuteClientCommand(cl, "give addarmor 100", qtrue);
 			Com_Printf("Giving %s^7 100 Armor\n", playername);
 			response = "You win 100 extra Armor";
 			valid_spin = qtrue; break;
 		}
 
 		if (Spin_HasWon(cprizes, rando, WIN_250_ARMOR)) {
-			cl->gentity->playerState->stats[STAT_ARMOR] += 250;
+			SV_ExecuteClientCommand(cl, "give addarmor 250", qtrue);
 			Com_Printf("Giving %s^7 250 Armor\n", playername);
 			response = "You win 250 extra Armor";
 			valid_spin = qtrue; break;
@@ -966,183 +968,142 @@ void SV_Spin(client_t* cl) {
 		}
 
 		// ── Force Powers ─────────────────────────────────────────────────────
-		// NOTE: Individual power wins call Spin_EnsureForcePool() so that
-		// non-force-users actually have force energy to use the awarded power.
+		// Force powers are granted via "give fp N L" (game DLL client command)
+		// so that gclient_t::forcePowerLevel[] is set alongside ps->fd, which
+		// is the field actually checked by WP_ForcePowerUsable.
 
 		if (Spin_HasWon(cprizes, rando, WIN_FORCE_SENSITIVITY)) {
 			Com_Printf("Making %s^7 Force Sensitive\n", playername);
-			cl->gentity->playerState->fd.forcePower    = 300;
-			cl->gentity->playerState->fd.forcePowerMax = 300;
-			cl->gentity->playerState->jetpackFuel      = 100;
-			cl->gentity->playerState->fd.forcePowersKnown |= (1 << MB_FORCE_JUMP);
-			cl->gentity->playerState->fd.forcePowerLevel[MB_FORCE_JUMP]           = FORCE_LEVEL_1;
-			cl->gentity->playerState->fd.forcePowersKnown |= (1 << MB_FORCE_SABER_OFFENCE);
-			cl->gentity->playerState->fd.forcePowerLevel[MB_FORCE_SABER_OFFENCE]  = FORCE_LEVEL_2;
-			cl->gentity->playerState->fd.forcePowersKnown |= (1 << MB_FORCE_SABER_DEFENCE);
-			cl->gentity->playerState->fd.forcePowerLevel[MB_FORCE_SABER_DEFENCE]  = FORCE_LEVEL_2;
-			cl->gentity->playerState->fd.forcePowersKnown |= (1 << MB_FORCE_PULL);
-			cl->gentity->playerState->fd.forcePowerLevel[MB_FORCE_PULL]           = FORCE_LEVEL_2;
-			cl->gentity->playerState->fd.forcePowersKnown |= (1 << MB_FORCE_PUSH);
-			cl->gentity->playerState->fd.forcePowerLevel[MB_FORCE_PUSH]           = FORCE_LEVEL_2;
-			cl->gentity->playerState->fd.forcePowersKnown |= (1 << MB_FORCE_SPEED);
-			cl->gentity->playerState->fd.forcePowerLevel[MB_FORCE_SPEED]          = FORCE_LEVEL_2;
-			cl->gentity->playerState->fd.forcePowersKnown |= (1 << MB_FORCE_SENSE);
-			cl->gentity->playerState->fd.forcePowerLevel[MB_FORCE_SENSE]          = FORCE_LEVEL_2;
+			SV_ExecuteClientCommand(cl, "give forcepool 300", qtrue);
+			cl->gentity->playerState->jetpackFuel = 100;
+			SV_ExecuteClientCommand(cl, va("give fp %d 1", MB_FORCE_JUMP),           qtrue);
+			SV_ExecuteClientCommand(cl, va("give fp %d 2", MB_FORCE_SABER_OFFENCE),  qtrue);
+			SV_ExecuteClientCommand(cl, va("give fp %d 2", MB_FORCE_SABER_DEFENCE),  qtrue);
+			SV_ExecuteClientCommand(cl, va("give fp %d 2", MB_FORCE_PULL),           qtrue);
+			SV_ExecuteClientCommand(cl, va("give fp %d 2", MB_FORCE_PUSH),           qtrue);
+			SV_ExecuteClientCommand(cl, va("give fp %d 2", MB_FORCE_SPEED),          qtrue);
+			SV_ExecuteClientCommand(cl, va("give fp %d 2", MB_FORCE_SENSE),          qtrue);
 			response = "You Win Force Sensitivity!";
 			valid_spin = qtrue; break;
 		}
 
 		if (Spin_HasWon(cprizes, rando, WIN_FORCE_SPEED)) {
 			Com_Printf("Giving %s^7 Force Speed Level 3\n", playername);
-			cl->gentity->playerState->fd.forcePowersKnown |= (1 << MB_FORCE_SPEED);
-			cl->gentity->playerState->fd.forcePowerLevel[MB_FORCE_SPEED] = 3;
-			Spin_EnsureForcePool(cl);
+			SV_ExecuteClientCommand(cl, va("give fp %d 3", MB_FORCE_SPEED), qtrue);
 			response = "You Win Force Speed Level 3!";
 			valid_spin = qtrue; break;
 		}
 
 		if (Spin_HasWon(cprizes, rando, WIN_FORCE_PUSH)) {
 			Com_Printf("Giving %s^7 Force Push Level 3\n", playername);
-			cl->gentity->playerState->fd.forcePowersKnown |= (1 << MB_FORCE_PUSH);
-			cl->gentity->playerState->fd.forcePowerLevel[MB_FORCE_PUSH] = 3;
-			Spin_EnsureForcePool(cl);
+			SV_ExecuteClientCommand(cl, va("give fp %d 3", MB_FORCE_PUSH), qtrue);
 			response = "You Win Force Push Level 3!";
 			valid_spin = qtrue; break;
 		}
 
 		if (Spin_HasWon(cprizes, rando, WIN_FORCE_PULL)) {
 			Com_Printf("Giving %s^7 Force Pull Level 3\n", playername);
-			cl->gentity->playerState->fd.forcePowersKnown |= (1 << MB_FORCE_PULL);
-			cl->gentity->playerState->fd.forcePowerLevel[MB_FORCE_PULL] = 3;
-			Spin_EnsureForcePool(cl);
+			SV_ExecuteClientCommand(cl, va("give fp %d 3", MB_FORCE_PULL), qtrue);
 			response = "You Win Force Pull Level 3!";
 			valid_spin = qtrue; break;
 		}
 
 		if (Spin_HasWon(cprizes, rando, WIN_FORCE_LIGHTNING)) {
 			Com_Printf("Giving %s^7 Force Lightning Level 3\n", playername);
-			cl->gentity->playerState->fd.forcePowersKnown |= (1 << MB_FORCE_LIGHTNING);
-			cl->gentity->playerState->fd.forcePowerLevel[MB_FORCE_LIGHTNING] = 3;
-			Spin_EnsureForcePool(cl);
+			SV_ExecuteClientCommand(cl, va("give fp %d 3", MB_FORCE_LIGHTNING), qtrue);
 			response = "You Win Force Lightning Level 3!";
 			valid_spin = qtrue; break;
 		}
 
 		if (Spin_HasWon(cprizes, rando, WIN_FORCE_GRIP)) {
 			Com_Printf("Giving %s^7 Force Grip Level 3\n", playername);
-			cl->gentity->playerState->fd.forcePowersKnown |= (1 << MB_FORCE_GRIP);
-			cl->gentity->playerState->fd.forcePowerLevel[MB_FORCE_GRIP] = 3;
-			Spin_EnsureForcePool(cl);
+			SV_ExecuteClientCommand(cl, va("give fp %d 3", MB_FORCE_GRIP), qtrue);
 			response = "You Win Force Grip Level 3!";
 			valid_spin = qtrue; break;
 		}
 
 		if (Spin_HasWon(cprizes, rando, WIN_FORCE_MINDTRICK)) {
 			Com_Printf("Giving %s^7 Force Mind Trick Level 3\n", playername);
-			cl->gentity->playerState->fd.forcePowersKnown |= (1 << MB_FORCE_MIND_TRICK);
-			cl->gentity->playerState->fd.forcePowerLevel[MB_FORCE_MIND_TRICK] = 3;
-			Spin_EnsureForcePool(cl);
+			SV_ExecuteClientCommand(cl, va("give fp %d 3", MB_FORCE_MIND_TRICK), qtrue);
 			response = "You Win Force Mind Trick Level 3!";
 			valid_spin = qtrue; break;
 		}
 
 		if (Spin_HasWon(cprizes, rando, WIN_FORCE_HEAL)) {
 			Com_Printf("Giving %s^7 Force Heal Level 3\n", playername);
-			cl->gentity->playerState->fd.forcePowersKnown |= (1 << MB_FORCE_HEAL);
-			cl->gentity->playerState->fd.forcePowerLevel[MB_FORCE_HEAL] = 3;
-			Spin_EnsureForcePool(cl);
+			SV_ExecuteClientCommand(cl, va("give fp %d 3", MB_FORCE_HEAL), qtrue);
 			response = "You Win Force Heal Level 3!";
 			valid_spin = qtrue; break;
 		}
 
 		if (Spin_HasWon(cprizes, rando, WIN_FORCE_JUMP)) {
 			Com_Printf("Giving %s^7 Force Jump Level 3\n", playername);
-			cl->gentity->playerState->fd.forcePowersKnown |= (1 << MB_FORCE_JUMP);
-			cl->gentity->playerState->fd.forcePowerLevel[MB_FORCE_JUMP] = 3;
-			Spin_EnsureForcePool(cl);
+			SV_ExecuteClientCommand(cl, va("give fp %d 3", MB_FORCE_JUMP), qtrue);
 			response = "You Win Force Jump Level 3!";
 			valid_spin = qtrue; break;
 		}
 
 		if (Spin_HasWon(cprizes, rando, WIN_FORCE_DESTRUCTION)) {
 			Com_Printf("Giving %s^7 Force Destruction Level 3\n", playername);
-			cl->gentity->playerState->fd.forcePowersKnown |= (1 << MB_FORCE_DESTRUCTION);
-			cl->gentity->playerState->fd.forcePowerLevel[MB_FORCE_DESTRUCTION] = 3;
-			Spin_EnsureForcePool(cl);
+			SV_ExecuteClientCommand(cl, va("give fp %d 3", MB_FORCE_DESTRUCTION), qtrue);
 			response = "You Win Force Destruction Level 3!";
 			valid_spin = qtrue; break;
 		}
 
 		if (Spin_HasWon(cprizes, rando, WIN_FORCE_PROTECT)) {
 			Com_Printf("Giving %s^7 Force Protect Level 3\n", playername);
-			cl->gentity->playerState->fd.forcePowersKnown |= (1 << MB_FORCE_PROTECT);
-			cl->gentity->playerState->fd.forcePowerLevel[MB_FORCE_PROTECT] = 3;
-			Spin_EnsureForcePool(cl);
+			SV_ExecuteClientCommand(cl, va("give fp %d 3", MB_FORCE_PROTECT), qtrue);
 			response = "You Win Force Protect Level 3!";
 			valid_spin = qtrue; break;
 		}
 
 		if (Spin_HasWon(cprizes, rando, WIN_FORCE_ABSORB)) {
 			Com_Printf("Giving %s^7 Force Absorb Level 3\n", playername);
-			cl->gentity->playerState->fd.forcePowersKnown |= (1 << MB_FORCE_ABSORB);
-			cl->gentity->playerState->fd.forcePowerLevel[MB_FORCE_ABSORB] = 3;
-			Spin_EnsureForcePool(cl);
+			SV_ExecuteClientCommand(cl, va("give fp %d 3", MB_FORCE_ABSORB), qtrue);
 			response = "You Win Force Absorb Level 3!";
 			valid_spin = qtrue; break;
 		}
 
 		if (Spin_HasWon(cprizes, rando, WIN_FORCE_DRAIN)) {
 			Com_Printf("Giving %s^7 Force Drain Level 3\n", playername);
-			cl->gentity->playerState->fd.forcePowersKnown |= (1 << MB_FORCE_DRAIN);
-			cl->gentity->playerState->fd.forcePowerLevel[MB_FORCE_DRAIN] = 3;
-			Spin_EnsureForcePool(cl);
+			SV_ExecuteClientCommand(cl, va("give fp %d 3", MB_FORCE_DRAIN), qtrue);
 			response = "You Win Force Drain Level 3!";
 			valid_spin = qtrue; break;
 		}
 
 		if (Spin_HasWon(cprizes, rando, WIN_FORCE_SENSE)) {
 			Com_Printf("Giving %s^7 Force Sense Level 3\n", playername);
-			cl->gentity->playerState->fd.forcePowersKnown |= (1 << MB_FORCE_SENSE);
-			cl->gentity->playerState->fd.forcePowerLevel[MB_FORCE_SENSE] = 3;
-			Spin_EnsureForcePool(cl);
+			SV_ExecuteClientCommand(cl, va("give fp %d 3", MB_FORCE_SENSE), qtrue);
 			response = "You Win Force Sense Level 3!";
 			valid_spin = qtrue; break;
 		}
 
 		if (Spin_HasWon(cprizes, rando, WIN_FORCE_SABER_THROW)) {
 			Com_Printf("Giving %s^7 Force Saber Throw Level 3\n", playername);
-			cl->gentity->playerState->fd.forcePowersKnown |= (1 << MB_FORCE_SABER_THROW);
-			cl->gentity->playerState->fd.forcePowerLevel[MB_FORCE_SABER_THROW] = 3;
-			Spin_EnsureForcePool(cl);
+			SV_ExecuteClientCommand(cl, va("give fp %d 3", MB_FORCE_SABER_THROW), qtrue);
 			response = "You Win Force Saber Throw Level 3!";
 			valid_spin = qtrue; break;
 		}
 
 		if (Spin_HasWon(cprizes, rando, WIN_FORCE_TEAM_HEAL)) {
 			Com_Printf("Giving %s^7 Force Team Heal Level 3\n", playername);
-			cl->gentity->playerState->fd.forcePowersKnown |= (1 << MB_FORCE_TEAM_HEAL);
-			cl->gentity->playerState->fd.forcePowerLevel[MB_FORCE_TEAM_HEAL] = 3;
-			Spin_EnsureForcePool(cl);
+			SV_ExecuteClientCommand(cl, va("give fp %d 3", MB_FORCE_TEAM_HEAL), qtrue);
 			response = "You Win Force Team Heal Level 3!";
 			valid_spin = qtrue; break;
 		}
 
 		if (Spin_HasWon(cprizes, rando, WIN_FORCE_TEAM_ENERGIZE)) {
 			Com_Printf("Giving %s^7 Force Team Energize Level 3\n", playername);
-			cl->gentity->playerState->fd.forcePowersKnown |= (1 << MB_FORCE_TEAM_ENERGISE);
-			cl->gentity->playerState->fd.forcePowerLevel[MB_FORCE_TEAM_ENERGISE] = 3;
-			Spin_EnsureForcePool(cl);
+			SV_ExecuteClientCommand(cl, va("give fp %d 3", MB_FORCE_TEAM_ENERGISE), qtrue);
 			response = "You Win Force Team Energize Level 3!";
 			valid_spin = qtrue; break;
 		}
 
 		if (Spin_HasWon(cprizes, rando, WIN_FORCE_MASTER)) {
 			Com_Printf("Giving %s^7 ALL Force Powers Level 3\n", playername);
-			cl->gentity->playerState->fd.forcePower    = 300;
-			cl->gentity->playerState->fd.forcePowerMax = 300;
+			SV_ExecuteClientCommand(cl, "give forcepool 300", qtrue);
 			for (int fp = 0; fp < NUM_FORCE_POWERS; ++fp) {
-				cl->gentity->playerState->fd.forcePowersKnown |= (1 << fp);
-				cl->gentity->playerState->fd.forcePowerLevel[fp] = 3;
+				SV_ExecuteClientCommand(cl, va("give fp %d 3", fp), qtrue);
 			}
 			SV_SendServerCommand(NULL, "chat \"" SVSAY_PREFIX "%s won Force Mastery! The Force is strong with this one...\"\n", playername);
 			response = "You Win Force Mastery — all powers at Level 3!";
@@ -1171,16 +1132,14 @@ void SV_Spin(client_t* cl) {
 		// ── Health ───────────────────────────────────────────────────────────
 
 		if (Spin_HasWon(cprizes, rando, WIN_100_HEALTH)) {
-			cl->gentity->health += 100;
-			cl->gentity->playerState->stats[STAT_MAX_HEALTH] = cl->gentity->health;
+			SV_ExecuteClientCommand(cl, "give addhealth 100", qtrue);
 			Com_Printf("Giving %s^7 100 Health\n", playername);
 			response = "You win a 100 Health Boost!";
 			valid_spin = qtrue; break;
 		}
 
 		if (Spin_HasWon(cprizes, rando, WIN_250_HEALTH)) {
-			cl->gentity->health += 250;
-			cl->gentity->playerState->stats[STAT_MAX_HEALTH] = cl->gentity->health;
+			SV_ExecuteClientCommand(cl, "give addhealth 250", qtrue);
 			Com_Printf("Giving %s^7 250 Health\n", playername);
 			response = "You win a 250 Health Boost!";
 			valid_spin = qtrue; break;
