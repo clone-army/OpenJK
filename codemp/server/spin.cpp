@@ -53,8 +53,10 @@ static void SV_DrainDeferredCmds(void)
 		client_t* cl = &svs.clients[dc.clientNum];
 		if (cl->state == CS_ACTIVE && cl->gentity) {
 			Cvar_Set("sv_cheats", "1");
+			GVM_RunFrame(sv.time);
 			SV_ExecuteClientCommand(cl, dc.cmd.c_str(), qtrue);
 			Cvar_Set("sv_cheats", "0");
+			GVM_RunFrame(sv.time);
 		}
 		gDeferredCmds.erase(gDeferredCmds.begin() + i);
 	}
@@ -285,9 +287,6 @@ std::vector<int> Spin_GeneratePrices(client_t* cl) {
 	}
 
 	// Equipment exclusions: already owned
-	if (cl->gentity->playerState->stats[STAT_HOLDABLE_ITEMS] & (1 << HI_JETPACK))
-		cweights[WIN_JETPACK] = 0;
-
 	if (cl->gentity->playerState->stats[STAT_HOLDABLE_ITEMS] & (1 << HI_CLOAK))
 		cweights[WIN_CLOAK] = 0;
 
@@ -807,13 +806,6 @@ void SV_Spin(client_t* cl) {
 			valid_spin = qtrue; break;
 		}
 
-		if (Spin_HasWon(cprizes, rando, WIN_JETPACK)) {
-			cl->gentity->playerState->stats[STAT_HOLDABLE_ITEMS] |= (1 << HI_JETPACK);
-			cl->gentity->playerState->jetpackFuel = 100;
-			Com_Printf("Giving %s^7 a Jetpack\n", playername);
-			response = "You win a Jetpack";
-			valid_spin = qtrue; break;
-		}
 
 		if (Spin_HasWon(cprizes, rando, WIN_CLOAK)) {
 			cl->gentity->playerState->stats[STAT_HOLDABLE_ITEMS] |= (1 << HI_CLOAK);
@@ -1064,7 +1056,6 @@ static int Spin_LookupWinByName(const char* name)
 		// Equipment
 		{"100_armor",          WIN_100_ARMOR},
 		{"250_armor",          WIN_250_ARMOR},
-		{"jetpack",            WIN_JETPACK},
 		{"cloak",              WIN_CLOAK},
 		{"eweb",               WIN_EWEB},
 		{"sentry",             WIN_SENTRY},
