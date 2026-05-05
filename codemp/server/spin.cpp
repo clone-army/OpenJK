@@ -845,7 +845,7 @@ void SV_Spin(client_t* cl) {
 		// ── Vehicles ────────────────────────────────────────────────────────
 
 		if (Spin_HasWon(cprizes, rando, WIN_TAUN_TAUN)) {
-			SV_ExecuteClientCommandDelayed(cl, "npc spawn vehicle tauntaun", 5);
+			SV_ExecuteClientCommandDelayed_h(cl, "npc spawn vehicle tauntaun", 5);
 			Com_Printf("Giving %s^7 a TaunTaun\n", playername);
 			response = "You win a TaunTaun " SPAWN_VEHICLE_SUFFIX;
 			valid_spin = qtrue; break;
@@ -861,27 +861,27 @@ void SV_Spin(client_t* cl) {
 			};
 			char swoop_cmd[64];
 			Com_sprintf(swoop_cmd, sizeof(swoop_cmd), "npc spawn vehicle %s", swoop_types[rand_swoop]);
-			SV_ExecuteClientCommandDelayed(cl, swoop_cmd, 5);
+			SV_ExecuteClientCommandDelayed_h(cl, swoop_cmd, 5);
 			valid_spin = qtrue; break;
 		}
 
 		if (Spin_HasWon(cprizes, rando, WIN_SPEEDER)) {
 			Com_Printf("Giving %s^7 a Sith Speeder\n", playername);
-			SV_ExecuteClientCommandDelayed(cl, "npc spawn vehicle sithspeeder_mst", 5);
+			SV_ExecuteClientCommandDelayed_h(cl, "npc spawn vehicle sithspeeder_mst", 5);
 			response = "You win a Sith Speeder " SPAWN_VEHICLE_SUFFIX;
 			valid_spin = qtrue; break;
 		}
 
 		if (Spin_HasWon(cprizes, rando, WIN_DEWBACK)) {
 			Com_Printf("Giving %s^7 a Dewback\n", playername);
-			SV_ExecuteClientCommandDelayed(cl, "npc spawn vehicle dewback", 5);
+			SV_ExecuteClientCommandDelayed_h(cl, "npc spawn vehicle dewback", 5);
 			response = "You win a Dewback " SPAWN_VEHICLE_SUFFIX;
 			valid_spin = qtrue; break;
 		}
 
 		if (Spin_HasWon(cprizes, rando, WIN_MECH)) {
 			Com_Printf("Giving %s^7 a Shinrar Mech\n", playername);
-			SV_ExecuteClientCommandDelayed(cl, "npc spawn vehicle shinraR", 5);
+			SV_ExecuteClientCommandDelayed_h(cl, "npc spawn vehicle shinraR", 5);
 			SV_SendServerCommand(NULL, "chat \"" SVSAY_PREFIX "%s won a Shinrar Mech! We're in the end-game now...\"\n", playername);
 			response = "You win a Mech " SPAWN_VEHICLE_SUFFIX;
 			valid_spin = qtrue; break;
@@ -889,9 +889,8 @@ void SV_Spin(client_t* cl) {
 
 		if (Spin_HasWon(cprizes, rando, WIN_TIE_BOMBER)) {
 			Com_Printf("Giving %s^7 a TIE Bomber\n", playername);
-			SV_ExecuteClientCommandDelayed(cl, "npc spawn vehicle tie-bomber", 5);
-			SV_SendServerCommand(NULL, "chat \"" SVSAY_PREFIX "%s won a TIE Bomber! Incoming!\"
-", playername);
+			SV_ExecuteClientCommandDelayed_h(cl, "npc spawn vehicle tie-bomber", 5);
+			SV_SendServerCommand(NULL, "chat \"" SVSAY_PREFIX "%s won a TIE Bomber! Incoming!\"\n", playername);
 			response = "You win a TIE Bomber " SPAWN_VEHICLE_SUFFIX;
 			valid_spin = qtrue; break;
 		}
@@ -1049,6 +1048,7 @@ static int Spin_LookupWinByName(const char* name)
 		{"speeder",            WIN_SPEEDER},
 		{"dewback",            WIN_DEWBACK},
 		{"mech",               WIN_MECH},
+		{"tie_bomber",         WIN_TIE_BOMBER},
 		// Fun / Size
 		{"size_xs",            WIN_SIZE_XS},
 		{"size_s",             WIN_SIZE_S},
