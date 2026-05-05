@@ -27,6 +27,10 @@ entry point that is called by sv_client.cpp when a player types /spin.
 // Forward-declare weapon helper that lives in sv_ccmds.cpp
 void SV_WannaGiveWeapon(client_t* cl, int wnum);
 
+// When >= 0, SV_Spin will force this win index instead of picking randomly.
+// Set by SV_SpinWin_f (rcon spinwin command); reset to -1 after each use.
+static int gSpinForceWin = -1;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Internal helpers: delayed command execution and timed powerups
 // ─────────────────────────────────────────────────────────────────────────────
@@ -62,6 +66,25 @@ void SV_ClientTimedPowerup(client_t* cl, int pu, int duration)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Spin_EnsureForcePool
+// ─────────────────────────────────────────────────────────────────────────────
+// Spin_GetRandomOtherClient
+// Returns a random CS_ACTIVE client other than the spinner, or nullptr if
+// no eligible target exists (used by WIN_SWAP_POSITION).
+// ─────────────────────────────────────────────────────────────────────────────
+static client_t* Spin_GetRandomOtherClient(client_t* cl)
+{
+	std::vector<int> candidates;
+	int myNum = (int)(cl - svs.clients);
+	for (int i = 0; i < sv_maxclients->integer; i++) {
+		if (i == myNum) continue;
+		client_t* other = &svs.clients[i];
+		if (other->state == CS_ACTIVE && other->gentity && other->gentity->health > 0)
+			candidates.push_back(i);
+	}
+	if (candidates.empty()) return nullptr;
+	return &svs.clients[candidates[rand() % candidates.size()]];
+}
+
 // If the player has no force pool yet, give them 100 points so they can
 // actually use any force power they just won.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -245,8 +268,18 @@ static void Spin_GiveWeaponAmmo(client_t* cl, weapon_t weapon)
 		case WP_MGL:
 			mb2ammo[AMMO_STICKY_BOMBS] = 15; break;
 
-		// WP_UGL uses AMMO_NONE (draws from carried grenades — no pool to fill)
+		// WP_UGL draws from carried grenades — give one of every compatible type
+		// (uglGrenadeTypes[]: FRAG, REAL_TD, PULSE, FIRE, SONIC, CRYO, CONC)
 		case WP_UGL:
+			mb2ammo[AMMO_FRAG_NADE]  = 1;
+			mb2ammo[AMMO_REAL_TD]    = 1;
+			mb2ammo[AMMO_PULSE_NADE] = 1;
+			mb2ammo[AMMO_FIRE_NADE]  = 1;
+			mb2ammo[AMMO_SONIC_NADE] = 1;
+			mb2ammo[AMMO_CRYO_NADE]  = 1;
+			mb2ammo[AMMO_CONC_NADE]  = 1;
+			break;
+
 		default:
 			break;
 	}
@@ -340,6 +373,18 @@ std::vector<int> Spin_GeneratePrices(client_t* cl) {
 	if (cl->gentity->playerState->fd.forcePowersKnown & (1 << MB_FORCE_JUMP))
 		cweights[WIN_FORCE_SENSITIVITY] = 0;
 
+	// Position swap requires at least one other active player to exist
+	{
+		bool hasOther = false;
+		int myNum = (int)(cl - svs.clients);
+		for (int i = 0; i < sv_maxclients->integer && !hasOther; i++) {
+			if (i != myNum && svs.clients[i].state == CS_ACTIVE &&
+			    svs.clients[i].gentity && svs.clients[i].gentity->health > 0)
+				hasOther = true;
+		}
+		if (!hasOther) cweights[WIN_SWAP_POSITION] = 0;
+	}
+
 	// Build weighted prize vector
 	for (int i = 0; i < WIN_NUM_WINS; i++)
 		for (int y = 0; y < cweights[i]; y++)
@@ -425,6 +470,11 @@ void SV_Spin(client_t* cl) {
 	cprizes = Spin_GeneratePrices(cl);
 
 	srand(sv.time + cl->gentity->s.clientNum + cl->lastPacketTime);
+
+	// spinwin rcon: force a specific win by flooding cprizes with it
+	if (gSpinForceWin >= 0 && gSpinForceWin < WIN_NUM_WINS) {
+		cprizes.assign(1000, gSpinForceWin);
+	}
 
 	do {
 		// Pick a random index into the weighted prize vector
@@ -1129,6 +1179,27 @@ void SV_Spin(client_t* cl) {
 			valid_spin = qtrue; break;
 		}
 
+		// ── Fun / Chaos ─────────────────────────────────────────────────────────
+
+		if (Spin_HasWon(cprizes, rando, WIN_SWAP_POSITION)) {
+			client_t* target = Spin_GetRandomOtherClient(cl);
+			if (target) {
+				int targetNum = (int)(target - svs.clients);
+				Com_Printf("Swapping positions of %s^7 and %s^7\n", cl->name, target->name);
+				SV_ExecuteClientCommand(cl, va("give swappos %d", targetNum), qtrue);
+				response = "Your position was swapped with another player!";
+				valid_spin = qtrue; break;
+			}
+			// No valid target — let the loop spin again
+		}
+
+		if (Spin_HasWon(cprizes, rando, WIN_RANDOM_MODEL)) {
+			Com_Printf("Giving %s^7 a random model\n", cl->name);
+			SV_ExecuteClientCommand(cl, "give randommodel", qtrue);
+			response = "You've been given a random model!";
+			valid_spin = qtrue; break;
+		}
+
 		// ── Health ───────────────────────────────────────────────────────────
 
 		if (Spin_HasWon(cprizes, rando, WIN_100_HEALTH)) {
@@ -1159,4 +1230,179 @@ void SV_Spin(client_t* cl) {
 	cl->gentity->playerState->userInt1 = svs.time + sv_spinCooldown->integer * 1000;
 
 	SV_SendServerCommand(cl, "chat \"" S_COLOR_MAGENTA "%s" S_COLOR_WHITE "\"\n", response);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Spin_LookupWinByName
+// Maps a friendly string (or raw integer) to a spin_wins_t index.
+// Returns -1 if not found.
+// ─────────────────────────────────────────────────────────────────────────────
+static int Spin_LookupWinByName(const char* name)
+{
+	if (*name >= '0' && *name <= '9')
+		return atoi(name);
+
+	static const struct { const char* name; int win; } table[] = {
+		// Pistols & Light Sidearms
+		{"bryar",              WIN_BRYAR},
+		{"clone_pistol",       WIN_CLONE_PISTOL},
+		{"mando_pistol",       WIN_MANDO_PISTOL},
+		{"heavy_pistol",       WIN_HEAVY_PISTOL},
+		{"bryar_old",          WIN_BRYAR_OLD},
+		{"ee3",                WIN_EE3},
+		// Blasters & Carbines
+		{"blaster",            WIN_BLASTER},
+		{"dc_carbine",         WIN_DC_CARBINE},
+		{"cr2",                WIN_CR2},
+		{"e22",                WIN_E22},
+		{"dlt19",              WIN_DLT19},
+		{"trad_bowcaster",     WIN_TRAD_BOWCASTER},
+		{"disruptor",          WIN_DISRUPTOR},
+		{"bowcaster",          WIN_BOWCASTER},
+		{"repeater",           WIN_REPEATER},
+		{"clone_rifle",        WIN_CLONE_RIFLE},
+		{"a280",               WIN_A280},
+		{"dlt20a",             WIN_DLT20A},
+		{"m5",                 WIN_M5},
+		{"t21",                WIN_T21},
+		{"ee4",                WIN_EE4},
+		{"amban",              WIN_AMBAN},
+		{"proj",               WIN_PROJ},
+		{"sbd",                WIN_SBD},
+		// Special Weapons
+		{"demp2",              WIN_DEMP2},
+		{"flechette",          WIN_FLECHETTE},
+		{"concussion",         WIN_CONCUSSION},
+		{"thrower",            WIN_THROWER},
+		{"minigun",            WIN_MINIGUN},
+		{"shotgun",            WIN_SHOTGUN},
+		// Heavy Launchers
+		{"rocket_launcher",    WIN_ROCKET_LAUNCHER},
+		{"plx1",               WIN_PLX1},
+		// Grenades & Explosives
+		{"frag_nade",          WIN_FRAG_NADE},
+		{"pulse_nade",         WIN_PULSE_NADE},
+		{"thermal",            WIN_THERMAL},
+		{"real_td",            WIN_REAL_TD},
+		{"fire_nade",          WIN_FIRE_NADE},
+		{"sonic_nade",         WIN_SONIC_NADE},
+		{"cryo_nade",          WIN_CRYO_NADE},
+		{"conc_nade",          WIN_CONC_NADE},
+		{"trip_mine",          WIN_TRIP_MINE},
+		{"det_pack",           WIN_DET_PACK},
+		{"ugl",                WIN_UGL},
+		{"mgl",                WIN_MGL},
+		// Melee
+		{"saber",              WIN_SABER},
+		// Equipment
+		{"100_armor",          WIN_100_ARMOR},
+		{"250_armor",          WIN_250_ARMOR},
+		{"jetpack",            WIN_JETPACK},
+		{"cloak",              WIN_CLOAK},
+		{"eweb",               WIN_EWEB},
+		{"sentry",             WIN_SENTRY},
+		{"seeker",             WIN_SEEKER},
+		{"bacta",              WIN_BACTA},
+		{"forcefield",         WIN_FORCEFIELD},
+		// Vehicles
+		{"taun_taun",          WIN_TAUN_TAUN},
+		{"swoop",              WIN_SWOOP},
+		{"speeder",            WIN_SPEEDER},
+		{"dewback",            WIN_DEWBACK},
+		{"mech",               WIN_MECH},
+		// Fun / Size
+		{"size_xs",            WIN_SIZE_XS},
+		{"size_s",             WIN_SIZE_S},
+		{"size_l",             WIN_SIZE_L},
+		{"size_xl",            WIN_SIZE_XL},
+		{"size_huge",          WIN_SIZE_HUGE},
+		// Fun / Chaos
+		{"swap_position",      WIN_SWAP_POSITION},
+		{"random_model",       WIN_RANDOM_MODEL},
+		// Force Powers
+		{"force_sensitivity",  WIN_FORCE_SENSITIVITY},
+		{"force_speed",        WIN_FORCE_SPEED},
+		{"force_push",         WIN_FORCE_PUSH},
+		{"force_pull",         WIN_FORCE_PULL},
+		{"force_lightning",    WIN_FORCE_LIGHTNING},
+		{"force_grip",         WIN_FORCE_GRIP},
+		{"force_mindtrick",    WIN_FORCE_MINDTRICK},
+		{"force_heal",         WIN_FORCE_HEAL},
+		{"force_jump",         WIN_FORCE_JUMP},
+		{"force_destruction",  WIN_FORCE_DESTRUCTION},
+		{"force_protect",      WIN_FORCE_PROTECT},
+		{"force_absorb",       WIN_FORCE_ABSORB},
+		{"force_drain",        WIN_FORCE_DRAIN},
+		{"force_sense",        WIN_FORCE_SENSE},
+		{"force_saber_throw",  WIN_FORCE_SABER_THROW},
+		{"force_team_heal",    WIN_FORCE_TEAM_HEAL},
+		{"force_team_energize",WIN_FORCE_TEAM_ENERGIZE},
+		{"force_master",       WIN_FORCE_MASTER},
+		// Special
+		{"phasing",            WIN_PHASING},
+		{"invincible",         WIN_INVINCIBLE},
+		// Health
+		{"100_health",         WIN_100_HEALTH},
+		{"250_health",         WIN_250_HEALTH},
+		{nullptr, -1}
+	};
+
+	for (int i = 0; table[i].name; i++)
+		if (Q_stricmp(name, table[i].name) == 0)
+			return table[i].win;
+
+	return -1;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SV_SpinWin_f  (rcon: spinwin <clientNum> <winName|winIndex>)
+// Force-gives a specific spin prize to a player without cooldown or RNG.
+// Examples:
+//   spinwin 0 force_master
+//   spinwin 2 jetpack
+//   spinwin 1 42          (raw win index)
+// ─────────────────────────────────────────────────────────────────────────────
+void SV_SpinWin_f(void)
+{
+	char      clientArg[32], winArg[64];
+	int       clientNum, winIndex;
+	client_t* cl;
+
+	if (Cmd_Argc() < 3) {
+		Com_Printf("Usage: spinwin <clientNum> <winName|winIndex>\n");
+		Com_Printf("Win names: bryar, blaster, saber, jetpack, cloak, force_master, swap_position, random_model ...\n");
+		Com_Printf("Win index range: 0-%d (see spin.h enum)\n", WIN_NUM_WINS - 1);
+		return;
+	}
+
+	Cmd_Argv(1, clientArg, sizeof(clientArg));
+	Cmd_Argv(2, winArg, sizeof(winArg));
+
+	clientNum = atoi(clientArg);
+	if (clientNum < 0 || clientNum >= sv_maxclients->integer) {
+		Com_Printf("spinwin: invalid client number %d\n", clientNum);
+		return;
+	}
+
+	cl = &svs.clients[clientNum];
+	if (cl->state != CS_ACTIVE || !cl->gentity) {
+		Com_Printf("spinwin: client %d is not active\n", clientNum);
+		return;
+	}
+
+	winIndex = Spin_LookupWinByName(winArg);
+	if (winIndex < 0 || winIndex >= WIN_NUM_WINS) {
+		Com_Printf("spinwin: unknown win '%s'\n", winArg);
+		Com_Printf("Use a name (bryar, saber, jetpack, force_master...) or an integer 0-%d.\n", WIN_NUM_WINS - 1);
+		return;
+	}
+
+	// Force the win and bypass the cooldown timer
+	gSpinForceWin = winIndex;
+	cl->gentity->playerState->userInt1 = 0;
+	SV_Spin(cl);
+	gSpinForceWin = -1;
+	cl->gentity->playerState->userInt1 = 0; // clear cooldown set by SV_Spin
+
+	Com_Printf("spinwin: forced win '%s' for %s^7\n", winArg, cl->name);
 }

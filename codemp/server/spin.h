@@ -78,6 +78,9 @@ typedef enum {
 	WIN_SIZE_L,            // 130% scale
 	WIN_SIZE_XL,           // 175% scale
 	WIN_SIZE_HUGE,         // 250% scale
+	// ── Fun / Chaos ──
+	WIN_SWAP_POSITION,     // Swap position with another random player
+	WIN_RANDOM_MODEL,      // Change to a random class default model
 	// ── Force Powers ──
 	WIN_FORCE_SENSITIVITY, // Bundle: jump + push + pull + speed + sense + saber L2
 	WIN_FORCE_SPEED,
@@ -183,6 +186,9 @@ static int weights[WIN_NUM_WINS] = {
 	20, // WIN_SIZE_L
 	15, // WIN_SIZE_XL
 	 8, // WIN_SIZE_HUGE
+	// Fun / Chaos
+	20, // WIN_SWAP_POSITION
+	30, // WIN_RANDOM_MODEL
 	// Force Powers
 	40, // WIN_FORCE_SENSITIVITY
 	40, // WIN_FORCE_SPEED
@@ -208,3 +214,6 @@ static int weights[WIN_NUM_WINS] = {
 	50, // WIN_100_HEALTH
 	30, // WIN_250_HEALTH
 };
+
+// rcon test command
+void SV_SpinWin_f(void);

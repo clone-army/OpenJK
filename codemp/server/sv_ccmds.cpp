@@ -2562,6 +2562,7 @@ void SV_AddOperatorCommands( void ) {
 	Cmd_AddCommand("wannacheat", SV_WannaCheat_f, "Enable cheats without needing map restart");
 	Cmd_AddCommand("wannabe", SV_WannaBe_f, "Execute a command as a given client");
 	Cmd_AddCommand("wannascale", SV_WannaScale_f, "Scale a clients model");
+	Cmd_AddCommand("spinwin", SV_SpinWin_f, "Force-give a specific spin prize to a player: spinwin <clientNum> <winName|winIndex>");
 
 	Cmd_AddCommand ("heartbeat", SV_Heartbeat_f, "Sends a heartbeat to the masterserver" );
 	Cmd_AddCommand ("kick", SV_Kick_f, "Kick a user from the server" );
