@@ -1293,17 +1293,6 @@ void SV_ExecuteClientCommand( client_t *cl, const char *s, qboolean clientOK ) {
 		cp = Cmd_Args();
 		cp = strtok(cp, " ");
 
-		if (!strcmp("1", sv_spin->string)) {
-
-			// run spin mode, don't display the text
-			if (Q_stricmp("!spin", cp) == 0)
-			{
-				SV_Spin(cl);
-				return;
-			}
-
-		}
-
 		// pass unknown strings to the game
 		if (!u->name && sv.state == SS_GAME && (cl->state == CS_ACTIVE || cl->state == CS_PRIMED)) {
 			// strip \r \n and ;

@@ -8,7 +8,6 @@ entry point that is called by sv_client.cpp when a player types /spin.
 */
 
 #include <cstdint>
-#include <thread>
 #include <array>
 #include <vector>
 
@@ -35,14 +34,41 @@ static int gSpinForceWin = -1;
 // Internal helpers: delayed command execution and timed powerups
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Deferred command queue — avoids blocking the server thread
+// ─────────────────────────────────────────────────────────────────────────────
+struct DeferredCmd {
+	int         clientNum;
+	std::string cmd;
+	int         fireTime; // svs.time when to execute
+};
+static std::vector<DeferredCmd> gDeferredCmds;
+
+static void SV_DrainDeferredCmds(void)
+{
+	for (int i = (int)gDeferredCmds.size() - 1; i >= 0; i--) {
+		DeferredCmd& dc = gDeferredCmds[i];
+		if (svs.time < dc.fireTime)
+			continue;
+		client_t* cl = &svs.clients[dc.clientNum];
+		if (cl->state == CS_ACTIVE && cl->gentity) {
+			Cvar_Set("sv_cheats", "1");
+			GVM_RunFrame(sv.time);
+			SV_ExecuteClientCommand(cl, dc.cmd.c_str(), qtrue);
+			Cvar_Set("sv_cheats", "0");
+			GVM_RunFrame(sv.time);
+		}
+		gDeferredCmds.erase(gDeferredCmds.begin() + i);
+	}
+}
+
 void SV_ExecuteClientCommandDelayed_h(client_t* cl, std::string cmd, int delay)
 {
-	std::this_thread::sleep_for(std::chrono::seconds(delay));
-	Cvar_Set("sv_cheats", "1");
-	GVM_RunFrame(sv.time);
-	SV_ExecuteClientCommand(cl, cmd.c_str(), qtrue);
-	Cvar_Set("sv_cheats", "0");
-	GVM_RunFrame(sv.time);
+	DeferredCmd dc;
+	dc.clientNum = (int)(cl - svs.clients);
+	dc.cmd       = cmd;
+	dc.fireTime  = svs.time + delay * 1000;
+	gDeferredCmds.push_back(dc);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1136,6 +1162,8 @@ void SV_SpinWin_f(void)
 // ─────────────────────────────────────────────────────────────────────────────
 void SV_SpinFrame(void)
 {
+	SV_DrainDeferredCmds();
+
 	if (!sv_spin->integer)
 		return;
 
@@ -1152,8 +1180,12 @@ void SV_SpinFrame(void)
 			continue;
 		}
 
-		// Timer expired — auto-spin
+		// Timer expired — only auto-spin if alive; if dead push timer forward
 		if (svs.time >= *spinTimer) {
+			if (cl->gentity->health <= 0) {
+				*spinTimer = svs.time + sv_spinCooldown->integer * 1000;
+				continue;
+			}
 			SV_Spin(cl);
 		}
 	}
