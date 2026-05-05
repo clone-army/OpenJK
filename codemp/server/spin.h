@@ -59,7 +59,6 @@ typedef enum {
 	// ── Equipment ──
 	WIN_100_ARMOR,
 	WIN_250_ARMOR,
-	WIN_JETPACK,
 	WIN_CLOAK,
 	WIN_EWEB,
 	WIN_SENTRY,
@@ -145,7 +144,7 @@ static int weights[WIN_NUM_WINS] = {
 	// Equipment
 	50, // WIN_100_ARMOR
 	30, // WIN_250_ARMOR
-	40, // WIN_JETPACK
+
 	35, // WIN_CLOAK
 	35, // WIN_EWEB
 	35, // WIN_SENTRY
