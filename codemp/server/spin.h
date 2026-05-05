@@ -72,36 +72,13 @@ typedef enum {
 	WIN_SPEEDER,
 	WIN_DEWBACK,
 	WIN_MECH,
+	WIN_TIE_BOMBER,
 	// ── Fun / Size ──
 	WIN_SIZE_XS,           // 50% scale
 	WIN_SIZE_S,            // 80% scale
 	WIN_SIZE_L,            // 130% scale
 	WIN_SIZE_XL,           // 175% scale
 	WIN_SIZE_HUGE,         // 250% scale
-	// ── Fun / Chaos ──
-	WIN_SWAP_POSITION,     // Swap position with another random player
-	WIN_RANDOM_MODEL,      // Change to a random class default model
-	// ── Force Powers ──
-	WIN_FORCE_SENSITIVITY, // Bundle: jump + push + pull + speed + sense + saber L2
-	WIN_FORCE_SPEED,
-	WIN_FORCE_PUSH,
-	WIN_FORCE_PULL,
-	WIN_FORCE_LIGHTNING,
-	WIN_FORCE_GRIP,
-	WIN_FORCE_MINDTRICK,
-	WIN_FORCE_HEAL,
-	WIN_FORCE_JUMP,
-	WIN_FORCE_DESTRUCTION,
-	WIN_FORCE_PROTECT,
-	WIN_FORCE_ABSORB,
-	WIN_FORCE_DRAIN,
-	WIN_FORCE_SENSE,
-	WIN_FORCE_SABER_THROW,
-	WIN_FORCE_TEAM_HEAL,
-	WIN_FORCE_TEAM_ENERGIZE,
-	WIN_FORCE_MASTER,      // All 18 force powers at level 3
-	WIN_PHASING,           // 30-second phasing powerup
-	WIN_INVINCIBLE,
 	// ── Health ──
 	WIN_100_HEALTH,
 	WIN_250_HEALTH,
@@ -180,36 +157,13 @@ static int weights[WIN_NUM_WINS] = {
 	20, // WIN_SPEEDER
 	25, // WIN_DEWBACK
 	 5, // WIN_MECH
+	 5, // WIN_TIE_BOMBER
 	// Fun / Size
 	25, // WIN_SIZE_XS
 	40, // WIN_SIZE_S
 	20, // WIN_SIZE_L
 	15, // WIN_SIZE_XL
 	 8, // WIN_SIZE_HUGE
-	// Fun / Chaos
-	20, // WIN_SWAP_POSITION
-	30, // WIN_RANDOM_MODEL
-	// Force Powers
-	40, // WIN_FORCE_SENSITIVITY
-	40, // WIN_FORCE_SPEED
-	40, // WIN_FORCE_PUSH
-	40, // WIN_FORCE_PULL
-	35, // WIN_FORCE_LIGHTNING
-	35, // WIN_FORCE_GRIP
-	35, // WIN_FORCE_MINDTRICK
-	35, // WIN_FORCE_HEAL
-	40, // WIN_FORCE_JUMP
-	25, // WIN_FORCE_DESTRUCTION
-	30, // WIN_FORCE_PROTECT
-	30, // WIN_FORCE_ABSORB
-	25, // WIN_FORCE_DRAIN
-	35, // WIN_FORCE_SENSE
-	30, // WIN_FORCE_SABER_THROW
-	20, // WIN_FORCE_TEAM_HEAL
-	20, // WIN_FORCE_TEAM_ENERGIZE
-	 5, // WIN_FORCE_MASTER
-	15, // WIN_PHASING
-	 8, // WIN_INVINCIBLE
 	// Health
 	50, // WIN_100_HEALTH
 	30, // WIN_250_HEALTH
