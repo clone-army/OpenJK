@@ -48,9 +48,17 @@ cmake \
 echo "==> Building..."
 make -j$(nproc)
 
+echo "==> Stopping TEST Instance"
+
+mbii -i test stop
+mbii -i test stop
+
 echo ""
 echo "==> Installing binary to /usr/bin/spin.i386..."
 sudo cp "$BUILD_DIR/mbiided.i386" /usr/bin/spin.i386
 sudo chmod +x /usr/bin/spin.i386
 
 echo "==> Done! Binary installed at /usr/bin/spin.i386"
+
+echo "==> Restarting TEST Instance"
+mbii -i test start
