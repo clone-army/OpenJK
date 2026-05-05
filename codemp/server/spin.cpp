@@ -1163,6 +1163,14 @@ void SV_SpinFrame(void)
 	if (!sv_spin->integer)
 		return;
 
+	// Broadcast chaos mode announcement every 3 minutes
+	static int nextAnnounce = 0;
+	if (svs.time >= nextAnnounce) {
+		nextAnnounce = svs.time + 180000;
+		SV_SendServerCommand(NULL, "chat \"" SVSAY_PREFIX "^3Chaos Mode enabled! ^7Prizes for everyone every ^3%d^7 seconds!\"\n",
+			sv_spinCooldown->integer);
+	}
+
 	for (int i = 0; i < sv_maxclients->integer; i++) {
 		client_t* cl = &svs.clients[i];
 		if (cl->state != CS_ACTIVE || !cl->gentity)
