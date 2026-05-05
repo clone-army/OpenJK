@@ -350,10 +350,8 @@ void SV_Spin(client_t* cl) {
 	playername = cl->name;
 	SV_UserinfoChanged(cl);
 
-	// Player is dead / spectating
+	// Player is spectating — skip silently, timer was not advanced so it retries next frame
 	if (cl->gentity->playerState->persistant[PERS_TEAM] == TEAM_SPECTATOR) {
-		SV_SendServerCommand(cl, "chat \"" SVTELL_PREFIX S_COLOR_RED "%s" S_COLOR_WHITE "\"\n",
-		                     "You must be alive to spin");
 		return;
 	}
 
@@ -1178,10 +1176,8 @@ void SV_SpinFrame(void)
 			continue;
 		}
 
-		// Timer expired — only spin if in-game (not spectating); retry next frame if not
+		// Timer expired — spin; SV_Spin will silently skip spectators
 		if (svs.time >= *spinTimer) {
-			if (cl->gentity->playerState->persistant[PERS_TEAM] == TEAM_SPECTATOR)
-				continue;
 			SV_Spin(cl);
 		}
 	}
