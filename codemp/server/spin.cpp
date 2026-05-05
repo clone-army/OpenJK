@@ -53,10 +53,8 @@ static void SV_DrainDeferredCmds(void)
 		client_t* cl = &svs.clients[dc.clientNum];
 		if (cl->state == CS_ACTIVE && cl->gentity) {
 			Cvar_Set("sv_cheats", "1");
-			GVM_RunFrame(sv.time);
 			SV_ExecuteClientCommand(cl, dc.cmd.c_str(), qtrue);
 			Cvar_Set("sv_cheats", "0");
-			GVM_RunFrame(sv.time);
 		}
 		gDeferredCmds.erase(gDeferredCmds.begin() + i);
 	}
@@ -1180,12 +1178,10 @@ void SV_SpinFrame(void)
 			continue;
 		}
 
-		// Timer expired — only auto-spin if alive; if dead push timer forward
+		// Timer expired — only spin if in-game (not spectating); retry next frame if not
 		if (svs.time >= *spinTimer) {
-			if (cl->gentity->health <= 0) {
-				*spinTimer = svs.time + sv_spinCooldown->integer * 1000;
+			if (cl->gentity->playerState->persistant[PERS_TEAM] == TEAM_SPECTATOR)
 				continue;
-			}
 			SV_Spin(cl);
 		}
 	}
