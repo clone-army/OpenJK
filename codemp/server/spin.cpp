@@ -85,17 +85,6 @@ static client_t* Spin_GetRandomOtherClient(client_t* cl)
 	return &svs.clients[candidates[rand() % candidates.size()]];
 }
 
-// If the player has no force pool yet, give them 100 points so they can
-// actually use any force power they just won.
-// ─────────────────────────────────────────────────────────────────────────────
-static void Spin_EnsureForcePool(client_t* cl)
-{
-	if (cl->gentity->playerState->fd.forcePowerMax == 0) {
-		cl->gentity->playerState->fd.forcePowerMax = 100;
-		cl->gentity->playerState->fd.forcePower    = 100;
-	}
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Spin_GiveWeaponAmmo
 // Directly sets ps->ammo[] for the specific ammo type used by the given
@@ -1375,8 +1364,8 @@ void SV_SpinWin_f(void)
 		return;
 	}
 
-	Cmd_Argv(1, clientArg, sizeof(clientArg));
-	Cmd_Argv(2, winArg, sizeof(winArg));
+	Q_strncpyz(clientArg, Cmd_Argv(1), sizeof(clientArg));
+	Q_strncpyz(winArg,    Cmd_Argv(2), sizeof(winArg));
 
 	clientNum = atoi(clientArg);
 	if (clientNum < 0 || clientNum >= sv_maxclients->integer) {
