@@ -72,16 +72,17 @@ typedef enum {
 	WIN_SPEEDER,
 	WIN_DEWBACK,
 	WIN_MECH,
-	WIN_TIE_BOMBER,
+	WIN_AWING_MINI,
+	WIN_TIE_BOMBER_MINI,
+	WIN_TIE_FIGHTER_MINI,
+	WIN_YWING_MINI,
+	WIN_BANTHA,
 	// ── Fun / Size ──
 	WIN_SIZE_XS,           // 50% scale
 	WIN_SIZE_S,            // 80% scale
 	WIN_SIZE_L,            // 130% scale
 	WIN_SIZE_XL,           // 175% scale
 	WIN_SIZE_HUGE,         // 250% scale
-	// ── Health ──
-	WIN_100_HEALTH,
-	WIN_250_HEALTH,
 	WIN_NUM_WINS // MUST BE LAST AND IS NOT A REAL WIN
 } spin_wins_t;
 
@@ -157,16 +158,17 @@ static int weights[WIN_NUM_WINS] = {
 	20, // WIN_SPEEDER
 	25, // WIN_DEWBACK
 	 5, // WIN_MECH
-	 5, // WIN_TIE_BOMBER
+	 5, // WIN_AWING_MINI
+	 5, // WIN_TIE_BOMBER_MINI
+	 5, // WIN_TIE_FIGHTER_MINI
+	 5, // WIN_YWING_MINI
+	 5, // WIN_BANTHA
 	// Fun / Size
 	25, // WIN_SIZE_XS
 	40, // WIN_SIZE_S
 	20, // WIN_SIZE_L
 	15, // WIN_SIZE_XL
 	 8, // WIN_SIZE_HUGE
-	// Health
-	50, // WIN_100_HEALTH
-	30, // WIN_250_HEALTH
 };
 
 // rcon test command
