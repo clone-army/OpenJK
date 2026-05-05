@@ -260,12 +260,6 @@ std::vector<int> Spin_GeneratePrices(client_t* cl) {
 		cweights[WIN_250_ARMOR] = 0;
 	}
 
-	// Health exclusion: already at or above 500 health
-	if (cl->gentity->health >= 500) {
-		cweights[WIN_100_HEALTH] = 0;
-		cweights[WIN_250_HEALTH] = 0;
-	}
-
 	// Equipment exclusions: already owned
 	if (cl->gentity->playerState->stats[STAT_HOLDABLE_ITEMS] & (1 << HI_JETPACK))
 		cweights[WIN_JETPACK] = 0;
@@ -887,11 +881,43 @@ void SV_Spin(client_t* cl) {
 			valid_spin = qtrue; break;
 		}
 
-		if (Spin_HasWon(cprizes, rando, WIN_TIE_BOMBER)) {
-			Com_Printf("Giving %s^7 a TIE Bomber\n", playername);
-			SV_ExecuteClientCommandDelayed_h(cl, "npc spawn vehicle tie-bomber", 5);
-			SV_SendServerCommand(NULL, "chat \"" SVSAY_PREFIX "%s won a TIE Bomber! Incoming!\"\n", playername);
+		if (Spin_HasWon(cprizes, rando, WIN_AWING_MINI)) {
+			Com_Printf("Giving %s^7 an A-Wing (mini)\n", playername);
+			SV_ExecuteClientCommandDelayed_h(cl, "npc spawn vehicle a-wing_mini", 5);
+			SV_SendServerCommand(NULL, "chat \"" SVSAY_PREFIX "%s won an A-Wing!\"\n", playername);
+			response = "You win an A-Wing " SPAWN_VEHICLE_SUFFIX;
+			valid_spin = qtrue; break;
+		}
+
+		if (Spin_HasWon(cprizes, rando, WIN_TIE_BOMBER_MINI)) {
+			Com_Printf("Giving %s^7 a TIE Bomber (mini)\n", playername);
+			SV_ExecuteClientCommandDelayed_h(cl, "npc spawn vehicle tie-bomber_mini", 5);
+			SV_SendServerCommand(NULL, "chat \"" SVSAY_PREFIX "%s won a TIE Bomber!\"\n", playername);
 			response = "You win a TIE Bomber " SPAWN_VEHICLE_SUFFIX;
+			valid_spin = qtrue; break;
+		}
+
+		if (Spin_HasWon(cprizes, rando, WIN_TIE_FIGHTER_MINI)) {
+			Com_Printf("Giving %s^7 a TIE Fighter (mini)\n", playername);
+			SV_ExecuteClientCommandDelayed_h(cl, "npc spawn vehicle tie-fighter_mini", 5);
+			SV_SendServerCommand(NULL, "chat \"" SVSAY_PREFIX "%s won a TIE Fighter!\"\n", playername);
+			response = "You win a TIE Fighter " SPAWN_VEHICLE_SUFFIX;
+			valid_spin = qtrue; break;
+		}
+
+		if (Spin_HasWon(cprizes, rando, WIN_YWING_MINI)) {
+			Com_Printf("Giving %s^7 a Y-Wing (mini)\n", playername);
+			SV_ExecuteClientCommandDelayed_h(cl, "npc spawn vehicle y-wing_mini", 5);
+			SV_SendServerCommand(NULL, "chat \"" SVSAY_PREFIX "%s won a Y-Wing!\"\n", playername);
+			response = "You win a Y-Wing " SPAWN_VEHICLE_SUFFIX;
+			valid_spin = qtrue; break;
+		}
+
+		if (Spin_HasWon(cprizes, rando, WIN_BANTHA)) {
+			Com_Printf("Giving %s^7 a Bantha\n", playername);
+			SV_ExecuteClientCommandDelayed_h(cl, "npc spawn vehicle bantha", 5);
+			SV_SendServerCommand(NULL, "chat \"" SVSAY_PREFIX "%s won a Bantha!\"\n", playername);
+			response = "You win a Bantha " SPAWN_VEHICLE_SUFFIX;
 			valid_spin = qtrue; break;
 		}
 
@@ -934,25 +960,6 @@ void SV_Spin(client_t* cl) {
 
 		// ── Health ───────────────────────────────────────────────────────────
 
-		if (Spin_HasWon(cprizes, rando, WIN_100_HEALTH)) {
-			int newHp = cl->gentity->health + 100;
-			if (newHp > 999) newHp = 999;
-			cl->gentity->health = newHp;
-			cl->gentity->playerState->stats[STAT_HEALTH] = newHp;
-			Com_Printf("Giving %s^7 100 Health\n", playername);
-			response = "You win a 100 Health Boost!";
-			valid_spin = qtrue; break;
-		}
-
-		if (Spin_HasWon(cprizes, rando, WIN_250_HEALTH)) {
-			int newHp = cl->gentity->health + 250;
-			if (newHp > 999) newHp = 999;
-			cl->gentity->health = newHp;
-			cl->gentity->playerState->stats[STAT_HEALTH] = newHp;
-			Com_Printf("Giving %s^7 250 Health\n", playername);
-			response = "You win a 250 Health Boost!";
-			valid_spin = qtrue; break;
-		}
 
 		spins++;
 
@@ -1048,7 +1055,11 @@ static int Spin_LookupWinByName(const char* name)
 		{"speeder",            WIN_SPEEDER},
 		{"dewback",            WIN_DEWBACK},
 		{"mech",               WIN_MECH},
-		{"tie_bomber",         WIN_TIE_BOMBER},
+		{"awing_mini",         WIN_AWING_MINI},
+		{"tie_bomber_mini",    WIN_TIE_BOMBER_MINI},
+		{"tie_fighter_mini",   WIN_TIE_FIGHTER_MINI},
+		{"ywing_mini",         WIN_YWING_MINI},
+		{"bantha",             WIN_BANTHA},
 		// Fun / Size
 		{"size_xs",            WIN_SIZE_XS},
 		{"size_s",             WIN_SIZE_S},
@@ -1056,8 +1067,6 @@ static int Spin_LookupWinByName(const char* name)
 		{"size_xl",            WIN_SIZE_XL},
 		{"size_huge",          WIN_SIZE_HUGE},
 		// Health
-		{"100_health",         WIN_100_HEALTH},
-		{"250_health",         WIN_250_HEALTH},
 		{nullptr, -1}
 	};
 
@@ -1119,4 +1128,33 @@ void SV_SpinWin_f(void)
 	cl->gentity->playerState->userInt1 = 0; // clear cooldown set by SV_Spin
 
 	Com_Printf("spinwin: forced win '%s' for %s^7\n", winArg, cl->name);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SV_SpinFrame — called every server frame to auto-spin players whose timer
+// has expired. Replaces the need for players to type !spin.
+// ─────────────────────────────────────────────────────────────────────────────
+void SV_SpinFrame(void)
+{
+	if (!sv_spin->integer)
+		return;
+
+	for (int i = 0; i < sv_maxclients->integer; i++) {
+		client_t* cl = &svs.clients[i];
+		if (cl->state != CS_ACTIVE || !cl->gentity)
+			continue;
+
+		int* spinTimer = &cl->gentity->playerState->userInt1;
+
+		// First time this client has been seen — set their initial countdown
+		if (*spinTimer == 0) {
+			*spinTimer = svs.time + sv_spinCooldown->integer * 1000;
+			continue;
+		}
+
+		// Timer expired — auto-spin
+		if (svs.time >= *spinTimer) {
+			SV_Spin(cl);
+		}
+	}
 }

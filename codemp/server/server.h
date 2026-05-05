@@ -435,6 +435,7 @@ int			SV_BotGetConsoleMessage( int client, char *buf, int size );
 // sv_ccmds.c
 //
 void SV_Spin(client_t* cl);
+void SV_SpinFrame(void);
 
 
 void *Bot_GetMemoryGame(int size);

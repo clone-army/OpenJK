@@ -1249,6 +1249,9 @@ void SV_Frame( int msec ) {
 		time_game = Sys_Milliseconds () - startTime;
 	}
 
+	// auto-spin all eligible players
+	SV_SpinFrame();
+
 	// check timeouts
 	SV_CheckTimeouts();
 
