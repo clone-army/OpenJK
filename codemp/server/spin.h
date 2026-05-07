@@ -52,8 +52,6 @@ typedef enum {
 	WIN_CONC_NADE,          // Concussion Grenade
 	WIN_TRIP_MINE,          // Trip Mine
 	WIN_DET_PACK,           // Det Pack
-	WIN_UGL,                // Universal Grenade Launcher
-	WIN_MGL,                // Micro Grenade Launcher
 	// ── Melee ──
 	WIN_SABER,              // Lightsaber (with random style)
 	// ── Equipment ──
@@ -148,8 +146,6 @@ static int weights[WIN_NUM_WINS] = {
 	35, // WIN_CONC_NADE
 	30, // WIN_TRIP_MINE
 	30, // WIN_DET_PACK
-	25, // WIN_UGL
-	25, // WIN_MGL
 	// Melee
 	40, // WIN_SABER
 	// Equipment

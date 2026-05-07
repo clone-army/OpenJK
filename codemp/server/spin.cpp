@@ -758,22 +758,6 @@ void SV_Spin(client_t* cl) {
 			valid_spin = qtrue; break;
 		}
 
-		if (Spin_HasWon(cprizes, rando, WIN_UGL)) {
-			SV_WannaGiveWeapon(cl, WP_UGL);
-			Spin_GiveWeaponAmmo(cl, WP_UGL);
-			Com_Printf("Giving %s^7 a Universal Grenade Launcher\n", playername);
-			response = "You win a Universal Grenade Launcher";
-			valid_spin = qtrue; break;
-		}
-
-		if (Spin_HasWon(cprizes, rando, WIN_MGL)) {
-			SV_WannaGiveWeapon(cl, WP_MGL);
-			Spin_GiveWeaponAmmo(cl, WP_MGL);
-			Com_Printf("Giving %s^7 a Micro Grenade Launcher\n", playername);
-			response = "You win a Micro Grenade Launcher";
-			valid_spin = qtrue; break;
-		}
-
 		// ── Lightsaber (random style) ────────────────────────────────────────
 
 		if (Spin_HasWon(cprizes, rando, WIN_SABER)) {
@@ -1129,8 +1113,6 @@ static int Spin_LookupWinByName(const char* name)
 		{"conc_nade",          WIN_CONC_NADE},
 		{"trip_mine",          WIN_TRIP_MINE},
 		{"det_pack",           WIN_DET_PACK},
-		{"ugl",                WIN_UGL},
-		{"mgl",                WIN_MGL},
 		// Melee
 		{"saber",              WIN_SABER},
 		// Equipment
