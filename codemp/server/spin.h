@@ -147,7 +147,7 @@ static int weights[WIN_NUM_WINS] = {
 	30, // WIN_TRIP_MINE
 	30, // WIN_DET_PACK
 	// Melee
-	40, // WIN_SABER
+	50, // WIN_SABER
 	// Equipment
 	50, // WIN_100_ARMOR
 	30, // WIN_250_ARMOR
