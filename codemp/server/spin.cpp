@@ -1248,12 +1248,55 @@ void SV_SpinWin_f(void)
 // SV_SpinFrame — called every server frame to auto-spin players whose timer
 // has expired. Replaces the need for players to type !spin.
 // ─────────────────────────────────────────────────────────────────────────────
+
+// Time the current round started (svs.time). Reset when intermission begins.
+static int gSpinRoundStartTime = 0;
+// Tracks whether the "1 minute left" cooldown announcement has fired this round.
+static bool gSpinLastMinuteAnnounced = false;
+
+#define SPIN_ROUND_LENGTH_MS  (5 * 60000)   // 5-minute rounds
+#define SPIN_LAST_MINUTE_MS   (4 * 60000)   // threshold: 4 min elapsed = 1 min left
+
+// Returns the effective cooldown in seconds.
+// For the first 4 minutes use sv_spinCooldown; in the last minute use 10s.
+static int Spin_EffectiveCooldown(void)
+{
+	if (gSpinRoundStartTime <= 0)
+		return sv_spinCooldown->integer;
+
+	int elapsed = svs.time - gSpinRoundStartTime;
+	return (elapsed >= SPIN_LAST_MINUTE_MS) ? 10 : sv_spinCooldown->integer;
+}
+
 void SV_SpinFrame(void)
 {
 	SV_DrainDeferredCmds();
 
 	if (!sv_spin->integer)
 		return;
+
+	// Intermission = round over; reset state for next round.
+	if (sv.configstrings[CS_INTERMISSION] && atoi(sv.configstrings[CS_INTERMISSION]) == 1) {
+		// Zero out every client's spin timer so the next round gives everyone
+		// the fresh 2-second initial delay. Without this, stale future timestamps
+		// from the previous round prevent the == 0 check from ever firing.
+		for (int i = 0; i < sv_maxclients->integer; i++) {
+			client_t* cl = &svs.clients[i];
+			if (cl->state == CS_ACTIVE && cl->gentity)
+				cl->gentity->playerState->userInt1 = 0;
+		}
+		gSpinRoundStartTime = 0;
+		gSpinLastMinuteAnnounced = false;
+		return;
+	}
+
+	// Fire the "1 minute left" announcement once per round.
+	if (gSpinRoundStartTime > 0 && !gSpinLastMinuteAnnounced &&
+	    (svs.time - gSpinRoundStartTime) >= SPIN_LAST_MINUTE_MS)
+	{
+		gSpinLastMinuteAnnounced = true;
+		SV_SendServerCommand(NULL, "chat \"" SVSAY_PREFIX "^3End of round approaching...^7 Chaos cooldown now ^310 seconds^7!\"\n");
+	}
 
 	// Broadcast chaos mode announcement every 3 minutes
 	static int nextAnnounce = 0;
@@ -1270,16 +1313,24 @@ void SV_SpinFrame(void)
 
 		int* spinTimer = &cl->gentity->playerState->userInt1;
 
-		// First time this client has been seen — give first spin 2 seconds after round start,
-		// then SV_Spin will set the normal cooldown for all subsequent spins.
+		// First time this client is seen (userInt1 == 0 means fresh playerState).
+		// Record round start on first such player, then give them a 2-second delay.
 		if (*spinTimer == 0) {
+			if (gSpinRoundStartTime == 0)
+				gSpinRoundStartTime = svs.time;
 			*spinTimer = svs.time + 2000;
 			continue;
 		}
 
-		// Timer expired — spin; SV_Spin will silently skip spectators
+		// Timer expired — spin; SV_Spin silently skips spectators/dekas without
+		// advancing userInt1, so only override the timer when SV_Spin actually set it.
 		if (svs.time >= *spinTimer) {
 			SV_Spin(cl);
+
+			if (*spinTimer > svs.time) {
+				// SV_Spin advanced the timer — replace it with elapsed-based cooldown.
+				*spinTimer = svs.time + Spin_EffectiveCooldown() * 1000;
+			}
 		}
 	}
 }
