@@ -65,6 +65,8 @@ typedef enum {
 	WIN_SEEKER,
 	WIN_BACTA,
 	WIN_FORCEFIELD,
+	WIN_SPAWNER,            // Support Beacon (spawns a clone trooper)
+	WIN_STIMPACK,           // Stimpack
 	// ── Vehicles ──
 	WIN_TAUN_TAUN,
 	WIN_SWOOP,
@@ -76,6 +78,15 @@ typedef enum {
 	WIN_TIE_FIGHTER_MINI,
 	WIN_YWING_MINI,
 	WIN_BANTHA,
+	// ── NPC Spawns ──
+	WIN_NPC_CT_CARBINE,     // Clone Trooper (DC-15 Carbine)
+	WIN_NPC_CT_CR,          // Clone Trooper (CR-2)
+	WIN_NPC_CT_CR2,         // Clone Trooper (CR-2 Elite)
+	WIN_NPC_B1,             // B1 Battle Droid
+	WIN_NPC_BX,             // BX Commando Droid
+	WIN_NPC_JEDI,           // Jedi NPC
+	WIN_NPC_WAMPA,          // Wampa
+	WIN_NPC_RANCOR,         // Rancor
 	// ── Fun / Size ──
 	WIN_SIZE_XS,           // 50% scale
 	WIN_SIZE_S,            // 80% scale
@@ -151,6 +162,8 @@ static int weights[WIN_NUM_WINS] = {
 	35, // WIN_SEEKER
 	35, // WIN_BACTA
 	35, // WIN_FORCEFIELD
+	30, // WIN_SPAWNER
+	30, // WIN_STIMPACK
 	// Vehicles
 	25, // WIN_TAUN_TAUN
 	25, // WIN_SWOOP
@@ -162,6 +175,15 @@ static int weights[WIN_NUM_WINS] = {
 	 5, // WIN_TIE_FIGHTER_MINI
 	 5, // WIN_YWING_MINI
 	 5, // WIN_BANTHA
+	// NPC Spawns
+	30, // WIN_NPC_CT_CARBINE
+	25, // WIN_NPC_CT_CR
+	20, // WIN_NPC_CT_CR2
+	30, // WIN_NPC_B1
+	20, // WIN_NPC_BX
+	20, // WIN_NPC_JEDI
+	10, // WIN_NPC_WAMPA
+	 5, // WIN_NPC_RANCOR
 	// Fun / Size
 	25, // WIN_SIZE_XS
 	40, // WIN_SIZE_S

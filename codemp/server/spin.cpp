@@ -23,6 +23,14 @@ entry point that is called by sv_client.cpp when a player types /spin.
 #define SVSAY_PREFIX  "Server^7\x19: "
 #define SPAWN_VEHICLE_SUFFIX "(Spawns in 5 seconds)"
 
+// MB2's holdable_t enum differs from OpenJK's — EWEB and CLOAK are shifted.
+// Using OpenJK's HI_EWEB/HI_CLOAK here would set the wrong bits in MB2's
+// STAT_HOLDABLE_ITEMS bitmask. Always use these MB2-specific values.
+#define MB2_HI_EWEB      8
+#define MB2_HI_CLOAK     9
+#define MB2_HI_SPAWNER  10
+#define MB2_HI_STIMPACK 11
+
 // Forward-declare weapon helper that lives in sv_ccmds.cpp
 void SV_WannaGiveWeapon(client_t* cl, int wnum);
 
@@ -287,10 +295,10 @@ std::vector<int> Spin_GeneratePrices(client_t* cl) {
 	}
 
 	// Equipment exclusions: already owned
-	if (cl->gentity->playerState->stats[STAT_HOLDABLE_ITEMS] & (1 << HI_CLOAK))
+	if (cl->gentity->playerState->stats[STAT_HOLDABLE_ITEMS] & (1 << MB2_HI_CLOAK))
 		cweights[WIN_CLOAK] = 0;
 
-	if (cl->gentity->playerState->stats[STAT_HOLDABLE_ITEMS] & (1 << HI_EWEB))
+	if (cl->gentity->playerState->stats[STAT_HOLDABLE_ITEMS] & (1 << MB2_HI_EWEB))
 		cweights[WIN_EWEB] = 0;
 
 	if (cl->gentity->playerState->stats[STAT_HOLDABLE_ITEMS] & (1 << HI_SENTRY_GUN))
@@ -304,6 +312,12 @@ std::vector<int> Spin_GeneratePrices(client_t* cl) {
 
 	if (cl->gentity->playerState->stats[STAT_HOLDABLE_ITEMS] & (1 << HI_SHIELD))
 		cweights[WIN_FORCEFIELD] = 0;
+
+	if (cl->gentity->playerState->stats[STAT_HOLDABLE_ITEMS] & (1 << MB2_HI_SPAWNER))
+		cweights[WIN_SPAWNER] = 0;
+
+	if (cl->gentity->playerState->stats[STAT_HOLDABLE_ITEMS] & (1 << MB2_HI_STIMPACK))
+		cweights[WIN_STIMPACK] = 0;
 
 	// Build weighted prize vector
 	for (int i = 0; i < WIN_NUM_WINS; i++)
@@ -683,16 +697,16 @@ void SV_Spin(client_t* cl) {
 		if (Spin_HasWon(cprizes, rando, WIN_THERMAL)) {
 			SV_WannaGiveWeapon(cl, WP_THERMAL);
 			Spin_GiveWeaponAmmo(cl, WP_THERMAL);
-			Com_Printf("Giving %s^7 a Thermal Detonator\n", playername);
-			response = "You win a Thermal Detonator";
+			Com_Printf("Giving %s^7 a Thermal Grenade\n", playername);
+			response = "You win a Thermal Grenade";
 			valid_spin = qtrue; break;
 		}
 
 		if (Spin_HasWon(cprizes, rando, WIN_REAL_TD)) {
 			SV_WannaGiveWeapon(cl, WP_REAL_TD);
 			Spin_GiveWeaponAmmo(cl, WP_REAL_TD);
-			Com_Printf("Giving %s^7 a Proximity Detonator\n", playername);
-			response = "You win a Proximity Detonator";
+			Com_Printf("Giving %s^7 a Thermal Detonator\n", playername);
+			response = "You win a Thermal Detonator";
 			valid_spin = qtrue; break;
 		}
 
@@ -808,7 +822,7 @@ void SV_Spin(client_t* cl) {
 
 
 		if (Spin_HasWon(cprizes, rando, WIN_CLOAK)) {
-			cl->gentity->playerState->stats[STAT_HOLDABLE_ITEMS] |= (1 << HI_CLOAK);
+			cl->gentity->playerState->stats[STAT_HOLDABLE_ITEMS] |= (1 << MB2_HI_CLOAK);
 			cl->gentity->playerState->cloakFuel = 100;
 			Com_Printf("Giving %s^7 a Cloak Generator\n", playername);
 			response = "You win a Cloak Generator";
@@ -816,7 +830,7 @@ void SV_Spin(client_t* cl) {
 		}
 
 		if (Spin_HasWon(cprizes, rando, WIN_EWEB)) {
-			cl->gentity->playerState->stats[STAT_HOLDABLE_ITEMS] |= (1 << HI_EWEB);
+			cl->gentity->playerState->stats[STAT_HOLDABLE_ITEMS] |= (1 << MB2_HI_EWEB);
 			Com_Printf("Giving %s^7 an EWEB Gun Emplacement\n", playername);
 			response = "You win an EWEB Gun Emplacement";
 			valid_spin = qtrue; break;
@@ -847,6 +861,20 @@ void SV_Spin(client_t* cl) {
 			cl->gentity->playerState->stats[STAT_HOLDABLE_ITEMS] |= (1 << HI_SHIELD);
 			Com_Printf("Giving %s^7 a Forcefield Generator\n", playername);
 			response = "You win a Forcefield Generator";
+			valid_spin = qtrue; break;
+		}
+
+		if (Spin_HasWon(cprizes, rando, WIN_SPAWNER)) {
+			cl->gentity->playerState->stats[STAT_HOLDABLE_ITEMS] |= (1 << MB2_HI_SPAWNER);
+			Com_Printf("Giving %s^7 a Support Beacon\n", playername);
+			response = "You win a Support Beacon!";
+			valid_spin = qtrue; break;
+		}
+
+		if (Spin_HasWon(cprizes, rando, WIN_STIMPACK)) {
+			cl->gentity->playerState->stats[STAT_HOLDABLE_ITEMS] |= (1 << MB2_HI_STIMPACK);
+			Com_Printf("Giving %s^7 a Stimpack\n", playername);
+			response = "You win a Stimpack!";
 			valid_spin = qtrue; break;
 		}
 
@@ -890,7 +918,6 @@ void SV_Spin(client_t* cl) {
 		if (Spin_HasWon(cprizes, rando, WIN_MECH)) {
 			Com_Printf("Giving %s^7 a Shinrar Mech\n", playername);
 			SV_ExecuteClientCommandDelayed_h(cl, "npc spawn vehicle shinraR", 5);
-			SV_SendServerCommand(NULL, "chat \"" SVSAY_PREFIX "%s won a Shinrar Mech! We're in the end-game now...\"\n", playername);
 			response = "You win a Mech " SPAWN_VEHICLE_SUFFIX;
 			valid_spin = qtrue; break;
 		}
@@ -898,7 +925,6 @@ void SV_Spin(client_t* cl) {
 		if (Spin_HasWon(cprizes, rando, WIN_AWING_MINI)) {
 			Com_Printf("Giving %s^7 an A-Wing (mini)\n", playername);
 			SV_ExecuteClientCommandDelayed_h(cl, "npc spawn vehicle a-wing_mini", 5);
-			SV_SendServerCommand(NULL, "chat \"" SVSAY_PREFIX "%s won an A-Wing!\"\n", playername);
 			response = "You win an A-Wing " SPAWN_VEHICLE_SUFFIX;
 			valid_spin = qtrue; break;
 		}
@@ -906,7 +932,6 @@ void SV_Spin(client_t* cl) {
 		if (Spin_HasWon(cprizes, rando, WIN_TIE_BOMBER_MINI)) {
 			Com_Printf("Giving %s^7 a TIE Bomber (mini)\n", playername);
 			SV_ExecuteClientCommandDelayed_h(cl, "npc spawn vehicle tie-bomber_mini", 5);
-			SV_SendServerCommand(NULL, "chat \"" SVSAY_PREFIX "%s won a TIE Bomber!\"\n", playername);
 			response = "You win a TIE Bomber " SPAWN_VEHICLE_SUFFIX;
 			valid_spin = qtrue; break;
 		}
@@ -914,7 +939,6 @@ void SV_Spin(client_t* cl) {
 		if (Spin_HasWon(cprizes, rando, WIN_TIE_FIGHTER_MINI)) {
 			Com_Printf("Giving %s^7 a TIE Fighter (mini)\n", playername);
 			SV_ExecuteClientCommandDelayed_h(cl, "npc spawn vehicle tie-fighter_mini", 5);
-			SV_SendServerCommand(NULL, "chat \"" SVSAY_PREFIX "%s won a TIE Fighter!\"\n", playername);
 			response = "You win a TIE Fighter " SPAWN_VEHICLE_SUFFIX;
 			valid_spin = qtrue; break;
 		}
@@ -922,7 +946,6 @@ void SV_Spin(client_t* cl) {
 		if (Spin_HasWon(cprizes, rando, WIN_YWING_MINI)) {
 			Com_Printf("Giving %s^7 a Y-Wing (mini)\n", playername);
 			SV_ExecuteClientCommandDelayed_h(cl, "npc spawn vehicle y-wing_mini", 5);
-			SV_SendServerCommand(NULL, "chat \"" SVSAY_PREFIX "%s won a Y-Wing!\"\n", playername);
 			response = "You win a Y-Wing " SPAWN_VEHICLE_SUFFIX;
 			valid_spin = qtrue; break;
 		}
@@ -930,8 +953,65 @@ void SV_Spin(client_t* cl) {
 		if (Spin_HasWon(cprizes, rando, WIN_BANTHA)) {
 			Com_Printf("Giving %s^7 a Bantha\n", playername);
 			SV_ExecuteClientCommandDelayed_h(cl, "npc spawn vehicle bantha", 5);
-			SV_SendServerCommand(NULL, "chat \"" SVSAY_PREFIX "%s won a Bantha!\"\n", playername);
 			response = "You win a Bantha " SPAWN_VEHICLE_SUFFIX;
+			valid_spin = qtrue; break;
+		}
+
+		// ── NPC Spawns ──────────────────────────────────────────────────────
+
+		if (Spin_HasWon(cprizes, rando, WIN_NPC_CT_CARBINE)) {
+			SV_ExecuteClientCommandDelayed_h(cl, "npc spawn CT_Carbine", 5);
+			Com_Printf("Spawning a Clone Trooper for %s^7\n", playername);
+			response = "You win a Clone Trooper companion! (Spawns in 5 seconds)";
+			valid_spin = qtrue; break;
+		}
+
+		if (Spin_HasWon(cprizes, rando, WIN_NPC_CT_CR)) {
+			SV_ExecuteClientCommandDelayed_h(cl, "npc spawn CT_CR", 5);
+			Com_Printf("Spawning a Clone Trooper (CR) for %s^7\n", playername);
+			response = "You win a Clone Trooper companion! (Spawns in 5 seconds)";
+			valid_spin = qtrue; break;
+		}
+
+		if (Spin_HasWon(cprizes, rando, WIN_NPC_CT_CR2)) {
+			SV_ExecuteClientCommandDelayed_h(cl, "npc spawn CT_CR2", 5);
+			Com_Printf("Spawning an Elite Clone Trooper for %s^7\n", playername);
+			response = "You win an Elite Clone Trooper companion! (Spawns in 5 seconds)";
+			valid_spin = qtrue; break;
+		}
+
+		if (Spin_HasWon(cprizes, rando, WIN_NPC_B1)) {
+			SV_ExecuteClientCommandDelayed_h(cl, "npc spawn B1_Blaster", 5);
+			Com_Printf("Spawning a B1 Battle Droid for %s^7\n", playername);
+			response = "You win a B1 Battle Droid companion! (Spawns in 5 seconds)";
+			valid_spin = qtrue; break;
+		}
+
+		if (Spin_HasWon(cprizes, rando, WIN_NPC_BX)) {
+			SV_ExecuteClientCommandDelayed_h(cl, "npc spawn BX_EE4", 5);
+			Com_Printf("Spawning a BX Commando Droid for %s^7\n", playername);
+			response = "You win a BX Commando Droid companion! (Spawns in 5 seconds)";
+			valid_spin = qtrue; break;
+		}
+
+		if (Spin_HasWon(cprizes, rando, WIN_NPC_JEDI)) {
+			SV_ExecuteClientCommandDelayed_h(cl, "npc spawn Jedi", 5);
+			Com_Printf("Spawning a Jedi for %s^7\n", playername);
+			response = "You win a Jedi companion! (Spawns in 5 seconds)";
+			valid_spin = qtrue; break;
+		}
+
+		if (Spin_HasWon(cprizes, rando, WIN_NPC_WAMPA)) {
+			SV_ExecuteClientCommandDelayed_h(cl, "npc spawn wampa", 5);
+			Com_Printf("Spawning a Wampa for %s^7\n", playername);
+			response = "You win a Wampa companion... (Spawns in 5 seconds)";
+			valid_spin = qtrue; break;
+		}
+
+		if (Spin_HasWon(cprizes, rando, WIN_NPC_RANCOR)) {
+			SV_ExecuteClientCommandDelayed_h(cl, "npc spawn rancor", 5);
+			Com_Printf("Spawning a Rancor for %s^7\n", playername);
+			response = "You win a Rancor companion... (Spawns in 5 seconds)";
 			valid_spin = qtrue; break;
 		}
 
