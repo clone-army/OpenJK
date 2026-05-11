@@ -90,7 +90,6 @@ typedef enum {
 	WIN_SIZE_S,            // 80% scale
 	WIN_SIZE_L,            // 130% scale
 	WIN_SIZE_XL,           // 175% scale
-	WIN_SIZE_HUGE,         // 250% scale
 	WIN_NUM_WINS // MUST BE LAST AND IS NOT A REAL WIN
 } spin_wins_t;
 
@@ -185,7 +184,6 @@ static int weights[WIN_NUM_WINS] = {
 	40, // WIN_SIZE_S
 	20, // WIN_SIZE_L
 	15, // WIN_SIZE_XL
-	 8, // WIN_SIZE_HUGE
 };
 
 // rcon test command

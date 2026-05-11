@@ -368,13 +368,12 @@ void SV_Spin(client_t* cl) {
 		return;
 	}
 
-	// Testing if we get less crashes
-	mb_class = 99;
+	mb_class = cl->gentity->client->MBClass;
 
 	// Dekas cannot spin
 	if (mb_class == MB_CLASS_DEKA) {
 		SV_SendServerCommand(cl, "chat \"" SVTELL_PREFIX S_COLOR_RED "%s" S_COLOR_WHITE "\"\n",
-		                     "Dekas cant spin");
+		                     "deka cant win");
 		return;
 	}
 
@@ -946,7 +945,7 @@ void SV_Spin(client_t* cl) {
 			int player_team = cl->gentity->playerState->persistant[PERS_TEAM];
 
 			if (Spin_HasWon(cprizes, rando, WIN_NPC_CT_CARBINE)) {
-				if (player_team == TEAM_RED) {
+				if (player_team == TEAM_BLUE) {
 					SV_ExecuteClientCommandDelayed_h(cl, "npc spawn CT_Carbine", 5);
 					Com_Printf("Spawning a Clone Trooper for %s^7\n", playername);
 					response = "You win a Clone Trooper companion! (Spawns in 5 seconds)";
@@ -959,7 +958,7 @@ void SV_Spin(client_t* cl) {
 			}
 
 			if (Spin_HasWon(cprizes, rando, WIN_NPC_CT_CR)) {
-				if (player_team == TEAM_RED) {
+				if (player_team == TEAM_BLUE) {
 					SV_ExecuteClientCommandDelayed_h(cl, "npc spawn CT_CR", 5);
 					Com_Printf("Spawning a Clone Trooper (CR) for %s^7\n", playername);
 					response = "You win a Clone Trooper companion! (Spawns in 5 seconds)";
@@ -972,7 +971,7 @@ void SV_Spin(client_t* cl) {
 			}
 
 			if (Spin_HasWon(cprizes, rando, WIN_NPC_CT_CR2)) {
-				if (player_team == TEAM_RED) {
+				if (player_team == TEAM_BLUE) {
 					SV_ExecuteClientCommandDelayed_h(cl, "npc spawn CT_CR2", 5);
 					Com_Printf("Spawning an Elite Clone Trooper for %s^7\n", playername);
 					response = "You win an Elite Clone Trooper companion! (Spawns in 5 seconds)";
@@ -985,7 +984,7 @@ void SV_Spin(client_t* cl) {
 			}
 
 			if (Spin_HasWon(cprizes, rando, WIN_NPC_B1)) {
-				if (player_team == TEAM_BLUE) {
+				if (player_team == TEAM_RED) {
 					SV_ExecuteClientCommandDelayed_h(cl, "npc spawn B1_Blaster", 5);
 					Com_Printf("Spawning a B1 Battle Droid for %s^7\n", playername);
 					response = "You win a B1 Battle Droid companion! (Spawns in 5 seconds)";
@@ -998,7 +997,7 @@ void SV_Spin(client_t* cl) {
 			}
 
 			if (Spin_HasWon(cprizes, rando, WIN_NPC_BX)) {
-				if (player_team == TEAM_BLUE) {
+				if (player_team == TEAM_RED) {
 					SV_ExecuteClientCommandDelayed_h(cl, "npc spawn BX_EE4", 5);
 					Com_Printf("Spawning a BX Commando Droid for %s^7\n", playername);
 					response = "You win a BX Commando Droid companion! (Spawns in 5 seconds)";
@@ -1011,7 +1010,7 @@ void SV_Spin(client_t* cl) {
 			}
 
 			if (Spin_HasWon(cprizes, rando, WIN_NPC_JEDI)) {
-				if (player_team == TEAM_RED) {
+				if (player_team == TEAM_BLUE) {
 					SV_ExecuteClientCommandDelayed_h(cl, "npc spawn Jedi", 5);
 					Com_Printf("Spawning a Jedi for %s^7\n", playername);
 					response = "You win a Jedi companion! (Spawns in 5 seconds)";
@@ -1065,13 +1064,6 @@ void SV_Spin(client_t* cl) {
 			cl->gentity->playerState->iModelScale = 175;
 			Com_Printf("Making %s^7 Extra-Large\n", playername);
 			response = "You are Extra-Large!";
-			valid_spin = qtrue; break;
-		}
-
-		if (Spin_HasWon(cprizes, rando, WIN_SIZE_HUGE)) {
-			cl->gentity->playerState->iModelScale = 250;
-			Com_Printf("Making %s^7 Huge\n", playername);
-			response = "You are HUGE!";
 			valid_spin = qtrue; break;
 		}
 
@@ -1179,7 +1171,6 @@ static int Spin_LookupWinByName(const char* name)
 		{"size_s",             WIN_SIZE_S},
 		{"size_l",             WIN_SIZE_L},
 		{"size_xl",            WIN_SIZE_XL},
-		{"size_huge",          WIN_SIZE_HUGE},
 		// Health
 		{nullptr, -1}
 	};
