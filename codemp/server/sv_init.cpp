@@ -1010,8 +1010,8 @@ void SV_Init (void) {
 
 	sv_banFile = Cvar_Get( "sv_banFile", "serverbans.dat", CVAR_ARCHIVE, "File to use to store bans and exceptions" );
 
-	sv_spin = Cvar_Get("sv_spin", "1", CVAR_TEMP, "File to use to store bans and exceptions");
-	sv_spinCooldown = Cvar_Get("sv_spinCooldown", "20", CVAR_TEMP, "File to use to store bans and exceptions");
+	sv_chaosEnable = Cvar_Get("sv_chaosEnable", "1", CVAR_TEMP, "File to use to store bans and exceptions");
+	sv_chaosCooldown = Cvar_Get("sv_chaosCooldown", "20", CVAR_TEMP, "File to use to store bans and exceptions");
 
 	// used by smod extensions
 	g_smodAdminPassword_1 = Cvar_Get("g_smodAdminPassword_1", "", CVAR_PROTECTED, "SMOD1");
