@@ -964,6 +964,7 @@ void SV_Init (void) {
 	sv_maxPing = Cvar_Get ("sv_maxPing", "0", CVAR_ARCHIVE_ND | CVAR_SERVERINFO );
 	sv_floodProtect = Cvar_Get ("sv_floodProtect", "1", CVAR_ARCHIVE | CVAR_SERVERINFO, "Protect against flooding of server commands" );
 	sv_floodProtectSlow = Cvar_Get ("sv_floodProtectSlow", "1", CVAR_ARCHIVE | CVAR_SERVERINFO, "Use original method of delaying commands with flood protection" );
+	Cvar_Get ("g_creditSystemEnable", "0", CVAR_ARCHIVE, "Enable the server-side credit/bounty system" );
 	// systeminfo
 	Cvar_Get ("sv_cheats", "1", CVAR_SYSTEMINFO | CVAR_ROM, "Allow cheats on server if set to 1" );
 	sv_serverid = Cvar_Get ("sv_serverid", "0", CVAR_SYSTEMINFO | CVAR_ROM );
