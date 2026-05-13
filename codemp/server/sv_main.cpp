@@ -69,8 +69,8 @@ cvar_t	*sv_autoDemoBots;
 cvar_t	*sv_autoDemoMaxMaps;
 cvar_t	*sv_legacyFixes;
 cvar_t	*sv_banFile;
-cvar_t* sv_chaosEnable;
-cvar_t* sv_chaosCooldown;
+cvar_t* g_chaosEnable;
+cvar_t* g_chaosCooldown;
 
 // Used by smod extension to check if password is correct
 cvar_t* g_smodAdminPassword_1;

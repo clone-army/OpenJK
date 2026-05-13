@@ -1081,7 +1081,7 @@ void SV_Spin(client_t* cl) {
 	Cvar_Set("sv_cheats", "0");
 
 	// Record when the cooldown expires
-	cl->gentity->playerState->userInt1 = svs.time + sv_chaosCooldown->integer * 1000;
+	cl->gentity->playerState->userInt1 = svs.time + g_chaosCooldown->integer * 1000;
 
 	SV_SendServerCommand(cl, "chat \"" S_COLOR_MAGENTA "%s" S_COLOR_WHITE "\"\n", response);
 }
@@ -1247,7 +1247,7 @@ void SV_SpinFrame(void)
 {
 	SV_DrainDeferredCmds();
 
-	if (!sv_chaosEnable->integer)
+	if (!g_chaosEnable->integer)
 		return;
 
 	// Intermission = round over; reset state for next round.
@@ -1269,7 +1269,7 @@ void SV_SpinFrame(void)
 	if (svs.time >= nextAnnounce) {
 		nextAnnounce = svs.time + 180000;
 		SV_SendServerCommand(NULL, "chat \"" SVSAY_PREFIX "^3Chaos Mode enabled! ^7Prizes for everyone every ^3%d^7 seconds!\"\n",
-				sv_chaosCooldown->integer);
+					g_chaosCooldown->integer);
 	}
 
 	for (int i = 0; i < sv_maxclients->integer; i++) {
@@ -1295,7 +1295,7 @@ void SV_SpinFrame(void)
 
 			if (*spinTimer > svs.time) {
 				// SV_Spin advanced the timer — replace it with the configured cooldown.
-				*spinTimer = svs.time + sv_chaosCooldown->integer * 1000;
+				*spinTimer = svs.time + g_chaosCooldown->integer * 1000;
 			}
 		}
 	}
