@@ -79,6 +79,8 @@ void G_WriteClientSessionData( gclient_t *client )
 	Q_strcat( s, sizeof( s ), va( "%i ", client->sess.selectedFP ) );
 	Q_strcat( s, sizeof( s ), va( "%i ", client->sess.duelTeam ) );
 	Q_strcat( s, sizeof( s ), va( "%i ", client->sess.siegeDesiredTeam ) );
+	Q_strcat( s, sizeof( s ), va( "%i ", client->sess.credits ) );
+	Q_strcat( s, sizeof( s ), va( "%i ", client->sess.bountyCredits ) );
 	Q_strcat( s, sizeof( s ), va( "%s ", siegeClass ) );
 	Q_strcat( s, sizeof( s ), va( "%s", IP ) );
 
@@ -103,7 +105,7 @@ void G_ReadSessionData( gclient_t *client )
 	var = va( "session%i", client - level.clients );
 	trap->Cvar_VariableStringBuffer( var, s, sizeof(s) );
 
-	sscanf( s, "%i %i %i %i %i %i %i %i %i %i %i %i %s %s",
+	sscanf( s, "%i %i %i %i %i %i %i %i %i %i %i %i %i %i %s %s",
 		&tempSessionTeam, //&client->sess.sessionTeam,
 		&client->sess.spectatorNum,
 		&tempSpectatorState, //&client->sess.spectatorState,
@@ -116,6 +118,8 @@ void G_ReadSessionData( gclient_t *client )
 		&client->sess.selectedFP,
 		&client->sess.duelTeam,
 		&client->sess.siegeDesiredTeam,
+		&client->sess.credits,
+		&client->sess.bountyCredits,
 		client->sess.siegeClass,
 		client->sess.IP
 		);
@@ -157,6 +161,8 @@ void G_InitSessionData( gclient_t *client, char *userinfo, qboolean isBot ) {
 	sess = &client->sess;
 
 	client->sess.siegeDesiredTeam = TEAM_FREE;
+	client->sess.credits = 0;
+	client->sess.bountyCredits = 0;
 
 	// initial team determination
 	if ( level.gametype >= GT_TEAM ) {

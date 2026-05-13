@@ -1081,7 +1081,7 @@ void SV_Spin(client_t* cl) {
 	Cvar_Set("sv_cheats", "0");
 
 	// Record when the cooldown expires
-	cl->gentity->playerState->userInt1 = svs.time + sv_spinCooldown->integer * 1000;
+	cl->gentity->playerState->userInt1 = svs.time + sv_chaosCooldown->integer * 1000;
 
 	SV_SendServerCommand(cl, "chat \"" S_COLOR_MAGENTA "%s" S_COLOR_WHITE "\"\n", response);
 }
@@ -1242,28 +1242,12 @@ void SV_SpinWin_f(void)
 
 // Time the current round started (svs.time). Reset when intermission begins.
 static int gSpinRoundStartTime = 0;
-// Tracks whether the "1 minute left" cooldown announcement has fired this round.
-static bool gSpinLastMinuteAnnounced = false;
-
-#define SPIN_ROUND_LENGTH_MS  (5 * 60000)   // 5-minute rounds
-#define SPIN_LAST_MINUTE_MS   (4 * 60000)   // threshold: 4 min elapsed = 1 min left
-
-// Returns the effective cooldown in seconds.
-// For the first 4 minutes use sv_spinCooldown; in the last minute use 10s.
-static int Spin_EffectiveCooldown(void)
-{
-	if (gSpinRoundStartTime <= 0)
-		return sv_spinCooldown->integer;
-
-	int elapsed = svs.time - gSpinRoundStartTime;
-	return (elapsed >= SPIN_LAST_MINUTE_MS) ? 10 : sv_spinCooldown->integer;
-}
 
 void SV_SpinFrame(void)
 {
 	SV_DrainDeferredCmds();
 
-	if (!sv_spin->integer)
+	if (!sv_chaosEnable->integer)
 		return;
 
 	// Intermission = round over; reset state for next round.
@@ -1277,16 +1261,7 @@ void SV_SpinFrame(void)
 				cl->gentity->playerState->userInt1 = 0;
 		}
 		gSpinRoundStartTime = 0;
-		gSpinLastMinuteAnnounced = false;
 		return;
-	}
-
-	// Fire the "1 minute left" announcement once per round.
-	if (gSpinRoundStartTime > 0 && !gSpinLastMinuteAnnounced &&
-	    (svs.time - gSpinRoundStartTime) >= SPIN_LAST_MINUTE_MS)
-	{
-		gSpinLastMinuteAnnounced = true;
-		SV_SendServerCommand(NULL, "chat \"" SVSAY_PREFIX "^3End of round approaching...^7 Chaos cooldown now ^310 seconds^7!\"\n");
 	}
 
 	// Broadcast chaos mode announcement every 3 minutes
@@ -1294,7 +1269,7 @@ void SV_SpinFrame(void)
 	if (svs.time >= nextAnnounce) {
 		nextAnnounce = svs.time + 180000;
 		SV_SendServerCommand(NULL, "chat \"" SVSAY_PREFIX "^3Chaos Mode enabled! ^7Prizes for everyone every ^3%d^7 seconds!\"\n",
-			sv_spinCooldown->integer);
+				sv_chaosCooldown->integer);
 	}
 
 	for (int i = 0; i < sv_maxclients->integer; i++) {
@@ -1319,8 +1294,8 @@ void SV_SpinFrame(void)
 			SV_Spin(cl);
 
 			if (*spinTimer > svs.time) {
-				// SV_Spin advanced the timer — replace it with elapsed-based cooldown.
-				*spinTimer = svs.time + Spin_EffectiveCooldown() * 1000;
+				// SV_Spin advanced the timer — replace it with the configured cooldown.
+				*spinTimer = svs.time + sv_chaosCooldown->integer * 1000;
 			}
 		}
 	}

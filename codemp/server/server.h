@@ -289,8 +289,8 @@ extern	cvar_t	*sv_autoDemoMaxMaps;
 extern	cvar_t	*sv_legacyFixes;
 extern	cvar_t	*sv_banFile;
 
-extern	cvar_t* sv_spin;
-extern	cvar_t* sv_spinCooldown;
+extern	cvar_t* sv_chaosEnable;
+extern	cvar_t* sv_chaosCooldown;
 
 // Used by smod extension to check if password is correct
 extern cvar_t* g_smodAdminPassword_1;
