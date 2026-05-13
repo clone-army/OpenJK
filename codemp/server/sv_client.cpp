@@ -27,6 +27,8 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "server.h"
 #include "qcommon/stringed_ingame.h"
 
+#include <ctype.h>
+
 #ifdef USE_INTERNAL_ZLIB
 #include "zlib/zlib.h"
 #else
@@ -1263,6 +1265,240 @@ static ucmd_t ucmds[] = {
 	{NULL, NULL}
 };
 
+typedef struct economyItem_s {
+	const char *name;
+	const char *giveName;
+	int cost;
+} economyItem_t;
+
+static const economyItem_t svEconomyItems[] = {
+	{"seeker", "weapon_seeker", 10},
+	{"sentry", "weapon_sentry", 15},
+	{"electrobinocs", "weapon_binoculars", 8},
+	{"cloak", "item_cloak", 20},
+	{"eweb", "weapon_emplaced", 25},
+	{"tripmine", "weapon_trip_mine", 12},
+	{"jetpack", "item_jetpack", 22},
+	{"bacta", "item_medpac", 5},
+	{"ammo", "ammo_all", 6},
+	{"cryo", "weapon_cryo", 18}
+};
+
+static qboolean SV_EconomyEnabled( void ) {
+	if ( Cvar_VariableIntegerValue( "g_creditSystemEnable" ) ) {
+		return qtrue;
+	}
+
+	// Backward-compatible alias for servers that used the pluralized name.
+	return Cvar_VariableIntegerValue( "g_creditsSystemEnable" ) ? qtrue : qfalse;
+}
+
+static void SV_EconomyPrint( client_t *cl, const char *text ) {
+	SV_SendServerCommand( cl, "print \"^2[Economy]^7 %s\n\"\n", text );
+}
+
+static void SV_EconomyGiveItem( client_t *cl, const char *giveName ) {
+	const qboolean cheatsWereEnabled = Cvar_VariableIntegerValue( "sv_cheats" ) ? qtrue : qfalse;
+
+	if ( !cheatsWereEnabled ) {
+		Cvar_Set( "sv_cheats", "1" );
+		GVM_RunFrame( sv.time );
+	}
+
+	SV_ExecuteClientCommand( cl, va( "give %s", giveName ), qtrue );
+
+	if ( !cheatsWereEnabled ) {
+		Cvar_Set( "sv_cheats", "0" );
+		GVM_RunFrame( sv.time );
+	}
+}
+
+static qboolean SV_ParseEconomyChat( char *out, int outSize ) {
+	const char *raw = Cmd_Args();
+	int i;
+	int len;
+
+	if ( !raw || !raw[0] ) {
+		return qfalse;
+	}
+
+	while ( *raw == ' ' ) {
+		raw++;
+	}
+
+	Q_strncpyz( out, raw, outSize );
+	len = strlen( out );
+
+	if ( len >= 2 && out[0] == '"' && out[len - 1] == '"' ) {
+		for ( i = 0; i < len - 1; i++ ) {
+			out[i] = out[i + 1];
+		}
+		out[len - 2] = '\0';
+	}
+
+	len = strlen( out );
+	while ( len > 0 && (out[len - 1] == ' ' || out[len - 1] == '\t') ) {
+		out[len - 1] = '\0';
+		len--;
+	}
+
+	return out[0] ? qtrue : qfalse;
+}
+
+static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
+	char commandName[MAX_TOKEN_CHARS];
+	char chatText[MAX_STRING_CHARS];
+	char firstArg[MAX_TOKEN_CHARS];
+	char secondArg[MAX_TOKEN_CHARS];
+	const char *clientCmd = Cmd_Argv( 0 );
+	const char *chatCursor;
+	int commandLen = 0;
+	int i;
+
+	if ( Q_stricmp( clientCmd, "say" ) && Q_stricmp( clientCmd, "say_team" ) ) {
+		return qfalse;
+	}
+
+	if ( !SV_ParseEconomyChat( chatText, sizeof( chatText ) ) ) {
+		return qfalse;
+	}
+
+	chatCursor = chatText;
+	while ( *chatCursor == ' ' ) {
+		chatCursor++;
+	}
+
+	if ( chatCursor[0] != '!' ) {
+		return qfalse;
+	}
+
+	chatCursor++;
+	while ( *chatCursor == ' ' ) {
+		chatCursor++;
+	}
+
+	while ( chatCursor[commandLen] && chatCursor[commandLen] != ' ' && chatCursor[commandLen] != '\t' ) {
+		commandLen++;
+	}
+
+	if ( commandLen <= 0 || commandLen >= (int)sizeof( commandName ) ) {
+		return qfalse;
+	}
+
+	for ( i = 0; i < commandLen; i++ ) {
+		commandName[i] = tolower( (unsigned char)chatCursor[i] );
+	}
+	commandName[commandLen] = '\0';
+
+	chatCursor += commandLen;
+	while ( *chatCursor == ' ' || *chatCursor == '\t' ) {
+		chatCursor++;
+	}
+
+	if ( !Q_stricmp( commandName, "balance" ) ) {
+		SV_EconomyPrint( cl, va( "Balance: %d credits", cl->economyCredits ) );
+		SV_EconomyPrint( cl, va( "Bounty on you: %d credits", cl->economyBounty ) );
+		return qtrue;
+	}
+
+	if ( !Q_stricmp( commandName, "buy" ) ) {
+		if ( !SV_EconomyEnabled() ) {
+			SV_EconomyPrint( cl, "Credit system is disabled." );
+			return qtrue;
+		}
+
+		if ( sscanf( chatCursor, "%63s", firstArg ) != 1 ) {
+			SV_EconomyPrint( cl, va( "Balance: %d credits", cl->economyCredits ) );
+			SV_EconomyPrint( cl, "Usage: !buy <id>" );
+			for ( i = 0; i < (int)ARRAY_LEN( svEconomyItems ); i++ ) {
+				SV_EconomyPrint( cl, va( "%d) %s - %d credits", i + 1, svEconomyItems[i].name, svEconomyItems[i].cost ) );
+			}
+			return qtrue;
+		}
+
+		i = atoi( firstArg ) - 1;
+		if ( i < 0 || i >= (int)ARRAY_LEN( svEconomyItems ) ) {
+			SV_EconomyPrint( cl, "Invalid item id. Use !buy to list items." );
+			return qtrue;
+		}
+
+		if ( cl->economyCredits < svEconomyItems[i].cost ) {
+			SV_EconomyPrint( cl, va( "Not enough credits. Need %d, have %d.", svEconomyItems[i].cost, cl->economyCredits ) );
+			return qtrue;
+		}
+
+		if ( !cl->gentity || !cl->gentity->playerState ||
+			cl->gentity->playerState->persistant[PERS_TEAM] == TEAM_SPECTATOR ||
+			cl->gentity->playerState->stats[STAT_HEALTH] <= 0 ) {
+			SV_EconomyPrint( cl, "You must be alive to buy items." );
+			return qtrue;
+		}
+
+		cl->economyCredits -= svEconomyItems[i].cost;
+		SV_EconomyGiveItem( cl, svEconomyItems[i].giveName );
+		SV_EconomyPrint( cl, va( "Purchased %s. New balance: %d", svEconomyItems[i].name, cl->economyCredits ) );
+		return qtrue;
+	}
+
+	if ( !Q_stricmp( commandName, "bounty" ) || !Q_stricmp( commandName, "bountry" ) ) {
+		int targetNum;
+		int amount;
+
+		if ( !SV_EconomyEnabled() ) {
+			SV_EconomyPrint( cl, "Credit system is disabled." );
+			return qtrue;
+		}
+
+		if ( sscanf( chatCursor, "%63s %63s", firstArg, secondArg ) != 2 ) {
+			SV_EconomyPrint( cl, "Usage: !bounty <clientnum> <credits>" );
+			SV_EconomyPrint( cl, "Current bounties:" );
+			for ( i = 0; i < sv_maxclients->integer; i++ ) {
+				client_t *target = &svs.clients[i];
+				if ( target->state >= CS_CONNECTED && target->economyBounty > 0 ) {
+					SV_EconomyPrint( cl, va( "%d) %s - %d", i, target->name, target->economyBounty ) );
+				}
+			}
+			return qtrue;
+		}
+
+		targetNum = atoi( firstArg );
+		amount = atoi( secondArg );
+
+		if ( targetNum < 0 || targetNum >= sv_maxclients->integer ) {
+			SV_EconomyPrint( cl, "Invalid target clientnum." );
+			return qtrue;
+		}
+
+		if ( amount <= 0 ) {
+			SV_EconomyPrint( cl, "Bounty must be greater than 0." );
+			return qtrue;
+		}
+
+		if ( &svs.clients[targetNum] == cl ) {
+			SV_EconomyPrint( cl, "You cannot place a bounty on yourself." );
+			return qtrue;
+		}
+
+		if ( svs.clients[targetNum].state < CS_CONNECTED ) {
+			SV_EconomyPrint( cl, "Target player is not connected." );
+			return qtrue;
+		}
+
+		if ( cl->economyCredits < amount ) {
+			SV_EconomyPrint( cl, va( "Not enough credits. You have %d.", cl->economyCredits ) );
+			return qtrue;
+		}
+
+		cl->economyCredits -= amount;
+		svs.clients[targetNum].economyBounty += amount;
+		SV_EconomyPrint( cl, va( "Placed %d credit bounty on %s.", amount, svs.clients[targetNum].name ) );
+		SV_EconomyPrint( &svs.clients[targetNum], va( "%s placed a %d credit bounty on you.", cl->name, amount ) );
+		return qtrue;
+	}
+
+	return qfalse;
+}
+
 /*
 ==================
 SV_ExecuteClientCommand
@@ -1273,7 +1509,6 @@ Also called by bot code
 void SV_ExecuteClientCommand( client_t *cl, const char *s, qboolean clientOK ) {
 	ucmd_t	*u;
 	qboolean bProcessed = qfalse;
-	char* cp;
 
 	Cmd_TokenizeString( s );
 
@@ -1289,9 +1524,9 @@ void SV_ExecuteClientCommand( client_t *cl, const char *s, qboolean clientOK ) {
 	}
 
 	if (clientOK) {
-
-		cp = Cmd_Args();
-		cp = strtok(cp, " ");
+		if ( SV_HandleEconomyChatCommand( cl ) ) {
+			return;
+		}
 
 		// pass unknown strings to the game
 		if (!u->name && sv.state == SS_GAME && (cl->state == CS_ACTIVE || cl->state == CS_PRIMED)) {
@@ -1512,6 +1747,45 @@ static void SV_UserMove( client_t *cl, msg_t *msg, qboolean delta ) {
 			continue;
 		}
 		SV_ClientThink (cl, &cmds[ i ]);
+	}
+
+	if ( SV_EconomyEnabled() && cl->gentity && cl->gentity->playerState ) {
+		playerState_t *ps = cl->gentity->playerState;
+		const int score = ps->persistant[PERS_SCORE];
+		const int health = ps->stats[STAT_HEALTH];
+
+		if ( !cl->economyScoreInitialized ) {
+			cl->economyLastScore = score;
+			cl->economyScoreInitialized = qtrue;
+		} else if ( score > cl->economyLastScore ) {
+			const int scoreDelta = score - cl->economyLastScore;
+			int n;
+
+			cl->economyCredits += (scoreDelta * 5);
+			SV_EconomyPrint( cl, va( "Kill reward: +%d credits (balance: %d)", scoreDelta * 5, cl->economyCredits ) );
+
+			for ( n = 0; n < sv_maxclients->integer; n++ ) {
+				client_t *target = &svs.clients[n];
+				if ( target == cl || target->state < CS_CONNECTED || target->economyBounty <= 0 ||
+					!target->gentity || !target->gentity->playerState || !target->economyHealthInitialized ) {
+					continue;
+				}
+
+				if ( target->economyLastHealth > 0 && target->gentity->playerState->stats[STAT_HEALTH] <= 0 ) {
+					const int payout = target->economyBounty;
+					target->economyBounty = 0;
+					cl->economyCredits += payout;
+					target->economyLastHealth = target->gentity->playerState->stats[STAT_HEALTH];
+					SV_EconomyPrint( cl, va( "Bounty payout: +%d credits for %s", payout, target->name ) );
+					SV_EconomyPrint( target, "Your bounty was claimed." );
+					break;
+				}
+			}
+		}
+
+		cl->economyLastScore = score;
+		cl->economyLastHealth = health;
+		cl->economyHealthInitialized = qtrue;
 	}
 }
 

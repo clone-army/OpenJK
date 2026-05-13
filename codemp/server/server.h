@@ -204,6 +204,14 @@ typedef struct client_s {
 	qboolean		smod;
 	int				smodLevel;
 
+	// Server-side economy state (independent of game VM/session fields)
+	int				economyCredits;
+	int				economyBounty;
+	int				economyLastScore;
+	qboolean		economyScoreInitialized;
+	int				economyLastHealth;
+	qboolean		economyHealthInitialized;
+
 } client_t;
 
 //=============================================================================
