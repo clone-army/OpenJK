@@ -38,6 +38,23 @@ void SV_WannaGiveWeapon(client_t* cl, int wnum);
 // Set by SV_SpinWin_f (rcon spinwin command); reset to -1 after each use.
 static int gSpinForceWin = -1;
 
+static void Spin_ExecCheatClientCommand(client_t* cl, const char* cmd)
+{
+	const qboolean cheatsWereEnabled = Cvar_VariableIntegerValue("sv_cheats") ? qtrue : qfalse;
+
+	if (!cheatsWereEnabled) {
+		Cvar_Set("sv_cheats", "1");
+		GVM_RunFrame(sv.time);
+	}
+
+	SV_ExecuteClientCommand(cl, cmd, qtrue);
+
+	if (!cheatsWereEnabled) {
+		Cvar_Set("sv_cheats", "0");
+		GVM_RunFrame(sv.time);
+	}
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Internal helpers: delayed command execution and timed powerups
 // ─────────────────────────────────────────────────────────────────────────────
@@ -312,6 +329,9 @@ std::vector<int> Spin_GeneratePrices(client_t* cl) {
 
 	if (cl->gentity->playerState->stats[STAT_HOLDABLE_ITEMS] & (1 << HI_SHIELD))
 		cweights[WIN_FORCEFIELD] = 0;
+
+	if (cl->gentity->playerState->stats[STAT_HOLDABLE_ITEMS] & (1 << HI_SHIELD))
+		cweights[WIN_SHOCKFIELD] = 0;
 
 	if (cl->gentity->playerState->stats[STAT_HOLDABLE_ITEMS] & (1 << MB2_HI_SPAWNER))
 		cweights[WIN_SPAWNER] = 0;
@@ -861,6 +881,28 @@ void SV_Spin(client_t* cl) {
 			valid_spin = qtrue; break;
 		}
 
+		if (Spin_HasWon(cprizes, rando, WIN_JETPACK)) {
+			Spin_ExecCheatClientCommand(cl, "give item_jetpack");
+			Spin_ExecCheatClientCommand(cl, "give fuel 100");
+			Com_Printf("Giving %s^7 a Jetpack and Fuel\n", playername);
+			response = "You win a Jetpack with Fuel";
+			valid_spin = qtrue; break;
+		}
+
+		if (Spin_HasWon(cprizes, rando, WIN_SHOCKFIELD)) {
+			Spin_ExecCheatClientCommand(cl, "give item_shockfield");
+			Com_Printf("Giving %s^7 a Shockfield\n", playername);
+			response = "You win a Shockfield";
+			valid_spin = qtrue; break;
+		}
+
+		if (Spin_HasWon(cprizes, rando, WIN_PROTOCOL)) {
+			SV_ExecuteClientCommandDelayed_h(cl, "npc spawn protocol", 5);
+			Com_Printf("Spawning a Protocol Droid for %s^7\n", playername);
+			response = "You win a Protocol Droid companion! (Spawns in 5 seconds)";
+			valid_spin = qtrue; break;
+		}
+
 		// ── Vehicles ────────────────────────────────────────────────────────
 
 		if (Spin_HasWon(cprizes, rando, WIN_TAUN_TAUN)) {
@@ -1171,6 +1213,9 @@ static int Spin_LookupWinByName(const char* name)
 		{"size_s",             WIN_SIZE_S},
 		{"size_l",             WIN_SIZE_L},
 		{"size_xl",            WIN_SIZE_XL},
+		{"jetpack",            WIN_JETPACK},
+		{"shockfield",         WIN_SHOCKFIELD},
+		{"protocol",           WIN_PROTOCOL},
 		// Health
 		{nullptr, -1}
 	};
