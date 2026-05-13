@@ -104,43 +104,7 @@ void DeathmatchScoreboardMessage( gentity_t *ent ) {
 
 	trap->SendServerCommand( ent-g_entities, va("scores %i %i %i%s", i,
 		level.teamScores[TEAM_RED], level.teamScores[TEAM_BLUE],
-		string ) );
-}
-
-
-/*
-==================
-Cmd_Score_f
-
-Request current scoreboard information
-==================
-*/
-void Cmd_Score_f( gentity_t *ent ) {
-	DeathmatchScoreboardMessage( ent );
-}
-
-/*
-==================
-ConcatArgs
-==================
-*/
-char	*ConcatArgs( int start ) {
-	int		i, c, tlen;
-	static char	line[MAX_STRING_CHARS];
-	int		len;
-	char	arg[MAX_STRING_CHARS];
-
-	len = 0;
-	c = trap->Argc();
-	for ( i = start ; i < c ; i++ ) {
-		trap->Argv( i, arg, sizeof( arg ) );
-		tlen = strlen( arg );
-		if ( len + tlen >= MAX_STRING_CHARS - 1 ) {
-			break;
 		}
-		memcpy( line + len, arg, tlen );
-		len += tlen;
-		if ( i != c - 1 ) {
 			line[len] = ' ';
 			len++;
 		}
@@ -1641,209 +1605,6 @@ void G_Say( gentity_t *ent, gentity_t *target, int mode, const char *chatText ) 
 	}
 }
 
-typedef struct economyBuyItem_s {
-	int id;
-	int cost;
-	const char *name;
-	const char *itemClassname;
-	const char *fallbackClassname;
-} economyBuyItem_t;
-
-static const economyBuyItem_t economyBuyItems[] = {
-	{ 1,  50, "Trip Mine",  "weapon_trip_mine", NULL },
-	{ 2,  25, "Det Pack",   "weapon_det_pack", NULL },
-	{ 3,  50, "Cloak",      "item_cloak", NULL },
-	{ 4,  50, "Sentry",     "item_sentry_gun", NULL },
-	{ 5,  50, "Bacta",      "item_medpac", "item_medpac_big" },
-	{ 6,  25, "Seeker",     "item_seeker", NULL },
-	{ 7, 100, "Forcefield", "item_shield", NULL },
-	{ 8,  75, "Cryo",       "weapon_cryo", "weapon_thermal" },
-};
-static const size_t numEconomyBuyItems = ARRAY_LEN( economyBuyItems );
-
-static qboolean G_EconomyCanUse( gentity_t *ent ) {
-	if ( !g_creditSystemEnable.integer ) {
-		trap->SendServerCommand( ent-g_entities, "print \"Credits system is disabled.\n\"" );
-		return qfalse;
-	}
-	return qtrue;
-}
-
-static void G_PrintBuyMenu( gentity_t *ent ) {
-	size_t i = 0;
-	trap->SendServerCommand( ent-g_entities, "print \"Buy Menu (!buy <id>):\\n\"" );
-	for ( i = 0; i < numEconomyBuyItems; i++ ) {
-		trap->SendServerCommand( ent-g_entities,
-			va( "print \"  %i) %s - %i credits\\n\"", economyBuyItems[i].id, economyBuyItems[i].name, economyBuyItems[i].cost ) );
-	}
-}
-
-static qboolean G_TryHandleEconomyChat( gentity_t *ent, const char *chatText ) {
-	char cmd[32] = {0};
-	char args[MAX_SAY_TEXT] = {0};
-	const char *space = NULL;
-
-	if ( !chatText || chatText[0] != '!' ) {
-		return qfalse;
-	}
-
-	space = strchr( chatText, ' ' );
-	if ( space ) {
-		size_t cmdLen = (size_t)(space - (chatText + 1));
-		if ( cmdLen >= sizeof( cmd ) ) {
-			cmdLen = sizeof( cmd ) - 1;
-		}
-		memcpy( cmd, chatText + 1, cmdLen );
-		cmd[cmdLen] = '\0';
-		Q_strncpyz( args, space + 1, sizeof( args ) );
-	}
-	else {
-		Q_strncpyz( cmd, chatText + 1, sizeof( cmd ) );
-	}
-
-	if ( !Q_stricmp( cmd, "balance" ) ) {
-		if ( !G_EconomyCanUse( ent ) ) {
-			return qtrue;
-		}
-		trap->SendServerCommand( ent-g_entities, va( "print \"Balance: %i credits\\n\"", ent->client->sess.credits ) );
-		return qtrue;
-	}
-
-	if ( !Q_stricmp( cmd, "buy" ) ) {
-		int buyId = 0;
-		size_t i = 0;
-		const economyBuyItem_t *item = NULL;
-		const char *giveClassname = NULL;
-
-		if ( !G_EconomyCanUse( ent ) ) {
-			return qtrue;
-		}
-
-		if ( ent->health <= 0 || ent->client->tempSpectate >= level.time || ent->client->sess.sessionTeam == TEAM_SPECTATOR ) {
-			trap->SendServerCommand( ent-g_entities, va( "print \"%s\\n\"", G_GetStringEdString( "MP_SVGAME", "MUSTBEALIVE" ) ) );
-			return qtrue;
-		}
-
-		if ( !args[0] ) {
-			G_PrintBuyMenu( ent );
-			return qtrue;
-		}
-
-		if ( sscanf( args, "%i", &buyId ) != 1 ) {
-			trap->SendServerCommand( ent-g_entities, "print \"Usage: !buy <id>\\n\"" );
-			return qtrue;
-		}
-
-		for ( i = 0; i < numEconomyBuyItems; i++ ) {
-			if ( economyBuyItems[i].id == buyId ) {
-				item = &economyBuyItems[i];
-				break;
-			}
-		}
-
-		if ( !item ) {
-			trap->SendServerCommand( ent-g_entities, "print \"Invalid item id. Use !buy to view the menu.\\n\"" );
-			return qtrue;
-		}
-
-		if ( ent->client->sess.credits < item->cost ) {
-			trap->SendServerCommand( ent-g_entities, va( "print \"Not enough credits. Need %i.\\n\"", item->cost ) );
-			return qtrue;
-		}
-
-		giveClassname = item->itemClassname;
-		if ( !BG_FindItem( giveClassname ) && item->fallbackClassname ) {
-			giveClassname = item->fallbackClassname;
-		}
-
-		if ( !BG_FindItem( giveClassname ) ) {
-			trap->SendServerCommand( ent-g_entities, va( "print \"%s is unavailable on this build.\\n\"", item->name ) );
-			return qtrue;
-		}
-
-		ent->client->sess.credits -= item->cost;
-		G_Give( ent, giveClassname, "", 2 );
-		trap->SendServerCommand( ent-g_entities,
-			va( "print \"Bought %s for %i credits. Balance: %i.\\n\"", item->name, item->cost, ent->client->sess.credits ) );
-		return qtrue;
-	}
-
-	if ( !Q_stricmp( cmd, "bounty" ) || !Q_stricmp( cmd, "bountry" ) ) {
-		char targetArg[MAX_TOKEN_CHARS] = {0};
-		char amountArg[MAX_TOKEN_CHARS] = {0};
-		int targetNum = -1;
-		int amount = 0;
-		gentity_t *target = NULL;
-		int i = 0;
-		qboolean hasActiveBounties = qfalse;
-
-		if ( !G_EconomyCanUse( ent ) ) {
-			return qtrue;
-		}
-
-		if ( !args[0] ) {
-			trap->SendServerCommand( ent-g_entities, "print \"Bounty list:\\n\"" );
-			for ( i = 0; i < level.maxclients; i++ ) {
-				if ( level.clients[i].pers.connected != CON_CONNECTED || level.clients[i].sess.bountyCredits <= 0 ) {
-					continue;
-				}
-				hasActiveBounties = qtrue;
-				trap->SendServerCommand( ent-g_entities,
-					va( "print \"  %i) %s - bounty: %i\\n\"", i, level.clients[i].pers.netname, level.clients[i].sess.bountyCredits ) );
-			}
-			if ( !hasActiveBounties ) {
-				trap->SendServerCommand( ent-g_entities, "print \"  No active bounties.\\n\"" );
-			}
-			trap->SendServerCommand( ent-g_entities, "print \"Usage: !bounty <player id> <credits>\\n\"" );
-			return qtrue;
-		}
-
-		if ( sscanf( args, "%63s %63s", targetArg, amountArg ) != 2 ) {
-			trap->SendServerCommand( ent-g_entities, "print \"Usage: !bounty <player id> <credits>\\n\"" );
-			return qtrue;
-		}
-
-		if ( !StringIsInteger( amountArg ) ) {
-			trap->SendServerCommand( ent-g_entities, "print \"Bounty amount must be a positive integer.\\n\"" );
-			return qtrue;
-		}
-
-		amount = atoi( amountArg );
-		if ( amount <= 0 ) {
-			trap->SendServerCommand( ent-g_entities, "print \"Bounty amount must be greater than 0.\\n\"" );
-			return qtrue;
-		}
-
-		targetNum = ClientNumberFromString( ent, targetArg, qfalse );
-		if ( targetNum < 0 ) {
-			return qtrue;
-		}
-
-		target = &g_entities[targetNum];
-		if ( target == ent ) {
-			trap->SendServerCommand( ent-g_entities, "print \"You cannot place a bounty on yourself.\\n\"" );
-			return qtrue;
-		}
-
-		if ( ent->client->sess.credits < amount ) {
-			trap->SendServerCommand( ent-g_entities, va( "print \"Not enough credits. Need %i.\\n\"", amount ) );
-			return qtrue;
-		}
-
-		ent->client->sess.credits -= amount;
-		target->client->sess.bountyCredits += amount;
-
-		trap->SendServerCommand( ent-g_entities,
-			va( "print \"Placed %i credits on %s. New balance: %i.\\n\"", amount, target->client->pers.netname, ent->client->sess.credits ) );
-		trap->SendServerCommand( target-g_entities,
-			va( "print \"A bounty of %i credits was placed on you by %s.\\n\"", amount, ent->client->pers.netname ) );
-		return qtrue;
-	}
-
-	return qfalse;
-}
-
-
 /*
 ==================
 Cmd_Say_f
@@ -1860,10 +1621,6 @@ static void Cmd_Say_f( gentity_t *ent ) {
 	if ( strlen( p ) >= MAX_SAY_TEXT ) {
 		p[MAX_SAY_TEXT-1] = '\0';
 		G_SecurityLogPrintf( "Cmd_Say_f from %d (%s) has been truncated: %s\n", ent->s.number, ent->client->pers.netname, p );
-	}
-
-	if ( G_TryHandleEconomyChat( ent, p ) ) {
-		return;
 	}
 
 	G_Say( ent, NULL, SAY_ALL, p );
@@ -1885,10 +1642,6 @@ static void Cmd_SayTeam_f( gentity_t *ent ) {
 	if ( strlen( p ) >= MAX_SAY_TEXT ) {
 		p[MAX_SAY_TEXT-1] = '\0';
 		G_SecurityLogPrintf( "Cmd_SayTeam_f from %d (%s) has been truncated: %s\n", ent->s.number, ent->client->pers.netname, p );
-	}
-
-	if ( G_TryHandleEconomyChat( ent, p ) ) {
-		return;
 	}
 
 	G_Say( ent, NULL, (level.gametype>=GT_TEAM) ? SAY_TEAM : SAY_ALL, p );

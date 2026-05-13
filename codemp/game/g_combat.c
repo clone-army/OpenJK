@@ -739,7 +739,7 @@ void body_die( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int d
 	{
 		return;
 	}
-	else if (self->s.eFlags & EF_DISINTEGRATION)
+	if (self->s.eFlags & EF_DISINTEGRATION)
 	{
 		return;
 	}
@@ -2598,21 +2598,6 @@ extern void RunEmplacedWeapon( gentity_t *ent, usercmd_t **ucmd );
 			else
 			{
 				AddScore( attacker, self->r.currentOrigin, 1 );
-			}
-
-			if ( g_creditSystemEnable.integer && self->s.number < MAX_CLIENTS && self->client ) {
-				int bountyReward = self->client->sess.bountyCredits;
-				int totalReward = 5 + bountyReward;
-
-				attacker->client->sess.credits += totalReward;
-				self->client->sess.bountyCredits = 0;
-
-				trap->SendServerCommand( attacker-g_entities,
-					va( "print \"You earned %i credits for eliminating %s\\n\"", totalReward, self->client->pers.netname ) );
-				if ( bountyReward > 0 ) {
-					trap->SendServerCommand( attacker-g_entities,
-						va( "print \"Bounty collected: %i credits.\\n\"", bountyReward ) );
-				}
 			}
 
 			if( meansOfDeath == MOD_STUN_BATON ) {
