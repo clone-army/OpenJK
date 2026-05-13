@@ -90,6 +90,9 @@ typedef enum {
 	WIN_SIZE_S,            // 80% scale
 	WIN_SIZE_L,            // 130% scale
 	WIN_SIZE_XL,           // 175% scale
+	WIN_JETPACK,           // Jetpack + fuel refill
+	WIN_SHOCKFIELD,        // Shockfield holdable via give item_shockfield
+	WIN_PROTOCOL,          // Protocol droid companion
 	WIN_NUM_WINS // MUST BE LAST AND IS NOT A REAL WIN
 } spin_wins_t;
 
@@ -184,6 +187,9 @@ static int weights[WIN_NUM_WINS] = {
 	40, // WIN_SIZE_S
 	20, // WIN_SIZE_L
 	15, // WIN_SIZE_XL
+	30, // WIN_JETPACK
+	30, // WIN_SHOCKFIELD
+	20, // WIN_PROTOCOL
 };
 
 // rcon test command
