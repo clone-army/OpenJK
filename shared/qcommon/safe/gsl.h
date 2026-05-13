@@ -1,7 +1,17 @@
 #pragma once
 
 // central point of include to simplify possible future swap for Microsoft's implementation
-#include <gsl/gsl-lite.hpp>
+#if defined(__has_include)
+#  if __has_include(<gsl/gsl-lite.hpp>)
+#    include <gsl/gsl-lite.hpp>
+#  elif __has_include(<gsl/gsl-lite.h>)
+#    include <gsl/gsl-lite.h>
+#  else
+#    error "Missing gsl-lite header: expected <gsl/gsl-lite.hpp> or <gsl/gsl-lite.h>"
+#  endif
+#else
+#  include <gsl/gsl-lite.hpp>
+#endif
 
 // the default cstring_view constructor from string literals includes the terminating null; this one does not.
 #if defined( _MSC_VER ) && _MSC_VER < 1900
