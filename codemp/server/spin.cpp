@@ -38,6 +38,8 @@ void SV_WannaGiveWeapon(client_t* cl, int wnum);
 // Set by SV_SpinWin_f (rcon spinwin command); reset to -1 after each use.
 static int gSpinForceWin = -1;
 static const int kSpinEasCount = 87; // MBII EAS entries before EAS_MAX.
+static const int kSpinHoldableSkillFirst = 41; // EAS_HI_SEEKER
+static const int kSpinHoldableSkillLast  = 57; // EAS_HI_SHOCKFIELD
 
 static int Spin_AutoDetectHasSkillOffset(playerState_t* ps)
 {
@@ -159,14 +161,15 @@ static qboolean Spin_GrantAllSkillsHack(client_t* cl, int* outOffset = NULL, int
 		*outOffset = offset;
 	}
 
-	const int maxByte = offset + (kSpinEasCount * (int)sizeof(int));
+	const int maxByte = offset + ((kSpinHoldableSkillLast + 1) * (int)sizeof(int));
 	if (offset < 0 || maxByte > sv.gameClientSize) {
 		return qfalse;
 	}
 
 	int* hasSkill = (int*)((byte*)cl->gentity->playerState + offset);
 	int granted = 0;
-	for (int i = 0; i < kSpinEasCount; ++i) {
+	// Safer debug path: grant holdable-item skills only (EAS_HI_* inventory range).
+	for (int i = kSpinHoldableSkillFirst; i <= kSpinHoldableSkillLast; ++i) {
 		if (hasSkill[i] < skillValue) {
 			hasSkill[i] = skillValue;
 		}
@@ -1080,14 +1083,14 @@ void SV_Spin(client_t* cl) {
 			int granted = 0;
 			const qboolean hackApplied = Spin_GrantAllSkillsHack(cl, &usedOffset, &granted);
 			if (hackApplied) {
-				Com_Printf("Granted all skills to %s^7 (count=%d, offset=%d)\n", playername, granted, usedOffset);
-				response = "Debug win: granted all skills (memory hack).";
+				Com_Printf("Granted holdable skills to %s^7 (count=%d, offset=%d)\n", playername, granted, usedOffset);
+				response = "Debug win: granted holdable skills (safer memory hack).";
 			} else {
-				Com_Printf("Failed granting all skills to %s^7 (offset=%d, gameClientSize=%d)\n",
+				Com_Printf("Failed granting holdable skills to %s^7 (offset=%d, gameClientSize=%d)\n",
 					playername,
 					(g_spinSpawnerHackOffset ? g_spinSpawnerHackOffset->integer : -1),
 					sv.gameClientSize);
-				response = "Debug win failed: all-skills memory hack was not applied.";
+				response = "Debug win failed: holdable-skills memory hack was not applied.";
 			}
 			valid_spin = qtrue; break;
 		}
