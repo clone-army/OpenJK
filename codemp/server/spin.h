@@ -174,12 +174,12 @@ static int weights[WIN_NUM_WINS] = {
 	 5, // WIN_YWING_MINI
 	 5, // WIN_BANTHA
 	// NPC Spawns
-	30, // WIN_NPC_CT_CARBINE
-	25, // WIN_NPC_CT_CR
-	20, // WIN_NPC_CT_CR2
-	30, // WIN_NPC_B1
-	20, // WIN_NPC_BX
-	20, // WIN_NPC_JEDI
+	 0, // WIN_NPC_CT_CARBINE (disabled)
+	 0, // WIN_NPC_CT_CR (disabled)
+	 0, // WIN_NPC_CT_CR2 (disabled)
+	 0, // WIN_NPC_B1 (disabled)
+	 0, // WIN_NPC_BX (disabled)
+	 0, // WIN_NPC_JEDI (disabled)
 	10, // WIN_NPC_WAMPA
 	 5, // WIN_NPC_RANCOR
 	// Fun / Size
