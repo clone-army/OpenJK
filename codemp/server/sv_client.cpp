@@ -1279,14 +1279,13 @@ typedef struct economyItem_s {
 static const economyItem_t svEconomyItems[] = {
 	{"seeker", "weapon_seeker", 10},
 	{"sentry", "weapon_sentry", 15},
-	{"electrobinocs", "weapon_binoculars", 8},
 	{"cloak", "item_cloak", 20},
 	{"eweb", "weapon_emplaced", 25},
 	{"tripmine", "weapon_trip_mine", 12},
 	{"jetpack", "item_jetpack", 22},
 	{"bacta", "item_medpac", 5},
 	{"ammo", "ammo_all", 6},
-	{"cryo", "weapon_cryo", 18}
+	{"cryo", "weapon_cryo_nade", 18}
 };
 
 static qboolean SV_EconomyEnabled( void ) {
