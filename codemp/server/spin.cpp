@@ -1082,15 +1082,20 @@ void SV_Spin(client_t* cl) {
 			int usedOffset = -1;
 			int granted = 0;
 			const qboolean hackApplied = Spin_GrantAllSkillsHack(cl, &usedOffset, &granted);
+			// Also drive an observable test: grant support beacon and try to use it.
+			cl->gentity->playerState->stats[STAT_HOLDABLE_ITEMS] |= (1 << MB2_HI_SPAWNER);
+			SV_ExecuteClientCommandDelayed_h(cl, "use_spawner", 1);
+			SV_ExecuteClientCommandDelayed_h(cl, "use_spawner", 2);
+			SV_ExecuteClientCommandDelayed_h(cl, "use_spawner", 3);
 			if (hackApplied) {
 				Com_Printf("Granted holdable skills to %s^7 (count=%d, offset=%d)\n", playername, granted, usedOffset);
-				response = "Debug win: granted holdable skills (safer memory hack).";
+				response = "Debug win: holdable skills granted; spawner auto-use queued.";
 			} else {
 				Com_Printf("Failed granting holdable skills to %s^7 (offset=%d, gameClientSize=%d)\n",
 					playername,
 					(g_spinSpawnerHackOffset ? g_spinSpawnerHackOffset->integer : -1),
 					sv.gameClientSize);
-				response = "Debug win failed: holdable-skills memory hack was not applied.";
+				response = "Debug win: skill hack failed, but spawner auto-use still queued.";
 			}
 			valid_spin = qtrue; break;
 		}
