@@ -1289,8 +1289,7 @@ static qboolean SV_EconomyEnabled( void ) {
 		return qtrue;
 	}
 
-	// Backward-compatible alias for servers that used the pluralized name.
-	return Cvar_VariableIntegerValue( "g_creditsSystemEnable" ) ? qtrue : qfalse;
+	return qfalse;
 }
 
 static void SV_EconomyPrint( client_t *cl, const char *text ) {

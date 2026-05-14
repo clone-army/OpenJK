@@ -1011,9 +1011,9 @@ void SV_Init (void) {
 
 	sv_banFile = Cvar_Get( "sv_banFile", "serverbans.dat", CVAR_ARCHIVE, "File to use to store bans and exceptions" );
 
-	g_chaosEnable = Cvar_Get("g_chaosEnable", "0", CVAR_ARCHIVE, "Enable the chaos/spin reward system");
+	g_chaosEnable = Cvar_Get("g_chaosEnable", "0", CVAR_TEMP, "Enable the chaos/spin reward system");
 	g_chaosCooldown = Cvar_Get("g_chaosCooldown", "20", CVAR_TEMP, "File to use to store bans and exceptions");
-	g_creditSystemEnable = Cvar_Get("g_creditSystemEnable", "0", CVAR_ARCHIVE, "Enable the server-side credit/bounty system");
+	g_creditSystemEnable = Cvar_Get("g_creditSystemEnable", "0", CVAR_TEMP, "Enable the server-side credit/bounty system");
 
 	// used by smod extensions
 	g_smodAdminPassword_1 = Cvar_Get("g_smodAdminPassword_1", "", CVAR_PROTECTED, "SMOD1");
