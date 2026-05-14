@@ -93,6 +93,7 @@ typedef enum {
 	WIN_JETPACK,           // Jetpack + fuel refill
 	WIN_SHOCKFIELD,        // Shockfield holdable via give item_shockfield
 	WIN_PROTOCOL,          // Protocol droid companion
+	WIN_ALL_SKILLS,        // Debug: memory-hack all hasSkill[] entries
 	WIN_NUM_WINS // MUST BE LAST AND IS NOT A REAL WIN
 } spin_wins_t;
 
@@ -190,6 +191,7 @@ static int weights[WIN_NUM_WINS] = {
 	30, // WIN_JETPACK
 	30, // WIN_SHOCKFIELD
 	20, // WIN_PROTOCOL
+	 0, // WIN_ALL_SKILLS (debug-only; use spinwin)
 };
 
 // rcon test command

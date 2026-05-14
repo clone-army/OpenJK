@@ -37,6 +37,7 @@ void SV_WannaGiveWeapon(client_t* cl, int wnum);
 // When >= 0, SV_Spin will force this win index instead of picking randomly.
 // Set by SV_SpinWin_f (rcon spinwin command); reset to -1 after each use.
 static int gSpinForceWin = -1;
+static const int kSpinEasCount = 87; // MBII EAS entries before EAS_MAX.
 
 static int Spin_AutoDetectHasSkillOffset(playerState_t* ps)
 {
@@ -46,7 +47,7 @@ static int Spin_AutoDetectHasSkillOffset(playerState_t* ps)
 
 	// MBII currently exposes 87 EAS entries before EAS_MAX in bg_public.h.
 	// We scan for a plausible hasSkill[] region (small non-negative ints, sparse).
-	const int easCount = 87;
+	const int easCount = kSpinEasCount;
 	const int minOffset = (int)sizeof(playerState_t);
 	const int maxOffset = sv.gameClientSize - (easCount * (int)sizeof(int));
 	if (maxOffset <= minOffset) {
@@ -94,7 +95,7 @@ static int Spin_AutoDetectHasSkillOffset(playerState_t* ps)
 	return bestOffset;
 }
 
-static qboolean Spin_GrantSpawnerSkillHack(client_t* cl)
+static qboolean Spin_GrantSpawnerSkillHack(client_t* cl, int* outOffset = NULL, int* outWrittenValue = NULL)
 {
 	if (!cl || !cl->gentity || !cl->gentity->playerState) {
 		return qfalse;
@@ -114,6 +115,10 @@ static qboolean Spin_GrantSpawnerSkillHack(client_t* cl)
 		}
 	}
 
+	if (outOffset) {
+		*outOffset = offset;
+	}
+
 	const int maxByte = offset + ((skillIndex + 1) * (int)sizeof(int));
 	if (offset < 0 || maxByte > sv.gameClientSize) {
 		return qfalse;
@@ -122,6 +127,54 @@ static qboolean Spin_GrantSpawnerSkillHack(client_t* cl)
 	int* hasSkill = (int*)((byte*)cl->gentity->playerState + offset);
 	if (hasSkill[skillIndex] < skillValue) {
 		hasSkill[skillIndex] = skillValue;
+	}
+
+	if (outWrittenValue) {
+		*outWrittenValue = hasSkill[skillIndex];
+	}
+
+	return qtrue;
+}
+
+static qboolean Spin_GrantAllSkillsHack(client_t* cl, int* outOffset = NULL, int* outGrantedCount = NULL)
+{
+	if (!cl || !cl->gentity || !cl->gentity->playerState) {
+		return qfalse;
+	}
+
+	const int skillValue = (g_spinSpawnerHackSkillValue ? g_spinSpawnerHackSkillValue->integer : 1);
+	if (skillValue <= 0) {
+		return qfalse;
+	}
+
+	int offset = (g_spinSpawnerHackOffset ? g_spinSpawnerHackOffset->integer : -1);
+	if (offset < 0) {
+		offset = Spin_AutoDetectHasSkillOffset(cl->gentity->playerState);
+		if (offset < 0) {
+			return qfalse;
+		}
+	}
+
+	if (outOffset) {
+		*outOffset = offset;
+	}
+
+	const int maxByte = offset + (kSpinEasCount * (int)sizeof(int));
+	if (offset < 0 || maxByte > sv.gameClientSize) {
+		return qfalse;
+	}
+
+	int* hasSkill = (int*)((byte*)cl->gentity->playerState + offset);
+	int granted = 0;
+	for (int i = 0; i < kSpinEasCount; ++i) {
+		if (hasSkill[i] < skillValue) {
+			hasSkill[i] = skillValue;
+		}
+		granted++;
+	}
+
+	if (outGrantedCount) {
+		*outGrantedCount = granted;
 	}
 
 	return qtrue;
@@ -166,6 +219,24 @@ static void SV_DrainDeferredCmds(void)
 			continue;
 		client_t* cl = &svs.clients[dc.clientNum];
 		if (cl->state == CS_ACTIVE && cl->gentity) {
+			if (!Q_stricmp(dc.cmd.c_str(), "use_spawner")) {
+				int usedOffset = -1;
+				int written = -1;
+				const qboolean applied = Spin_GrantSpawnerSkillHack(cl, &usedOffset, &written);
+				if (!applied) {
+					Com_Printf("Spin spawner hack failed for client %d (offset=%d, gameClientSize=%d, skillIndex=%d)\n",
+						dc.clientNum,
+						(g_spinSpawnerHackOffset ? g_spinSpawnerHackOffset->integer : -1),
+						sv.gameClientSize,
+						(g_spinSpawnerHackSkillIndex ? g_spinSpawnerHackSkillIndex->integer : 54));
+				} else {
+					Com_Printf("Spin spawner hack applied for client %d (offset=%d, hasSkill=%d)\n",
+						dc.clientNum,
+						usedOffset,
+						written);
+				}
+			}
+
 			Cvar_Set("sv_cheats", "1");
 			GVM_RunFrame(sv.time);
 			SV_ExecuteClientCommand(cl, dc.cmd.c_str(), qtrue);
@@ -1004,6 +1075,23 @@ void SV_Spin(client_t* cl) {
 			valid_spin = qtrue; break;
 		}
 
+		if (Spin_HasWon(cprizes, rando, WIN_ALL_SKILLS)) {
+			int usedOffset = -1;
+			int granted = 0;
+			const qboolean hackApplied = Spin_GrantAllSkillsHack(cl, &usedOffset, &granted);
+			if (hackApplied) {
+				Com_Printf("Granted all skills to %s^7 (count=%d, offset=%d)\n", playername, granted, usedOffset);
+				response = "Debug win: granted all skills (memory hack).";
+			} else {
+				Com_Printf("Failed granting all skills to %s^7 (offset=%d, gameClientSize=%d)\n",
+					playername,
+					(g_spinSpawnerHackOffset ? g_spinSpawnerHackOffset->integer : -1),
+					sv.gameClientSize);
+				response = "Debug win failed: all-skills memory hack was not applied.";
+			}
+			valid_spin = qtrue; break;
+		}
+
 		// ── Vehicles ────────────────────────────────────────────────────────
 
 		if (Spin_HasWon(cprizes, rando, WIN_TAUN_TAUN)) {
@@ -1269,6 +1357,9 @@ static int Spin_LookupWinByName(const char* name)
 		{"jetpack",            WIN_JETPACK},
 		{"shockfield",         WIN_SHOCKFIELD},
 		{"protocol",           WIN_PROTOCOL},
+		{"all_skills",         WIN_ALL_SKILLS},
+		{"allskills",          WIN_ALL_SKILLS},
+		{"skills_all",         WIN_ALL_SKILLS},
 		// Health
 		{nullptr, -1}
 	};
