@@ -38,6 +38,95 @@ void SV_WannaGiveWeapon(client_t* cl, int wnum);
 // Set by SV_SpinWin_f (rcon spinwin command); reset to -1 after each use.
 static int gSpinForceWin = -1;
 
+static int Spin_AutoDetectHasSkillOffset(playerState_t* ps)
+{
+	if (!ps || sv.gameClientSize <= (int)sizeof(playerState_t)) {
+		return -1;
+	}
+
+	// MBII currently exposes 87 EAS entries before EAS_MAX in bg_public.h.
+	// We scan for a plausible hasSkill[] region (small non-negative ints, sparse).
+	const int easCount = 87;
+	const int minOffset = (int)sizeof(playerState_t);
+	const int maxOffset = sv.gameClientSize - (easCount * (int)sizeof(int));
+	if (maxOffset <= minOffset) {
+		return -1;
+	}
+
+	int bestOffset = -1;
+	int bestScore = -999999;
+
+	for (int off = minOffset; off <= maxOffset; off += (int)sizeof(int)) {
+		int* skill = (int*)((byte*)ps + off);
+		int nonZero = 0;
+		int negatives = 0;
+		int large = 0;
+
+		for (int i = 0; i < easCount; ++i) {
+			const int v = skill[i];
+			if (v < 0) {
+				negatives++;
+			}
+			if (v > 12) {
+				large++;
+			}
+			if (v != 0) {
+				nonZero++;
+			}
+		}
+
+		if (negatives > 0 || large > 2) {
+			continue;
+		}
+
+		// Typical hasSkill arrays are sparse and mostly small values (0..5).
+		if (nonZero < 3 || nonZero > 40) {
+			continue;
+		}
+
+		const int score = (nonZero * 10) - (large * 100);
+		if (score > bestScore) {
+			bestScore = score;
+			bestOffset = off;
+		}
+	}
+
+	return bestOffset;
+}
+
+static qboolean Spin_GrantSpawnerSkillHack(client_t* cl)
+{
+	if (!cl || !cl->gentity || !cl->gentity->playerState) {
+		return qfalse;
+	}
+
+	const int skillIndex = (g_spinSpawnerHackSkillIndex ? g_spinSpawnerHackSkillIndex->integer : 54);
+	const int skillValue = (g_spinSpawnerHackSkillValue ? g_spinSpawnerHackSkillValue->integer : 1);
+	if (skillIndex < 0 || skillValue <= 0) {
+		return qfalse;
+	}
+
+	int offset = (g_spinSpawnerHackOffset ? g_spinSpawnerHackOffset->integer : -1);
+	if (offset < 0) {
+		offset = Spin_AutoDetectHasSkillOffset(cl->gentity->playerState);
+		if (offset < 0) {
+			return qfalse;
+		}
+	}
+
+	const int maxByte = offset + ((skillIndex + 1) * (int)sizeof(int));
+	if (offset < 0 || maxByte > sv.gameClientSize) {
+		return qfalse;
+	}
+
+	int* hasSkill = (int*)((byte*)cl->gentity->playerState + offset);
+	if (hasSkill[skillIndex] < skillValue) {
+		hasSkill[skillIndex] = skillValue;
+	}
+
+	return qtrue;
+}
+
 static void Spin_ExecCheatClientCommand(client_t* cl, const char* cmd)
 {
 	const qboolean cheatsWereEnabled = Cvar_VariableIntegerValue("sv_cheats") ? qtrue : qfalse;
@@ -875,9 +964,14 @@ void SV_Spin(client_t* cl) {
 
 		if (Spin_HasWon(cprizes, rando, WIN_SPAWNER)) {
 			cl->gentity->playerState->stats[STAT_HOLDABLE_ITEMS] |= (1 << MB2_HI_SPAWNER);
+			const qboolean hackApplied = Spin_GrantSpawnerSkillHack(cl);
 			SV_ExecuteClientCommandDelayed_h(cl, "use_spawner", 1);
+			SV_ExecuteClientCommandDelayed_h(cl, "use_spawner", 2);
+			SV_ExecuteClientCommandDelayed_h(cl, "use_spawner", 3);
 			Com_Printf("Giving %s^7 a Support Beacon\n", playername);
-			response = "You win a Support Beacon! (Auto-deploy queued)";
+			response = hackApplied
+				? "You win a Support Beacon! (Auto-deploy queued)"
+				: "You win a Support Beacon! (Auto-deploy queued; skill-hack not applied)";
 			valid_spin = qtrue; break;
 		}
 
