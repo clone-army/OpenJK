@@ -1285,7 +1285,7 @@ static const economyItem_t svEconomyItems[] = {
 };
 
 static qboolean SV_EconomyEnabled( void ) {
-	if ( Cvar_VariableIntegerValue( "g_creditSystemEnable" ) ) {
+	if ( g_creditSystemEnable && g_creditSystemEnable->integer ) {
 		return qtrue;
 	}
 

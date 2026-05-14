@@ -71,6 +71,7 @@ cvar_t	*sv_legacyFixes;
 cvar_t	*sv_banFile;
 cvar_t* g_chaosEnable;
 cvar_t* g_chaosCooldown;
+cvar_t* g_creditSystemEnable;
 
 // Used by smod extension to check if password is correct
 cvar_t* g_smodAdminPassword_1;

@@ -299,6 +299,7 @@ extern	cvar_t	*sv_banFile;
 
 extern	cvar_t* g_chaosEnable;
 extern	cvar_t* g_chaosCooldown;
+extern	cvar_t* g_creditSystemEnable;
 
 // Used by smod extension to check if password is correct
 extern cvar_t* g_smodAdminPassword_1;
