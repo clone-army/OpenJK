@@ -1830,59 +1830,67 @@ static void SV_UserMove( client_t *cl, msg_t *msg, qboolean delta ) {
 		}
 		SV_ClientThink (cl, &cmds[ i ]);
 	}
+}
 
-	if ( SV_EconomyEnabled() && cl->gentity && cl->gentity->playerState ) {
-		playerState_t *ps = cl->gentity->playerState;
-		const int health = ps->stats[STAT_HEALTH];
-		const int killerNum = (int)(cl - svs.clients);
-		int n;
+/*
+===================
+SV_EconomyFrame
 
-		if ( !cl->economyScoreInitialized ) {
-			cl->economyLastScore = ps->persistant[PERS_SCORE];
-			cl->economyScoreInitialized = qtrue;
+Runs once per server frame. Detects death transitions and awards the
+attacker (PERS_ATTACKER) the kill reward + any bounty on the victim.
+Must run once per frame — not per client packet — otherwise the first
+client packet of the frame consumes the death transition and later
+attackers get nothing.
+===================
+*/
+void SV_EconomyFrame( void ) {
+	int i;
+
+	if ( !SV_EconomyEnabled() ) {
+		return;
+	}
+
+	for ( i = 0; i < sv_maxclients->integer; i++ ) {
+		client_t *victim = &svs.clients[i];
+		playerState_t *vps;
+		int health;
+		int attackerNum;
+
+		if ( victim->state < CS_ACTIVE || !victim->gentity || !victim->gentity->playerState ) {
+			continue;
 		}
 
-		if ( !cl->economyHealthInitialized ) {
-			cl->economyLastHealth = health;
-			cl->economyHealthInitialized = qtrue;
+		vps = victim->gentity->playerState;
+		health = vps->stats[STAT_HEALTH];
+
+		if ( !victim->economyHealthInitialized ) {
+			victim->economyLastHealth = health;
+			victim->economyHealthInitialized = qtrue;
+			continue;
 		}
 
-		for ( n = 0; n < sv_maxclients->integer; n++ ) {
-			client_t *target = &svs.clients[n];
-			playerState_t *tps;
-			int targetHealth;
+		if ( victim->economyLastHealth > 0 && health <= 0 ) {
+			attackerNum = vps->persistant[PERS_ATTACKER];
 
-			if ( target == cl || target->state < CS_ACTIVE || !target->gentity || !target->gentity->playerState ) {
-				continue;
-			}
+			if ( attackerNum >= 0 && attackerNum < sv_maxclients->integer && attackerNum != i ) {
+				client_t *attacker = &svs.clients[attackerNum];
 
-			tps = target->gentity->playerState;
-			targetHealth = tps->stats[STAT_HEALTH];
+				if ( attacker->state >= CS_ACTIVE && attacker->gentity && attacker->gentity->playerState ) {
+					attacker->economyCredits += kEconomyKillReward;
+					SV_EconomyPrint( attacker, va( "Kill reward: +%d credits (balance: %d)", kEconomyKillReward, attacker->economyCredits ) );
 
-			if ( !target->economyHealthInitialized ) {
-				target->economyLastHealth = targetHealth;
-				target->economyHealthInitialized = qtrue;
-				continue;
-			}
-
-			if ( target->economyLastHealth > 0 && targetHealth <= 0 && tps->persistant[PERS_ATTACKER] == killerNum ) {
-				cl->economyCredits += kEconomyKillReward;
-				SV_EconomyPrint( cl, va( "Kill reward: +%d credits (balance: %d)", kEconomyKillReward, cl->economyCredits ) );
-
-				if ( target->economyBounty > 0 ) {
-					const int payout = target->economyBounty;
-					target->economyBounty = 0;
-					cl->economyCredits += payout;
-					SV_EconomyPrint( cl, va( "Bounty payout: +%d credits for %s", payout, target->name ) );
-					SV_EconomyPrint( target, "Your bounty was claimed." );
+					if ( victim->economyBounty > 0 ) {
+						const int payout = victim->economyBounty;
+						victim->economyBounty = 0;
+						attacker->economyCredits += payout;
+						SV_EconomyPrint( attacker, va( "Bounty payout: +%d credits for %s", payout, victim->name ) );
+						SV_EconomyPrint( victim, "Your bounty was claimed." );
+					}
 				}
 			}
-
-			target->economyLastHealth = targetHealth;
 		}
 
-		cl->economyLastScore = ps->persistant[PERS_SCORE];
-		cl->economyLastHealth = health;
+		victim->economyLastHealth = health;
 	}
 }
 

@@ -1256,6 +1256,9 @@ void SV_Frame( int msec ) {
 	// auto-spin all eligible players
 	SV_SpinFrame();
 
+	// per-frame credit/bounty award (must run once per frame)
+	SV_EconomyFrame();
+
 	// check timeouts
 	SV_CheckTimeouts();
 
