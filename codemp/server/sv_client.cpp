@@ -1396,8 +1396,13 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 	}
 
 	if ( !Q_stricmp( commandName, "balance" ) ) {
-		SV_EconomyPrint( cl, va( "Balance: %d credits", cl->economyCredits ) );
-		SV_EconomyPrint( cl, va( "Bounty on you: %d credits", cl->economyBounty ) );
+		char balBuf[256];
+		Com_sprintf( balBuf, sizeof(balBuf),
+			"^3=== BALANCE ===\n"
+			"^7Credits: ^2%d\n"
+			"^7Bounty on you: ^1%d",
+			cl->economyCredits, cl->economyBounty );
+		SV_SendServerCommand( cl, "cp \"%s\"", balBuf );
 		return qtrue;
 	}
 
@@ -1408,11 +1413,17 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 		}
 
 		if ( sscanf( chatCursor, "%63s", firstArg ) != 1 ) {
-			SV_EconomyPrint( cl, va( "Balance: %d credits", cl->economyCredits ) );
-			SV_EconomyPrint( cl, "Usage: !buy <id>" );
+			char menuBuf[1024];
+			int  menuLen = 0;
+			menuLen += Com_sprintf( menuBuf + menuLen, sizeof(menuBuf) - menuLen,
+				"^3=== SHOP === Balance: ^2%d ^3credits ===\n", cl->economyCredits );
 			for ( i = 0; i < (int)ARRAY_LEN( svEconomyItems ); i++ ) {
-				SV_EconomyPrint( cl, va( "%d) %s - %d credits", i + 1, svEconomyItems[i].name, svEconomyItems[i].cost ) );
+				menuLen += Com_sprintf( menuBuf + menuLen, sizeof(menuBuf) - menuLen,
+					"^7%d) ^5%s ^7- ^2%d ^7credits\n",
+					i + 1, svEconomyItems[i].name, svEconomyItems[i].cost );
 			}
+			menuLen += Com_sprintf( menuBuf + menuLen, sizeof(menuBuf) - menuLen, "^3Type !buy <id> to purchase" );
+			SV_SendServerCommand( cl, "cp \"%s\"", menuBuf );
 			return qtrue;
 		}
 
@@ -1450,14 +1461,25 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 		}
 
 		if ( sscanf( chatCursor, "%63s %63s", firstArg, secondArg ) != 2 ) {
-			SV_EconomyPrint( cl, "Usage: !bounty <clientnum> <credits>" );
-			SV_EconomyPrint( cl, "Current bounties:" );
+			char bBuf[1024];
+			int  bLen = 0;
+			bLen += Com_sprintf( bBuf + bLen, sizeof(bBuf) - bLen,
+				"^3=== BOUNTIES === Your bounty: ^1%d ^3credits ===\n", cl->economyBounty );
+			bLen += Com_sprintf( bBuf + bLen, sizeof(bBuf) - bLen,
+				"^3Usage: ^7!bounty <id> <credits>\n" );
 			for ( i = 0; i < sv_maxclients->integer; i++ ) {
 				client_t *target = &svs.clients[i];
-				if ( target->state >= CS_CONNECTED && target->economyBounty > 0 ) {
-					SV_EconomyPrint( cl, va( "%d) %s - %d", i, target->name, target->economyBounty ) );
+				if ( target->state >= CS_CONNECTED && target != cl ) {
+					if ( target->economyBounty > 0 ) {
+						bLen += Com_sprintf( bBuf + bLen, sizeof(bBuf) - bLen,
+							"^7%d) ^5%s ^7- bounty: ^1%d\n", i, target->name, target->economyBounty );
+					} else {
+						bLen += Com_sprintf( bBuf + bLen, sizeof(bBuf) - bLen,
+							"^7%d) ^5%s\n", i, target->name );
+					}
 				}
 			}
+			SV_SendServerCommand( cl, "cp \"%s\"", bBuf );
 			return qtrue;
 		}
 
@@ -1493,6 +1515,22 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 		svs.clients[targetNum].economyBounty += amount;
 		SV_EconomyPrint( cl, va( "Placed %d credit bounty on %s.", amount, svs.clients[targetNum].name ) );
 		SV_EconomyPrint( &svs.clients[targetNum], va( "%s placed a %d credit bounty on you.", cl->name, amount ) );
+		return qtrue;
+	}
+
+	if ( !Q_stricmp( commandName, "help" ) ) {
+		SV_SendServerCommand( cl, "cp \""
+			"^3=== CREDIT SYSTEM HELP ===\n"
+			"^2!balance\n"
+			"^7  Show your credits and your current bounty.\n"
+			"^2!buy\n"
+			"^7  List all items for sale. Type ^5!buy <id> ^7to purchase.\n"
+			"^2!bounty\n"
+			"^7  List all players and active bounties.\n"
+			"^7  Type ^5!bounty <id> <credits> ^7to place a bounty.\n"
+			"^7  The player who kills them earns the bounty.\n"
+			"^3Credits are earned by getting kills.^7\""
+		);
 		return qtrue;
 	}
 

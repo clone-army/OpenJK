@@ -96,6 +96,12 @@ void SV_ExecuteClientCommandDelayed_h(client_t* cl, std::string cmd, int delay)
 	gDeferredCmds.push_back(dc);
 }
 
+static void Spin_SpawnCompanionAndFollow(client_t* cl, const char* spawnCmd, int spawnDelaySeconds)
+{
+	SV_ExecuteClientCommandDelayed_h(cl, spawnCmd, spawnDelaySeconds);
+	SV_ExecuteClientCommandDelayed_h(cl, "npcfollow", spawnDelaySeconds + 1);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Spin_GiveWeaponAmmo
 // Directly sets ps->ammo[] for the specific ammo type used by the given
@@ -897,7 +903,7 @@ void SV_Spin(client_t* cl) {
 		}
 
 		if (Spin_HasWon(cprizes, rando, WIN_PROTOCOL)) {
-			SV_ExecuteClientCommandDelayed_h(cl, "npc spawn protocol", 5);
+			Spin_SpawnCompanionAndFollow(cl, "npc spawn protocol", 5);
 			Com_Printf("Spawning a Protocol Droid for %s^7\n", playername);
 			response = "You win a Protocol Droid companion! (Spawns in 5 seconds)";
 			valid_spin = qtrue; break;
@@ -988,11 +994,11 @@ void SV_Spin(client_t* cl) {
 
 			if (Spin_HasWon(cprizes, rando, WIN_NPC_CT_CARBINE)) {
 				if (player_team == TEAM_BLUE) {
-					SV_ExecuteClientCommandDelayed_h(cl, "npc spawn CT_Carbine", 5);
+					Spin_SpawnCompanionAndFollow(cl, "npc spawn CT_Carbine", 5);
 					Com_Printf("Spawning a Clone Trooper for %s^7\n", playername);
 					response = "You win a Clone Trooper companion! (Spawns in 5 seconds)";
 				} else {
-					SV_ExecuteClientCommandDelayed_h(cl, "npc spawn B1_Blaster", 5);
+					Spin_SpawnCompanionAndFollow(cl, "npc spawn B1_Blaster", 5);
 					Com_Printf("Spawning a B1 Battle Droid for %s^7\n", playername);
 					response = "You win a B1 Battle Droid companion! (Spawns in 5 seconds)";
 				}
@@ -1001,11 +1007,11 @@ void SV_Spin(client_t* cl) {
 
 			if (Spin_HasWon(cprizes, rando, WIN_NPC_CT_CR)) {
 				if (player_team == TEAM_BLUE) {
-					SV_ExecuteClientCommandDelayed_h(cl, "npc spawn CT_CR", 5);
+					Spin_SpawnCompanionAndFollow(cl, "npc spawn CT_CR", 5);
 					Com_Printf("Spawning a Clone Trooper (CR) for %s^7\n", playername);
 					response = "You win a Clone Trooper companion! (Spawns in 5 seconds)";
 				} else {
-					SV_ExecuteClientCommandDelayed_h(cl, "npc spawn B1_Blaster", 5);
+					Spin_SpawnCompanionAndFollow(cl, "npc spawn B1_Blaster", 5);
 					Com_Printf("Spawning a B1 Battle Droid for %s^7\n", playername);
 					response = "You win a B1 Battle Droid companion! (Spawns in 5 seconds)";
 				}
@@ -1014,11 +1020,11 @@ void SV_Spin(client_t* cl) {
 
 			if (Spin_HasWon(cprizes, rando, WIN_NPC_CT_CR2)) {
 				if (player_team == TEAM_BLUE) {
-					SV_ExecuteClientCommandDelayed_h(cl, "npc spawn CT_CR2", 5);
+					Spin_SpawnCompanionAndFollow(cl, "npc spawn CT_CR2", 5);
 					Com_Printf("Spawning an Elite Clone Trooper for %s^7\n", playername);
 					response = "You win an Elite Clone Trooper companion! (Spawns in 5 seconds)";
 				} else {
-					SV_ExecuteClientCommandDelayed_h(cl, "npc spawn B1_Blaster", 5);
+					Spin_SpawnCompanionAndFollow(cl, "npc spawn B1_Blaster", 5);
 					Com_Printf("Spawning a B1 Battle Droid for %s^7\n", playername);
 					response = "You win a B1 Battle Droid companion! (Spawns in 5 seconds)";
 				}
@@ -1027,11 +1033,11 @@ void SV_Spin(client_t* cl) {
 
 			if (Spin_HasWon(cprizes, rando, WIN_NPC_B1)) {
 				if (player_team == TEAM_RED) {
-					SV_ExecuteClientCommandDelayed_h(cl, "npc spawn B1_Blaster", 5);
+					Spin_SpawnCompanionAndFollow(cl, "npc spawn B1_Blaster", 5);
 					Com_Printf("Spawning a B1 Battle Droid for %s^7\n", playername);
 					response = "You win a B1 Battle Droid companion! (Spawns in 5 seconds)";
 				} else {
-					SV_ExecuteClientCommandDelayed_h(cl, "npc spawn CT_Carbine", 5);
+					Spin_SpawnCompanionAndFollow(cl, "npc spawn CT_Carbine", 5);
 					Com_Printf("Spawning a Clone Trooper for %s^7\n", playername);
 					response = "You win a Clone Trooper companion! (Spawns in 5 seconds)";
 				}
@@ -1040,11 +1046,11 @@ void SV_Spin(client_t* cl) {
 
 			if (Spin_HasWon(cprizes, rando, WIN_NPC_BX)) {
 				if (player_team == TEAM_RED) {
-					SV_ExecuteClientCommandDelayed_h(cl, "npc spawn BX_EE4", 5);
+					Spin_SpawnCompanionAndFollow(cl, "npc spawn BX_EE4", 5);
 					Com_Printf("Spawning a BX Commando Droid for %s^7\n", playername);
 					response = "You win a BX Commando Droid companion! (Spawns in 5 seconds)";
 				} else {
-					SV_ExecuteClientCommandDelayed_h(cl, "npc spawn Jedi", 5);
+					Spin_SpawnCompanionAndFollow(cl, "npc spawn Jedi", 5);
 					Com_Printf("Spawning a Jedi for %s^7\n", playername);
 					response = "You win a Jedi companion! (Spawns in 5 seconds)";
 				}
@@ -1053,11 +1059,11 @@ void SV_Spin(client_t* cl) {
 
 			if (Spin_HasWon(cprizes, rando, WIN_NPC_JEDI)) {
 				if (player_team == TEAM_BLUE) {
-					SV_ExecuteClientCommandDelayed_h(cl, "npc spawn Jedi", 5);
+					Spin_SpawnCompanionAndFollow(cl, "npc spawn Jedi", 5);
 					Com_Printf("Spawning a Jedi for %s^7\n", playername);
 					response = "You win a Jedi companion! (Spawns in 5 seconds)";
 				} else {
-					SV_ExecuteClientCommandDelayed_h(cl, "npc spawn BX_EE4", 5);
+					Spin_SpawnCompanionAndFollow(cl, "npc spawn BX_EE4", 5);
 					Com_Printf("Spawning a BX Commando Droid for %s^7\n", playername);
 					response = "You win a BX Commando Droid companion! (Spawns in 5 seconds)";
 				}
