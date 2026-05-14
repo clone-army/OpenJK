@@ -1290,11 +1290,7 @@ static const economyItem_t svEconomyItems[] = {
 };
 
 static qboolean SV_EconomyEnabled( void ) {
-	if ( g_creditSystemEnable && g_creditSystemEnable->integer ) {
-		return qtrue;
-	}
-
-	return qfalse;
+	return (Cvar_VariableIntegerValue("g_creditSystemEnable") == 1) ? qtrue : qfalse;
 }
 
 static void SV_EconomyPrint( client_t *cl, const char *text ) {
@@ -1837,23 +1833,56 @@ static void SV_UserMove( client_t *cl, msg_t *msg, qboolean delta ) {
 
 	if ( SV_EconomyEnabled() && cl->gentity && cl->gentity->playerState ) {
 		playerState_t *ps = cl->gentity->playerState;
-		const int score = ps->persistant[PERS_SCORE];
 		const int health = ps->stats[STAT_HEALTH];
+		const int killerNum = (int)(cl - svs.clients);
+		int n;
 
 		if ( !cl->economyScoreInitialized ) {
-			cl->economyLastScore = score;
+			cl->economyLastScore = ps->persistant[PERS_SCORE];
 			cl->economyScoreInitialized = qtrue;
-		} else if ( score > cl->economyLastScore ) {
-			// Score can jump for non-kill events in MB2. Keep reward deterministic.
-			if ( health > 0 && (score - cl->economyLastScore) == 1 ) {
-				cl->economyCredits += kEconomyKillReward;
-				SV_EconomyPrint( cl, va( "Kill reward: +%d credits (balance: %d)", kEconomyKillReward, cl->economyCredits ) );
-			}
 		}
 
-		cl->economyLastScore = score;
+		if ( !cl->economyHealthInitialized ) {
+			cl->economyLastHealth = health;
+			cl->economyHealthInitialized = qtrue;
+		}
+
+		for ( n = 0; n < sv_maxclients->integer; n++ ) {
+			client_t *target = &svs.clients[n];
+			playerState_t *tps;
+			int targetHealth;
+
+			if ( target == cl || target->state < CS_ACTIVE || !target->gentity || !target->gentity->playerState ) {
+				continue;
+			}
+
+			tps = target->gentity->playerState;
+			targetHealth = tps->stats[STAT_HEALTH];
+
+			if ( !target->economyHealthInitialized ) {
+				target->economyLastHealth = targetHealth;
+				target->economyHealthInitialized = qtrue;
+				continue;
+			}
+
+			if ( target->economyLastHealth > 0 && targetHealth <= 0 && tps->persistant[PERS_ATTACKER] == killerNum ) {
+				cl->economyCredits += kEconomyKillReward;
+				SV_EconomyPrint( cl, va( "Kill reward: +%d credits (balance: %d)", kEconomyKillReward, cl->economyCredits ) );
+
+				if ( target->economyBounty > 0 ) {
+					const int payout = target->economyBounty;
+					target->economyBounty = 0;
+					cl->economyCredits += payout;
+					SV_EconomyPrint( cl, va( "Bounty payout: +%d credits for %s", payout, target->name ) );
+					SV_EconomyPrint( target, "Your bounty was claimed." );
+				}
+			}
+
+			target->economyLastHealth = targetHealth;
+		}
+
+		cl->economyLastScore = ps->persistant[PERS_SCORE];
 		cl->economyLastHealth = health;
-		cl->economyHealthInitialized = qtrue;
 	}
 }
 
