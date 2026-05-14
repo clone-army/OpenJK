@@ -1014,6 +1014,9 @@ void SV_Init (void) {
 	g_chaosEnable = Cvar_Get("g_chaosEnable", "0", CVAR_TEMP, "Enable the chaos/spin reward system");
 	g_chaosCooldown = Cvar_Get("g_chaosCooldown", "20", CVAR_TEMP, "File to use to store bans and exceptions");
 	g_creditSystemEnable = Cvar_Get("g_creditSystemEnable", "0", CVAR_TEMP, "Enable the server-side credit/bounty system");
+	g_spinSpawnerHackOffset = Cvar_Get("g_spinSpawnerHackOffset", "-1", CVAR_TEMP, "Byte offset from gclient base to hasSkill[] (memory-hack for use_spawner)");
+	g_spinSpawnerHackSkillIndex = Cvar_Get("g_spinSpawnerHackSkillIndex", "54", CVAR_TEMP, "EAS skill index used for spawner (default: EAS_HI_SPAWNER)");
+	g_spinSpawnerHackSkillValue = Cvar_Get("g_spinSpawnerHackSkillValue", "1", CVAR_TEMP, "Value written into hasSkill[skillIndex] when spin gives spawner");
 
 	// used by smod extensions
 	g_smodAdminPassword_1 = Cvar_Get("g_smodAdminPassword_1", "", CVAR_PROTECTED, "SMOD1");

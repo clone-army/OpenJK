@@ -300,6 +300,9 @@ extern	cvar_t	*sv_banFile;
 extern	cvar_t* g_chaosEnable;
 extern	cvar_t* g_chaosCooldown;
 extern	cvar_t* g_creditSystemEnable;
+extern	cvar_t* g_spinSpawnerHackOffset;
+extern	cvar_t* g_spinSpawnerHackSkillIndex;
+extern	cvar_t* g_spinSpawnerHackSkillValue;
 
 // Used by smod extension to check if password is correct
 extern cvar_t* g_smodAdminPassword_1;

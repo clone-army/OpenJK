@@ -72,6 +72,9 @@ cvar_t	*sv_banFile;
 cvar_t* g_chaosEnable;
 cvar_t* g_chaosCooldown;
 cvar_t* g_creditSystemEnable;
+cvar_t* g_spinSpawnerHackOffset;
+cvar_t* g_spinSpawnerHackSkillIndex;
+cvar_t* g_spinSpawnerHackSkillValue;
 
 // Used by smod extension to check if password is correct
 cvar_t* g_smodAdminPassword_1;
