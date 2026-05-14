@@ -61,6 +61,39 @@ static void SV_GiveCredits_f(void) {
 	SV_SendServerCommand(cl, "cp \"^2[Economy]^7 You were given %d credits!\"", amount);
 	Com_Printf("Gave %d credits to %s (slot %d)\n", amount, cl->name, (int)(cl - svs.clients));
 }
+
+// Give lives to a player by slot or name: givelives <player> <amount>
+static void SV_GiveLives_f(void) {
+	const char *playerArg;
+	int lives;
+	client_t *cl;
+	int clientNum;
+
+	if (Cmd_Argc() < 3) {
+		Com_Printf("Usage: givelives <player> <amount>\n");
+		return;
+	}
+
+	playerArg = Cmd_Argv(1);
+	lives = atoi(Cmd_Argv(2));
+
+	if (lives <= 0) {
+		Com_Printf("Lives must be greater than 0.\n");
+		return;
+	}
+
+	cl = SV_BetterGetPlayerByHandle(playerArg);
+	if (!cl || cl->state < CS_ACTIVE) {
+		Com_Printf("No such player: %s\n", playerArg);
+		return;
+	}
+
+	clientNum = (int)(cl - svs.clients);
+
+	// Reuse MBII VM server command by slot so names with colors/spaces are handled safely.
+	Cbuf_ExecuteText(EXEC_NOW, va("givelivesto %d %d\n", clientNum, lives));
+	Com_Printf("Requested %d lives for %s (slot %d)\n", lives, cl->name, clientNum);
+}
 /*
 ===============================================================================
 
@@ -2622,7 +2655,8 @@ void SV_AddOperatorCommands( void ) {
 	Cmd_AddCommand ("sv_exceptaddr", SV_ExceptAddr_f, "Adds a ban exception for a user" );
 	Cmd_AddCommand ("sv_bandel", SV_BanDel_f, "Removes a ban" );
 	Cmd_AddCommand ("sv_exceptdel", SV_ExceptDel_f, "Removes a ban exception" );
-		Cmd_AddCommand("givecredits", SV_GiveCredits_f, "Give credits to a player: givecredits <player> <amount>");
+	Cmd_AddCommand("givecredits", SV_GiveCredits_f, "Give credits to a player: givecredits <player> <amount>");
+	Cmd_AddCommand("givelives", SV_GiveLives_f, "Give lives to a player: givelives <player> <amount>");
 	Cmd_AddCommand ("sv_flushbans", SV_FlushBans_f, "Removes all bans and exceptions" );
 
 }
