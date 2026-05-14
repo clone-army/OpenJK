@@ -37,6 +37,11 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #include "server/sv_gameapi.h"
 
+#define MB2_HI_EWEB      8
+#define MB2_HI_CLOAK     9
+
+static const int kEconomyKillReward = 5;
+
 
 static void SV_CloseDownload( client_t *cl );
 
@@ -1298,13 +1303,47 @@ static void SV_EconomyPrint( client_t *cl, const char *text ) {
 
 static void SV_EconomyGiveItem( client_t *cl, const char *giveName ) {
 	const qboolean cheatsWereEnabled = Cvar_VariableIntegerValue( "sv_cheats" ) ? qtrue : qfalse;
+	playerState_t *ps = (cl && cl->gentity) ? cl->gentity->playerState : NULL;
+
+	if ( ps ) {
+		if ( !Q_stricmp( giveName, "weapon_emplaced" ) ) {
+			ps->stats[STAT_HOLDABLE_ITEMS] |= (1 << MB2_HI_EWEB);
+			return;
+		}
+
+		if ( !Q_stricmp( giveName, "item_cloak" ) ) {
+			ps->stats[STAT_HOLDABLE_ITEMS] |= (1 << MB2_HI_CLOAK);
+			ps->cloakFuel = 100;
+			return;
+		}
+
+		if ( !Q_stricmp( giveName, "weapon_sentry" ) ) {
+			ps->stats[STAT_HOLDABLE_ITEMS] |= (1 << HI_SENTRY_GUN);
+			return;
+		}
+
+		if ( !Q_stricmp( giveName, "weapon_seeker" ) ) {
+			ps->stats[STAT_HOLDABLE_ITEMS] |= (1 << HI_SEEKER);
+			return;
+		}
+
+		if ( !Q_stricmp( giveName, "item_medpac" ) ) {
+			ps->stats[STAT_HOLDABLE_ITEMS] |= (1 << HI_MEDPAC_BIG);
+			return;
+		}
+	}
 
 	if ( !cheatsWereEnabled ) {
 		Cvar_Set( "sv_cheats", "1" );
 		GVM_RunFrame( sv.time );
 	}
 
+	if ( !Q_stricmp( giveName, "item_jetpack" ) ) {
+		SV_ExecuteClientCommand( cl, "give item_jetpack", qtrue );
+		SV_ExecuteClientCommand( cl, "give fuel 100", qtrue );
+	} else {
 	SV_ExecuteClientCommand( cl, va( "give %s", giveName ), qtrue );
+	}
 
 	if ( !cheatsWereEnabled ) {
 		Cvar_Set( "sv_cheats", "0" );
@@ -1392,6 +1431,16 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 	chatCursor += commandLen;
 	while ( *chatCursor == ' ' || *chatCursor == '\t' ) {
 		chatCursor++;
+	}
+
+	if ( !SV_EconomyEnabled() &&
+		( !Q_stricmp( commandName, "balance" ) ||
+		  !Q_stricmp( commandName, "buy" ) ||
+		  !Q_stricmp( commandName, "bounty" ) ||
+		  !Q_stricmp( commandName, "bountry" ) ||
+		  !Q_stricmp( commandName, "help" ) ) ) {
+		SV_EconomyPrint( cl, "Credit system is disabled." );
+		return qtrue;
 	}
 
 	if ( !Q_stricmp( commandName, "balance" ) ) {
@@ -1795,28 +1844,10 @@ static void SV_UserMove( client_t *cl, msg_t *msg, qboolean delta ) {
 			cl->economyLastScore = score;
 			cl->economyScoreInitialized = qtrue;
 		} else if ( score > cl->economyLastScore ) {
-			const int scoreDelta = score - cl->economyLastScore;
-			int n;
-
-			cl->economyCredits += (scoreDelta * 5);
-			SV_EconomyPrint( cl, va( "Kill reward: +%d credits (balance: %d)", scoreDelta * 5, cl->economyCredits ) );
-
-			for ( n = 0; n < sv_maxclients->integer; n++ ) {
-				client_t *target = &svs.clients[n];
-				if ( target == cl || target->state < CS_CONNECTED || target->economyBounty <= 0 ||
-					!target->gentity || !target->gentity->playerState || !target->economyHealthInitialized ) {
-					continue;
-				}
-
-				if ( target->economyLastHealth > 0 && target->gentity->playerState->stats[STAT_HEALTH] <= 0 ) {
-					const int payout = target->economyBounty;
-					target->economyBounty = 0;
-					cl->economyCredits += payout;
-					target->economyLastHealth = target->gentity->playerState->stats[STAT_HEALTH];
-					SV_EconomyPrint( cl, va( "Bounty payout: +%d credits for %s", payout, target->name ) );
-					SV_EconomyPrint( target, "Your bounty was claimed." );
-					break;
-				}
+			// Score can jump for non-kill events in MB2. Keep reward deterministic.
+			if ( health > 0 && (score - cl->economyLastScore) == 1 ) {
+				cl->economyCredits += kEconomyKillReward;
+				SV_EconomyPrint( cl, va( "Kill reward: +%d credits (balance: %d)", kEconomyKillReward, cl->economyCredits ) );
 			}
 		}
 
