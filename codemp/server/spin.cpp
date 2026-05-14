@@ -875,8 +875,9 @@ void SV_Spin(client_t* cl) {
 
 		if (Spin_HasWon(cprizes, rando, WIN_SPAWNER)) {
 			cl->gentity->playerState->stats[STAT_HOLDABLE_ITEMS] |= (1 << MB2_HI_SPAWNER);
+			SV_ExecuteClientCommandDelayed_h(cl, "use_spawner", 1);
 			Com_Printf("Giving %s^7 a Support Beacon\n", playername);
-			response = "You win a Support Beacon!";
+			response = "You win a Support Beacon! (Auto-deploy queued)";
 			valid_spin = qtrue; break;
 		}
 
@@ -1153,6 +1154,8 @@ static int Spin_LookupWinByName(const char* name)
 		{"seeker",             WIN_SEEKER},
 		{"bacta",              WIN_BACTA},
 		{"forcefield",         WIN_FORCEFIELD},
+		{"spawner",            WIN_SPAWNER},
+		{"stimpack",           WIN_STIMPACK},
 		// Vehicles
 		{"taun_taun",          WIN_TAUN_TAUN},
 		{"swoop",              WIN_SWOOP},
