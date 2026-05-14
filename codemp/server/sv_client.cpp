@@ -1558,7 +1558,7 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 		cl->economyCredits -= amount;
 		svs.clients[targetNum].economyBounty += amount;
 		SV_EconomyPrint( cl, va( "Placed %d credit bounty on %s.", amount, svs.clients[targetNum].name ) );
-		SV_EconomyPrint( &svs.clients[targetNum], va( "%s placed a %d credit bounty on you.", cl->name, amount ) );
+		SV_EconomyPrint( &svs.clients[targetNum], va( "Someone placed a %d credit bounty on you.", amount ) );
 		return qtrue;
 	}
 
