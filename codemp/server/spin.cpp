@@ -1444,7 +1444,7 @@ void SV_SpinFrame(void)
 {
 	SV_DrainDeferredCmds();
 
-	if (!g_chaosEnable->integer)
+	if (Cvar_VariableIntegerValue("g_chaosEnable") != 1)
 		return;
 
 	// Intermission = round over; reset state for next round.
