@@ -462,7 +462,7 @@ void SV_Spin(client_t* cl) {
 	char             tmp[50];
 	char*            playername;
 	int              mb_class;
-	char*            response;
+	const char*      response;
 	int              rando;
 	int              spins;
 	std::vector<int> cprizes;
