@@ -1294,7 +1294,7 @@ static qboolean SV_EconomyEnabled( void ) {
 }
 
 static void SV_EconomyPrint( client_t *cl, const char *text ) {
-	SV_SendServerCommand( cl, "print \"^2[Economy]^7 %s\n\"\n", text );
+	SV_SendServerCommand( cl, "cp \"^2[Economy]^7 %s\"", text );
 }
 
 static void SV_EconomyGiveItem( client_t *cl, const char *giveName ) {
