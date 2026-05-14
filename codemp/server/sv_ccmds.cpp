@@ -1,25 +1,3 @@
-// Give credits to a player by slot or name: givecredits <player> <amount>
-static void SV_GiveCredits_f(void) {
-	if (Cmd_Argc() < 3) {
-		Com_Printf("Usage: givecredits <player> <amount>\n");
-		return;
-	}
-	const char* playerArg = Cmd_Argv(1);
-	const char* amountArg = Cmd_Argv(2);
-	int amount = atoi(amountArg);
-	if (amount == 0) {
-		Com_Printf("Amount must be nonzero.\n");
-		return;
-	}
-	client_t* cl = SV_BetterGetPlayerByHandle(playerArg);
-	if (!cl || cl->state < CS_ACTIVE) {
-		Com_Printf("No such player: %s\n", playerArg);
-		return;
-	}
-	cl->economyCredits += amount;
-	SV_EconomyPrint(cl, va("You were given %d credits!", amount));
-	Com_Printf("Gave %d credits to %s (slot %d)\n", amount, cl->name, (int)(cl - svs.clients));
-}
 /*
 ===========================================================================
 Copyright (C) 1999 - 2005, Id Software, Inc.
@@ -59,6 +37,8 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #define SVSAY_PREFIX "Server^7\x19: "
 #define SPAWN_VEHICLE_SUFFIX "(Spawns in 5 seconds)"
 
+client_t * SV_BetterGetPlayerByHandle(const char* handle);
+
 // Give credits to a player by slot or name: givecredits <player> <amount>
 static void SV_GiveCredits_f(void) {
 	if (Cmd_Argc() < 3) {
@@ -78,7 +58,7 @@ static void SV_GiveCredits_f(void) {
 		return;
 	}
 	cl->economyCredits += amount;
-	SV_EconomyPrint(cl, va("You were given %d credits!", amount));
+	SV_SendServerCommand(cl, "cp \"^2[Economy]^7 You were given %d credits!\"", amount);
 	Com_Printf("Gave %d credits to %s (slot %d)\n", amount, cl->name, (int)(cl - svs.clients));
 }
 /*
@@ -2642,7 +2622,6 @@ void SV_AddOperatorCommands( void ) {
 	Cmd_AddCommand ("sv_exceptaddr", SV_ExceptAddr_f, "Adds a ban exception for a user" );
 	Cmd_AddCommand ("sv_bandel", SV_BanDel_f, "Removes a ban" );
 	Cmd_AddCommand ("sv_exceptdel", SV_ExceptDel_f, "Removes a ban exception" );
-		Cmd_AddCommand("givecredits", SV_GiveCredits_f, "Give credits to a player: givecredits <player> <amount>");
 		Cmd_AddCommand("givecredits", SV_GiveCredits_f, "Give credits to a player: givecredits <player> <amount>");
 	Cmd_AddCommand ("sv_flushbans", SV_FlushBans_f, "Removes all bans and exceptions" );
 
