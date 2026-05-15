@@ -1849,6 +1849,13 @@ void SV_EconomyFrame( void ) {
 		return;
 	}
 
+	// Broadcast economy mode announcement every 3 minutes
+	static int nextAnnounce = 0;
+	if (svs.time >= nextAnnounce) {
+		nextAnnounce = svs.time + 180000;
+		SV_SendServerCommand(NULL, "chat \"" SVSAY_PREFIX "^3This server uses our Economy Credit System^7, type ^3!help^7 in chat for more info\"\n");
+	}
+
 	for ( i = 0; i < sv_maxclients->integer; i++ ) {
 		client_t *victim = &svs.clients[i];
 		playerState_t *vps;

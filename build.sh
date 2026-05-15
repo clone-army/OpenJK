@@ -48,10 +48,32 @@ cmake \
 echo "==> Building..."
 make -j$(nproc)
 
-echo "==> Stopping chaos and private instances"
+echo "==> Finding and stopping spin.i386 instances..."
+INSTANCES_TO_RESTART=()
+CONFIG_DIR="/root/mbiiez/config"
 
-mbii -i chaos stop || true
-mbii -i private stop || true
+if [ -d "$CONFIG_DIR" ]; then
+    for config_file in "$CONFIG_DIR"/*.json; do
+        if [ -f "$config_file" ]; then
+            # Extract instance name from filename (without .json extension)
+            instance_name=$(basename "$config_file" .json)
+            
+            # Check if this instance uses spin.i386 as engine
+            if grep -q '"engine"\s*:\s*"spin\.i386"' "$config_file"; then
+                echo "Stopping instance: $instance_name"
+                mbii -i "$instance_name" stop || true
+                INSTANCES_TO_RESTART+=("$instance_name")
+            fi
+        fi
+    done
+else
+    echo "Warning: Config directory not found at $CONFIG_DIR"
+    # Fallback to hardcoded instances
+    echo "Stopping fallback instances: chaos and private"
+    mbii -i chaos stop || true
+    mbii -i private stop || true
+    INSTANCES_TO_RESTART=("chaos" "private")
+fi
 
 echo ""
 echo "==> Installing binary to /usr/bin/spin.i386..."
@@ -60,6 +82,8 @@ sudo chmod +x /usr/bin/spin.i386
 
 echo "==> Done! Binary installed at /usr/bin/spin.i386"
 
-echo "==> Restarting chaos and private instances"
-mbii -i chaos start
-mbii -i private start
+echo "==> Restarting instances..."
+for instance in "${INSTANCES_TO_RESTART[@]}"; do
+    echo "Starting instance: $instance"
+    mbii -i "$instance" start || true
+done
