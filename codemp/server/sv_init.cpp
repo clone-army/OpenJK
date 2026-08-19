@@ -1014,6 +1014,7 @@ void SV_Init (void) {
 	g_chaosEnable = Cvar_Get("g_chaosEnable", "0", CVAR_TEMP, "Enable the chaos/spin reward system");
 	g_chaosCooldown = Cvar_Get("g_chaosCooldown", "20", CVAR_TEMP, "File to use to store bans and exceptions");
 	g_creditSystemEnable = Cvar_Get("g_creditSystemEnable", "0", CVAR_TEMP, "Enable the server-side credit/bounty system");
+	SV_EconomyShopInitCvars();
 
 	// These toggles are per-instance runtime controls and should never persist.
 	// If they were ever set with 'seta' in the past, strip ARCHIVE every startup.

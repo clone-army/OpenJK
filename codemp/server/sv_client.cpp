@@ -27,6 +27,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "server.h"
 #include "qcommon/stringed_ingame.h"
 #include "qcommon/md5.h"
+#include "spin.h"
 
 #include <ctype.h>
 
@@ -37,9 +38,6 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #endif
 
 #include "server/sv_gameapi.h"
-
-#define MB2_HI_EWEB      8
-#define MB2_HI_CLOAK     9
 
 static const int kEconomyKillReward = 5;
 
@@ -1271,23 +1269,153 @@ static ucmd_t ucmds[] = {
 	{NULL, NULL}
 };
 
-typedef struct economyItem_s {
-	const char *name;
-	const char *giveName;
-	int cost;
-} economyItem_t;
+// --- Economy shop catalog (backed by the "spin" win system) ---------------
+//
+// Every purchasable item (other than the plain ammo refill) is granted via
+// SV_SpinForceGiveWin(), which reuses the exact same per-win granting logic
+// as the "!spin" chat command and the "spinwin" rcon command (weapon/ammo
+// assignment, holdable flags, size changes, etc.) so nothing has to be
+// reimplemented here. Vehicles, NPC spawns, and the debug-only
+// WIN_ALL_SKILLS entry are intentionally not offered for purchase.
+//
+// Each item's cost is a live server cvar ("g_shopCost_<name>"); a cost of 0
+// disables that item. See SV_EconomyShopInitCvars() below.
 
-static const economyItem_t svEconomyItems[] = {
-	{"seeker", "weapon_seeker", 10},
-	{"sentry", "weapon_sentry", 15},
-	{"cloak", "item_cloak", 20},
-	{"eweb", "weapon_emplaced", 25},
-	{"tripmine", "weapon_trip_mine", 12},
-	{"jetpack", "item_jetpack", 22},
-	{"bacta", "item_medpac", 5},
-	{"ammo", "ammo_all", 6},
-	{"cryo", "weapon_cryo_nade", 18}
+typedef struct economyItemDef_s {
+	const char *name;       // purchase name: "!buy <name>" (matches spinwin names)
+	const char *category;   // menu grouping: "!buy <category>" to browse
+	int         winIndex;   // spin_wins_t value, or -1 for the ammo refill special-case
+	int         costDefault;
+} economyItemDef_t;
+
+static const economyItemDef_t svEconomyItemDefs[] = {
+	// Pistols & Light Sidearms
+	{ "bryar",           "pistols",   WIN_BRYAR,            8 },
+	{ "clone_pistol",    "pistols",   WIN_CLONE_PISTOL,     8 },
+	{ "mando_pistol",    "pistols",   WIN_MANDO_PISTOL,    10 },
+	{ "heavy_pistol",    "pistols",   WIN_HEAVY_PISTOL,    10 },
+	{ "bryar_old",       "pistols",   WIN_BRYAR_OLD,        8 },
+	{ "ee3",             "pistols",   WIN_EE3,             10 },
+	// Blasters & Carbines
+	{ "blaster",         "rifles",    WIN_BLASTER,         12 },
+	{ "dc_carbine",      "rifles",    WIN_DC_CARBINE,      15 },
+	{ "cr2",             "rifles",    WIN_CR2,             15 },
+	{ "e22",             "rifles",    WIN_E22,             15 },
+	{ "dlt19",           "rifles",    WIN_DLT19,           18 },
+	{ "trad_bowcaster",  "rifles",    WIN_TRAD_BOWCASTER,  15 },
+	{ "disruptor",       "rifles",    WIN_DISRUPTOR,       22 },
+	{ "bowcaster",       "rifles",    WIN_BOWCASTER,       20 },
+	{ "repeater",        "rifles",    WIN_REPEATER,        20 },
+	{ "clone_rifle",     "rifles",    WIN_CLONE_RIFLE,     18 },
+	{ "a280",            "rifles",    WIN_A280,            18 },
+	{ "dlt20a",          "rifles",    WIN_DLT20A,          18 },
+	{ "m5",              "rifles",    WIN_M5,              18 },
+	{ "t21",             "rifles",    WIN_T21,             15 },
+	{ "ee4",             "rifles",    WIN_EE4,             18 },
+	{ "amban",           "rifles",    WIN_AMBAN,           25 },
+	{ "proj",            "rifles",    WIN_PROJ,            22 },
+	{ "sbd",             "rifles",    WIN_SBD,             20 },
+	// Special Weapons
+	{ "demp2",           "special",   WIN_DEMP2,           25 },
+	{ "flechette",       "special",   WIN_FLECHETTE,       22 },
+	{ "concussion",      "special",   WIN_CONCUSSION,      22 },
+	{ "thrower",         "special",   WIN_THROWER,         20 },
+	{ "minigun",         "special",   WIN_MINIGUN,         30 },
+	{ "shotgun",         "special",   WIN_SHOTGUN,         18 },
+	// Heavy Launchers
+	{ "rocket_launcher", "launchers", WIN_ROCKET_LAUNCHER, 35 },
+	{ "plx1",            "launchers", WIN_PLX1,            35 },
+	// Grenades & Explosives
+	{ "frag_nade",       "nades",     WIN_FRAG_NADE,        8 },
+	{ "pulse_nade",      "nades",     WIN_PULSE_NADE,       8 },
+	{ "thermal",         "nades",     WIN_THERMAL,         10 },
+	{ "real_td",         "nades",     WIN_REAL_TD,         10 },
+	{ "fire_nade",       "nades",     WIN_FIRE_NADE,       10 },
+	{ "sonic_nade",      "nades",     WIN_SONIC_NADE,      10 },
+	{ "cryo_nade",       "nades",     WIN_CRYO_NADE,       10 },
+	{ "conc_nade",       "nades",     WIN_CONC_NADE,       10 },
+	{ "trip_mine",       "nades",     WIN_TRIP_MINE,       12 },
+	{ "det_pack",        "nades",     WIN_DET_PACK,        15 },
+	// Melee
+	{ "saber",           "melee",     WIN_SABER,           30 },
+	// Equipment
+	{ "100_armor",       "gadgets",   WIN_100_ARMOR,       10 },
+	{ "250_armor",       "gadgets",   WIN_250_ARMOR,       20 },
+	{ "cloak",           "gadgets",   WIN_CLOAK,           20 },
+	{ "eweb",            "gadgets",   WIN_EWEB,            25 },
+	{ "sentry",          "gadgets",   WIN_SENTRY,          15 },
+	{ "seeker",          "gadgets",   WIN_SEEKER,          10 },
+	{ "bacta",           "gadgets",   WIN_BACTA,            5 },
+	{ "forcefield",      "gadgets",   WIN_FORCEFIELD,      20 },
+	{ "spawner",         "gadgets",   WIN_SPAWNER,         25 },
+	{ "stimpack",        "gadgets",   WIN_STIMPACK,         8 },
+	{ "jetpack",         "gadgets",   WIN_JETPACK,         22 },
+	{ "shockfield",      "gadgets",   WIN_SHOCKFIELD,      20 },
+	{ "protocol",        "gadgets",   WIN_PROTOCOL,        15 },
+	// Fun / Size
+	{ "size_xs",         "size",      WIN_SIZE_XS,         10 },
+	{ "size_s",          "size",      WIN_SIZE_S,           8 },
+	{ "size_l",          "size",      WIN_SIZE_L,          12 },
+	{ "size_xl",         "size",      WIN_SIZE_XL,         18 },
+	// Ammo refill (not a spin win — handled directly)
+	{ "ammo",            "ammo",      -1,                   6 },
 };
+
+// Top-level category list shown by "!buy" with no arguments.
+static const char *svEconomyShopCategories[] = {
+	"pistols", "rifles", "special", "launchers", "nades", "melee", "gadgets", "size", "ammo"
+};
+
+// One cvar per item: "g_shopCost_<name>". A cost of 0 disables that item.
+// Registered once at server startup by SV_EconomyShopInitCvars(); admins can
+// change any of them live via rcon ("set g_shopCost_bryar 0") with no reload
+// step needed since the cvar's current value is read at purchase time.
+static cvar_t *svEconomyItemCostCvars[ARRAY_LEN( svEconomyItemDefs )];
+
+void SV_EconomyShopInitCvars( void ) {
+	int i;
+	for ( i = 0; i < (int)ARRAY_LEN( svEconomyItemDefs ); i++ ) {
+		char cvarName[64];
+		char defaultStr[16];
+		char desc[128];
+
+		Com_sprintf( cvarName, sizeof( cvarName ), "g_shopCost_%s", svEconomyItemDefs[i].name );
+		Com_sprintf( defaultStr, sizeof( defaultStr ), "%d", svEconomyItemDefs[i].costDefault );
+		Com_sprintf( desc, sizeof( desc ), "Shop cost in credits for '%s' (0 = disabled)", svEconomyItemDefs[i].name );
+		svEconomyItemCostCvars[i] = Cvar_Get( cvarName, defaultStr, CVAR_ARCHIVE, desc );
+	}
+}
+
+static int SV_EconomyItemCost( int index ) {
+	return svEconomyItemCostCvars[index] ? svEconomyItemCostCvars[index]->integer : 0;
+}
+
+static qboolean SV_EconomyItemEnabled( int index ) {
+	return SV_EconomyItemCost( index ) > 0 ? qtrue : qfalse;
+}
+
+// A category only "exists" (for menu/lookup purposes) if it has at least one
+// item whose cost cvar is currently > 0. Fully-disabled categories are hidden
+// from "!buy" and treated the same as an unknown category if typed directly.
+static qboolean SV_EconomyCategoryExists( const char *category ) {
+	int i;
+	for ( i = 0; i < (int)ARRAY_LEN( svEconomyItemDefs ); i++ ) {
+		if ( !Q_stricmp( category, svEconomyItemDefs[i].category ) && SV_EconomyItemEnabled( i ) ) {
+			return qtrue;
+		}
+	}
+	return qfalse;
+}
+
+static int SV_EconomyFindItemByName( const char *name ) {
+	int i;
+	for ( i = 0; i < (int)ARRAY_LEN( svEconomyItemDefs ); i++ ) {
+		if ( !Q_stricmp( name, svEconomyItemDefs[i].name ) ) {
+			return i;
+		}
+	}
+	return -1;
+}
 
 // --- Persistent economy accounts (!register / !login) ---------------------
 
@@ -1507,49 +1635,15 @@ static void SV_EconomyPrint( client_t *cl, const char *text ) {
 	SV_SendServerCommand( cl, "cp \"^2[Economy]^7 %s\"", text );
 }
 
-static void SV_EconomyGiveItem( client_t *cl, const char *giveName ) {
+static void SV_EconomyGiveAmmoRefill( client_t *cl ) {
 	const qboolean cheatsWereEnabled = Cvar_VariableIntegerValue( "sv_cheats" ) ? qtrue : qfalse;
-	playerState_t *ps = (cl && cl->gentity) ? cl->gentity->playerState : NULL;
-
-	if ( ps ) {
-		if ( !Q_stricmp( giveName, "weapon_emplaced" ) ) {
-			ps->stats[STAT_HOLDABLE_ITEMS] |= (1 << MB2_HI_EWEB);
-			return;
-		}
-
-		if ( !Q_stricmp( giveName, "item_cloak" ) ) {
-			ps->stats[STAT_HOLDABLE_ITEMS] |= (1 << MB2_HI_CLOAK);
-			ps->cloakFuel = 100;
-			return;
-		}
-
-		if ( !Q_stricmp( giveName, "weapon_sentry" ) ) {
-			ps->stats[STAT_HOLDABLE_ITEMS] |= (1 << HI_SENTRY_GUN);
-			return;
-		}
-
-		if ( !Q_stricmp( giveName, "weapon_seeker" ) ) {
-			ps->stats[STAT_HOLDABLE_ITEMS] |= (1 << HI_SEEKER);
-			return;
-		}
-
-		if ( !Q_stricmp( giveName, "item_medpac" ) ) {
-			ps->stats[STAT_HOLDABLE_ITEMS] |= (1 << HI_MEDPAC_BIG);
-			return;
-		}
-	}
 
 	if ( !cheatsWereEnabled ) {
 		Cvar_Set( "sv_cheats", "1" );
 		GVM_RunFrame( sv.time );
 	}
 
-	if ( !Q_stricmp( giveName, "item_jetpack" ) ) {
-		SV_ExecuteClientCommand( cl, "give item_jetpack", qtrue );
-		SV_ExecuteClientCommand( cl, "give fuel 100", qtrue );
-	} else {
-	SV_ExecuteClientCommand( cl, va( "give %s", giveName ), qtrue );
-	}
+	SV_ExecuteClientCommand( cl, "give ammo_all", qtrue );
 
 	if ( !cheatsWereEnabled ) {
 		Cvar_Set( "sv_cheats", "0" );
@@ -1668,29 +1762,65 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 			return qtrue;
 		}
 
-		if ( sscanf( chatCursor, "%63s", firstArg ) != 1 ) {
+		if ( sscanf( chatCursor, "%31s", firstArg ) != 1 ) {
 			char menuBuf[1024];
 			int  menuLen = 0;
+			int  c;
+			qboolean firstShown = qtrue;
+
 			menuLen += Com_sprintf( menuBuf + menuLen, sizeof(menuBuf) - menuLen,
-				"^3=== SHOP === Balance: ^2%d ^3credits ===\n", cl->economyCredits );
-			for ( i = 0; i < (int)ARRAY_LEN( svEconomyItems ); i++ ) {
+				"^3=== SHOP === Balance: ^2%d ^3credits ===\n^7Categories: ", cl->economyCredits );
+			for ( c = 0; c < (int)ARRAY_LEN( svEconomyShopCategories ); c++ ) {
+				if ( !SV_EconomyCategoryExists( svEconomyShopCategories[c] ) ) {
+					continue;
+				}
 				menuLen += Com_sprintf( menuBuf + menuLen, sizeof(menuBuf) - menuLen,
-					"^7%d) ^5%s ^7- ^2%d ^7credits\n",
-					i + 1, svEconomyItems[i].name, svEconomyItems[i].cost );
+					"%s^5%s", firstShown ? "" : "^7, ", svEconomyShopCategories[c] );
+				firstShown = qfalse;
 			}
-			menuLen += Com_sprintf( menuBuf + menuLen, sizeof(menuBuf) - menuLen, "^3Type !buy <id> to purchase" );
+			menuLen += Com_sprintf( menuBuf + menuLen, sizeof(menuBuf) - menuLen,
+				"\n^7Type ^5!buy <category> ^7to view items, ^5!buy <name> ^7to purchase." );
 			SV_SendServerCommand( cl, "cp \"%s\"", menuBuf );
 			return qtrue;
 		}
 
-		i = atoi( firstArg ) - 1;
-		if ( i < 0 || i >= (int)ARRAY_LEN( svEconomyItems ) ) {
-			SV_EconomyPrint( cl, "Invalid item id. Use !buy to list items." );
+		if ( SV_EconomyCategoryExists( firstArg ) ) {
+			char catBuf[1024];
+			int  catLen = 0;
+
+			catLen += Com_sprintf( catBuf + catLen, sizeof(catBuf) - catLen,
+				"^3=== SHOP: %s === Balance: ^2%d ^3===\n", firstArg, cl->economyCredits );
+
+			for ( i = 0; i < (int)ARRAY_LEN( svEconomyItemDefs ); i++ ) {
+				if ( Q_stricmp( svEconomyItemDefs[i].category, firstArg ) ) {
+					continue;
+				}
+				if ( !SV_EconomyItemEnabled( i ) ) {
+					continue;
+				}
+				catLen += Com_sprintf( catBuf + catLen, sizeof(catBuf) - catLen,
+					"^7%s ^7- ^2%d ^7cr\n", svEconomyItemDefs[i].name, SV_EconomyItemCost( i ) );
+			}
+
+			catLen += Com_sprintf( catBuf + catLen, sizeof(catBuf) - catLen,
+				"^3Type !buy <name> to purchase" );
+			SV_SendServerCommand( cl, "cp \"%s\"", catBuf );
 			return qtrue;
 		}
 
-		if ( cl->economyCredits < svEconomyItems[i].cost ) {
-			SV_EconomyPrint( cl, va( "Not enough credits. Need %d, have %d.", svEconomyItems[i].cost, cl->economyCredits ) );
+		i = SV_EconomyFindItemByName( firstArg );
+		if ( i < 0 ) {
+			SV_EconomyPrint( cl, "Unknown item or category. Type !buy to list categories." );
+			return qtrue;
+		}
+
+		if ( !SV_EconomyItemEnabled( i ) ) {
+			SV_EconomyPrint( cl, "That item is currently disabled." );
+			return qtrue;
+		}
+
+		if ( cl->economyCredits < SV_EconomyItemCost( i ) ) {
+			SV_EconomyPrint( cl, va( "Not enough credits. Need %d, have %d.", SV_EconomyItemCost( i ), cl->economyCredits ) );
 			return qtrue;
 		}
 
@@ -1701,10 +1831,16 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 			return qtrue;
 		}
 
-		cl->economyCredits -= svEconomyItems[i].cost;
-		SV_EconomyGiveItem( cl, svEconomyItems[i].giveName );
+		cl->economyCredits -= SV_EconomyItemCost( i );
+
+		if ( svEconomyItemDefs[i].winIndex >= 0 ) {
+			SV_SpinForceGiveWin( cl, svEconomyItemDefs[i].winIndex );
+		} else {
+			SV_EconomyGiveAmmoRefill( cl );
+		}
+
 		SV_EconomyPersistCredits( cl );
-		SV_EconomyPrint( cl, va( "Purchased %s. New balance: %d", svEconomyItems[i].name, cl->economyCredits ) );
+		SV_EconomyPrint( cl, va( "Purchased %s. New balance: %d", svEconomyItemDefs[i].name, cl->economyCredits ) );
 		return qtrue;
 	}
 
@@ -1905,7 +2041,8 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 			"^2!balance\n"
 			"^7  Show your credits and your current bounty.\n"
 			"^2!buy\n"
-			"^7  List all items for sale. Type ^5!buy <id> ^7to purchase.\n"
+			"^7  Type ^5!buy ^7to list shop categories, ^5!buy <category> ^7to view items,\n"
+			"^7  and ^5!buy <name> ^7to purchase (e.g. ^5!buy bryar^7, ^5!buy jetpack^7).\n"
 			"^2!bounty\n"
 			"^7  List all players and active bounties.\n"
 			"^7  Type ^5!bounty <id> <credits> ^7to place a bounty.\n"

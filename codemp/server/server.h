@@ -449,8 +449,10 @@ int			SV_BotGetConsoleMessage( int client, char *buf, int size );
 //
 void SV_Spin(client_t* cl);
 void SV_SpinFrame(void);
+void SV_SpinForceGiveWin(client_t* cl, int winIndex);
 void SV_EconomyFrame(void);
 void SV_EconomyPersistCredits( client_t *cl );
+void SV_EconomyShopInitCvars( void );
 
 
 void *Bot_GetMemoryGame(int size);
