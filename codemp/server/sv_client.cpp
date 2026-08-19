@@ -1632,7 +1632,7 @@ static qboolean SV_EconomyEnabled( void ) {
 }
 
 static void SV_EconomyPrint( client_t *cl, const char *text ) {
-	SV_SendServerCommand( cl, "cp \"^2[Economy]^7 %s\"", text );
+	SV_SendServerCommand( cl, "chat \"^2[Economy]^7 %s\"\n", text );
 }
 
 static void SV_EconomyGiveAmmoRefill( client_t *cl ) {
@@ -1752,7 +1752,7 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 			"^7Credits: ^2%d\n"
 			"^7Bounty on you: ^1%d",
 			cl->economyCredits, cl->economyBounty );
-		SV_SendServerCommand( cl, "cp \"%s\"", balBuf );
+		SV_SendServerCommand( cl, "chat \"%s\"\n", balBuf );
 		return qtrue;
 	}
 
@@ -1780,7 +1780,7 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 			}
 			menuLen += Com_sprintf( menuBuf + menuLen, sizeof(menuBuf) - menuLen,
 				"\n^7Type ^5!buy <category> ^7to view items, ^5!buy <name> ^7to purchase." );
-			SV_SendServerCommand( cl, "cp \"%s\"", menuBuf );
+			SV_SendServerCommand( cl, "chat \"%s\"\n", menuBuf );
 			return qtrue;
 		}
 
@@ -1804,7 +1804,7 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 
 			catLen += Com_sprintf( catBuf + catLen, sizeof(catBuf) - catLen,
 				"^3Type !buy <name> to purchase" );
-			SV_SendServerCommand( cl, "cp \"%s\"", catBuf );
+			SV_SendServerCommand( cl, "chat \"%s\"\n", catBuf );
 			return qtrue;
 		}
 
@@ -1872,7 +1872,7 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 					}
 				}
 			}
-			SV_SendServerCommand( cl, "cp \"%s\"", bBuf );
+			SV_SendServerCommand( cl, "chat \"%s\"\n", bBuf );
 			return qtrue;
 		}
 
@@ -2036,7 +2036,7 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 	}
 
 	if ( !Q_stricmp( commandName, "help" ) ) {
-		SV_SendServerCommand( cl, "cp \""
+		SV_SendServerCommand( cl, "chat \""
 			"^3=== CREDIT SYSTEM HELP ===\n"
 			"^2!balance\n"
 			"^7  Show your credits and your current bounty.\n"
@@ -2051,7 +2051,7 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 			"^7  Type ^5!register <handle> ^7to reserve a handle, then\n"
 			"^7  ^5!register <handle> <pin> ^7to set a 4-digit PIN and save your credits.\n"
 			"^7  Type ^5!login <handle> <pin> ^7on a new connection to restore your balance.\n"
-			"^3Credits are earned by getting kills.^7\""
+			"^3Credits are earned by getting kills.^7\"\n"
 		);
 		return qtrue;
 	}
