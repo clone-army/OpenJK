@@ -211,6 +211,7 @@ typedef struct client_s {
 	qboolean		economyScoreInitialized;
 	int				economyLastHealth;
 	qboolean		economyHealthInitialized;
+	char			economyHandle[24];	// non-empty if logged into a persisted !register/!login account this session
 
 } client_t;
 
@@ -449,6 +450,7 @@ int			SV_BotGetConsoleMessage( int client, char *buf, int size );
 void SV_Spin(client_t* cl);
 void SV_SpinFrame(void);
 void SV_EconomyFrame(void);
+void SV_EconomyPersistCredits( client_t *cl );
 
 
 void *Bot_GetMemoryGame(int size);

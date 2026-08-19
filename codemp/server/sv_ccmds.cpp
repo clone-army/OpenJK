@@ -58,6 +58,7 @@ static void SV_GiveCredits_f(void) {
 		return;
 	}
 	cl->economyCredits += amount;
+	SV_EconomyPersistCredits(cl);
 	SV_SendServerCommand(cl, "cp \"^2[Economy]^7 You were given %d credits!\"", amount);
 	Com_Printf("Gave %d credits to %s (slot %d)\n", amount, cl->name, (int)(cl - svs.clients));
 }
