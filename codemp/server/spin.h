@@ -196,3 +196,9 @@ static int weights[WIN_NUM_WINS] = {
 
 // rcon test command
 void SV_SpinWin_f(void);
+
+// Force-grants a specific win to a client, bypassing cooldown/RNG. Shared by
+// the "spinwin" rcon command and the economy shop (!buy) so item-granting
+// logic (weapon/ammo/vehicle/holdable handling) never has to be duplicated.
+void SV_SpinForceGiveWin(client_t* cl, int winIndex);
+

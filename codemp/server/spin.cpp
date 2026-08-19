@@ -1423,13 +1423,27 @@ void SV_SpinWin_f(void)
 	}
 
 	// Force the win and bypass the cooldown timer
+	SV_SpinForceGiveWin(cl, winIndex);
+
+	Com_Printf("spinwin: forced win '%s' for %s^7\n", winArg, cl->name);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SV_SpinForceGiveWin
+// Force-grants a specific win to a client, bypassing the spin cooldown and
+// RNG. Used by SV_SpinWin_f (rcon) and the economy shop (!buy) so that
+// per-win granting logic never has to be duplicated elsewhere.
+// ─────────────────────────────────────────────────────────────────────────────
+void SV_SpinForceGiveWin(client_t* cl, int winIndex)
+{
+	if (!cl || !cl->gentity || !cl->gentity->playerState || winIndex < 0 || winIndex >= WIN_NUM_WINS)
+		return;
+
 	gSpinForceWin = winIndex;
 	cl->gentity->playerState->userInt1 = 0;
 	SV_Spin(cl);
 	gSpinForceWin = -1;
 	cl->gentity->playerState->userInt1 = 0; // clear cooldown set by SV_Spin
-
-	Com_Printf("spinwin: forced win '%s' for %s^7\n", winArg, cl->name);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
