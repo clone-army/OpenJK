@@ -26,6 +26,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #include "server.h"
 #include "qcommon/stringed_ingame.h"
+#include "qcommon/md5.h"
 
 #include <ctype.h>
 
@@ -1288,6 +1289,216 @@ static const economyItem_t svEconomyItems[] = {
 	{"cryo", "weapon_cryo_nade", 18}
 };
 
+// --- Persistent economy accounts (!register / !login) ---------------------
+
+#define ECONOMY_ACCOUNTS_FILE		"economy_accounts.dat"
+#define ECONOMY_MAX_ACCOUNTS		1024
+#define ECONOMY_HANDLE_SIZE			24	// must match client_t::economyHandle
+#define ECONOMY_PIN_LEN				4
+#define ECONOMY_SALT_SIZE			16
+#define ECONOMY_HASH_SIZE			MD5_DIGEST_SIZE
+#define ECONOMY_LOGIN_MAX_ATTEMPTS	5
+#define ECONOMY_LOGIN_LOCKOUT_MS	60000
+
+typedef struct economyAccount_s {
+	char		handle[ECONOMY_HANDLE_SIZE];
+	byte		salt[ECONOMY_SALT_SIZE];
+	byte		hash[ECONOMY_HASH_SIZE];	// HMAC-MD5(key=salt, msg=pin)
+	int			credits;
+	int			failedAttempts;
+	int			lockoutUntil;				// svs.time value; login rejected while svs.time < lockoutUntil
+} economyAccount_t;
+
+static economyAccount_t svEconomyAccounts[ECONOMY_MAX_ACCOUNTS];
+static int svEconomyAccountCount = 0;
+static qboolean svEconomyAccountsLoaded = qfalse;
+
+static void SV_EconomyBytesToHex( const byte *in, int inLen, char *out ) {
+	static const char *hexd = "0123456789abcdef";
+	int i;
+	for ( i = 0; i < inLen; i++ ) {
+		out[i * 2] = hexd[in[i] >> 4];
+		out[i * 2 + 1] = hexd[in[i] & 0xF];
+	}
+	out[inLen * 2] = '\0';
+}
+
+static void SV_EconomyHexToBytes( const char *hex, byte *out, int outLen ) {
+	int i;
+	for ( i = 0; i < outLen; i++ ) {
+		char byteStr[3] = { hex[i * 2], hex[i * 2 + 1], '\0' };
+		out[i] = (byte)strtoul( byteStr, NULL, 16 );
+	}
+}
+
+static void SV_EconomyAccountsLoad( void ) {
+	int filelen;
+	fileHandle_t f;
+	char *buf, *line, *nextline;
+	char filepath[MAX_QPATH];
+
+	svEconomyAccountCount = 0;
+	svEconomyAccountsLoaded = qtrue;
+
+	Com_sprintf( filepath, sizeof( filepath ), "%s/%s", FS_GetCurrentGameDir(), ECONOMY_ACCOUNTS_FILE );
+
+	filelen = FS_SV_FOpenFileRead( filepath, &f );
+	if ( filelen <= 0 ) {
+		if ( f ) {
+			FS_FCloseFile( f );
+		}
+		return;
+	}
+
+	buf = (char *)Z_Malloc( filelen + 1, TAG_TEMP_WORKSPACE );
+	filelen = FS_Read( buf, filelen, f );
+	FS_FCloseFile( f );
+	buf[filelen] = '\0';
+
+	line = buf;
+	while ( line && *line && svEconomyAccountCount < ECONOMY_MAX_ACCOUNTS ) {
+		char handleBuf[ECONOMY_HANDLE_SIZE];
+		char saltHex[ECONOMY_SALT_SIZE * 2 + 1];
+		char hashHex[ECONOMY_HASH_SIZE * 2 + 1];
+		int credits, failedAttempts, lockoutUntil;
+
+		nextline = strchr( line, '\n' );
+		if ( nextline ) {
+			*nextline = '\0';
+		}
+
+		if ( sscanf( line, "%23s %32s %32s %d %d %d",
+				handleBuf, saltHex, hashHex, &credits, &failedAttempts, &lockoutUntil ) == 6 ) {
+			economyAccount_t *acct = &svEconomyAccounts[svEconomyAccountCount++];
+			Com_Memset( acct, 0, sizeof( *acct ) );
+			Q_strncpyz( acct->handle, handleBuf, sizeof( acct->handle ) );
+			SV_EconomyHexToBytes( saltHex, acct->salt, ECONOMY_SALT_SIZE );
+			SV_EconomyHexToBytes( hashHex, acct->hash, ECONOMY_HASH_SIZE );
+			acct->credits = credits;
+			acct->failedAttempts = failedAttempts;
+			acct->lockoutUntil = lockoutUntil;
+		}
+
+		line = nextline ? nextline + 1 : NULL;
+	}
+
+	Z_Free( buf );
+}
+
+static void SV_EconomyAccountsEnsureLoaded( void ) {
+	if ( !svEconomyAccountsLoaded ) {
+		SV_EconomyAccountsLoad();
+	}
+}
+
+static void SV_EconomyAccountsSave( void ) {
+	fileHandle_t f;
+	char filepath[MAX_QPATH];
+	int i;
+
+	Com_sprintf( filepath, sizeof( filepath ), "%s/%s", FS_GetCurrentGameDir(), ECONOMY_ACCOUNTS_FILE );
+
+	f = FS_SV_FOpenFileWrite( filepath );
+	if ( !f ) {
+		Com_Printf( "SV_EconomyAccountsSave: failed to open %s for writing\n", filepath );
+		return;
+	}
+
+	for ( i = 0; i < svEconomyAccountCount; i++ ) {
+		economyAccount_t *acct = &svEconomyAccounts[i];
+		char saltHex[ECONOMY_SALT_SIZE * 2 + 1];
+		char hashHex[ECONOMY_HASH_SIZE * 2 + 1];
+		char line[256];
+		int len;
+
+		SV_EconomyBytesToHex( acct->salt, ECONOMY_SALT_SIZE, saltHex );
+		SV_EconomyBytesToHex( acct->hash, ECONOMY_HASH_SIZE, hashHex );
+
+		len = Com_sprintf( line, sizeof( line ), "%s %s %s %d %d %d\n",
+			acct->handle, saltHex, hashHex, acct->credits, acct->failedAttempts, acct->lockoutUntil );
+		FS_Write( line, len, f );
+	}
+
+	FS_FCloseFile( f );
+}
+
+static economyAccount_t *SV_EconomyFindAccount( const char *handle ) {
+	int i;
+
+	SV_EconomyAccountsEnsureLoaded();
+
+	for ( i = 0; i < svEconomyAccountCount; i++ ) {
+		if ( !Q_stricmp( svEconomyAccounts[i].handle, handle ) ) {
+			return &svEconomyAccounts[i];
+		}
+	}
+	return NULL;
+}
+
+static qboolean SV_EconomyValidateHandle( const char *handle ) {
+	int len = (int)strlen( handle );
+	int i;
+
+	if ( len < 3 || len >= ECONOMY_HANDLE_SIZE ) {
+		return qfalse;
+	}
+	for ( i = 0; i < len; i++ ) {
+		if ( !isalnum( (unsigned char)handle[i] ) && handle[i] != '_' ) {
+			return qfalse;
+		}
+	}
+	return qtrue;
+}
+
+static qboolean SV_EconomyValidatePin( const char *pin ) {
+	int i;
+
+	if ( (int)strlen( pin ) != ECONOMY_PIN_LEN ) {
+		return qfalse;
+	}
+	for ( i = 0; i < ECONOMY_PIN_LEN; i++ ) {
+		if ( !isdigit( (unsigned char)pin[i] ) ) {
+			return qfalse;
+		}
+	}
+	return qtrue;
+}
+
+static void SV_EconomyHashPin( const byte *salt, const char *pin, byte *outHash ) {
+	hmacMD5Context_t ctx;
+	HMAC_MD5_Init( &ctx, salt, ECONOMY_SALT_SIZE );
+	HMAC_MD5_Update( &ctx, (const byte *)pin, (unsigned int)strlen( pin ) );
+	HMAC_MD5_Final( &ctx, outHash );
+}
+
+// Constant-time comparison to avoid leaking hash-match progress via timing.
+static qboolean SV_EconomySecureCompare( const byte *a, const byte *b, int len ) {
+	byte diff = 0;
+	int i;
+	for ( i = 0; i < len; i++ ) {
+		diff |= (byte)( a[i] ^ b[i] );
+	}
+	return diff == 0 ? qtrue : qfalse;
+}
+
+// Writes a logged-in client's current credits back to their persisted account.
+// Safe to call for clients that aren't logged into an account (no-op).
+void SV_EconomyPersistCredits( client_t *cl ) {
+	economyAccount_t *acct;
+
+	if ( !cl->economyHandle[0] ) {
+		return;
+	}
+
+	acct = SV_EconomyFindAccount( cl->economyHandle );
+	if ( !acct ) {
+		return;
+	}
+
+	acct->credits = cl->economyCredits;
+	SV_EconomyAccountsSave();
+}
+
 static qboolean SV_EconomyEnabled( void ) {
 	return (Cvar_VariableIntegerValue("g_creditSystemEnable") == 1) ? qtrue : qfalse;
 }
@@ -1433,6 +1644,8 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 		  !Q_stricmp( commandName, "buy" ) ||
 		  !Q_stricmp( commandName, "bounty" ) ||
 		  !Q_stricmp( commandName, "bountry" ) ||
+		  !Q_stricmp( commandName, "register" ) ||
+		  !Q_stricmp( commandName, "login" ) ||
 		  !Q_stricmp( commandName, "help" ) ) ) {
 		SV_EconomyPrint( cl, "Credit system is disabled." );
 		return qtrue;
@@ -1490,6 +1703,7 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 
 		cl->economyCredits -= svEconomyItems[i].cost;
 		SV_EconomyGiveItem( cl, svEconomyItems[i].giveName );
+		SV_EconomyPersistCredits( cl );
 		SV_EconomyPrint( cl, va( "Purchased %s. New balance: %d", svEconomyItems[i].name, cl->economyCredits ) );
 		return qtrue;
 	}
@@ -1556,8 +1770,132 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 
 		cl->economyCredits -= amount;
 		svs.clients[targetNum].economyBounty += amount;
+		SV_EconomyPersistCredits( cl );
 		SV_EconomyPrint( cl, va( "Placed %d credit bounty on %s.", amount, svs.clients[targetNum].name ) );
 		SV_EconomyPrint( &svs.clients[targetNum], va( "Someone placed a %d credit bounty on you.", amount ) );
+		return qtrue;
+	}
+
+	if ( !Q_stricmp( commandName, "register" ) ) {
+		int argCount = sscanf( chatCursor, "%23s %15s", firstArg, secondArg );
+
+		if ( argCount < 1 ) {
+			SV_EconomyPrint( cl, "Usage: !register <handle>, then !register <handle> <4-digit pin>" );
+			return qtrue;
+		}
+
+		if ( !SV_EconomyValidateHandle( firstArg ) ) {
+			SV_EconomyPrint( cl, "Handle must be 3-23 letters, numbers, or underscores." );
+			return qtrue;
+		}
+
+		if ( argCount == 1 ) {
+			if ( SV_EconomyFindAccount( firstArg ) ) {
+				SV_EconomyPrint( cl, "That handle is taken. Choose another." );
+			} else {
+				SV_EconomyPrint( cl, va( "Handle '%s' is available. Type !register %s <4-digit pin> to finish.", firstArg, firstArg ) );
+			}
+			return qtrue;
+		}
+
+		if ( !SV_EconomyValidatePin( secondArg ) ) {
+			SV_EconomyPrint( cl, "PIN must be exactly 4 digits." );
+			return qtrue;
+		}
+
+		if ( SV_EconomyFindAccount( firstArg ) ) {
+			SV_EconomyPrint( cl, "That handle is taken. Choose another." );
+			return qtrue;
+		}
+
+		if ( svEconomyAccountCount >= ECONOMY_MAX_ACCOUNTS ) {
+			SV_EconomyPrint( cl, "Account storage is full. Contact an admin." );
+			return qtrue;
+		}
+
+		{
+			economyAccount_t *acct = &svEconomyAccounts[svEconomyAccountCount];
+			Com_Memset( acct, 0, sizeof( *acct ) );
+
+			if ( !Sys_RandomBytes( acct->salt, ECONOMY_SALT_SIZE ) ) {
+				SV_EconomyPrint( cl, "Registration failed (RNG error). Try again." );
+				return qtrue;
+			}
+
+			svEconomyAccountCount++;
+			Q_strncpyz( acct->handle, firstArg, sizeof( acct->handle ) );
+			SV_EconomyHashPin( acct->salt, secondArg, acct->hash );
+			acct->credits = cl->economyCredits;
+
+			Q_strncpyz( cl->economyHandle, acct->handle, sizeof( cl->economyHandle ) );
+			SV_EconomyAccountsSave();
+
+			SV_EconomyPrint( cl, va( "Registered! Logged in as '%s'. Use !login %s <pin> on future connects.", acct->handle, acct->handle ) );
+		}
+		return qtrue;
+	}
+
+	if ( !Q_stricmp( commandName, "login" ) ) {
+		economyAccount_t *acct;
+		byte candidateHash[ECONOMY_HASH_SIZE];
+		int c;
+
+		if ( sscanf( chatCursor, "%23s %15s", firstArg, secondArg ) != 2 ) {
+			SV_EconomyPrint( cl, "Usage: !login <handle> <pin>" );
+			return qtrue;
+		}
+
+		acct = SV_EconomyFindAccount( firstArg );
+		if ( !acct ) {
+			SV_EconomyPrint( cl, "No account with that handle." );
+			return qtrue;
+		}
+
+		if ( acct->lockoutUntil > 0 && svs.time < acct->lockoutUntil ) {
+			SV_EconomyPrint( cl, va( "Too many failed attempts. Try again in %d seconds.",
+				( acct->lockoutUntil - svs.time + 999 ) / 1000 ) );
+			return qtrue;
+		}
+
+		if ( !SV_EconomyValidatePin( secondArg ) ) {
+			SV_EconomyPrint( cl, "Incorrect PIN." );
+			return qtrue;
+		}
+
+		SV_EconomyHashPin( acct->salt, secondArg, candidateHash );
+
+		if ( !SV_EconomySecureCompare( acct->hash, candidateHash, ECONOMY_HASH_SIZE ) ) {
+			acct->failedAttempts++;
+			if ( acct->failedAttempts >= ECONOMY_LOGIN_MAX_ATTEMPTS ) {
+				acct->lockoutUntil = svs.time + ECONOMY_LOGIN_LOCKOUT_MS;
+				acct->failedAttempts = 0;
+				SV_EconomyAccountsSave();
+				SV_EconomyPrint( cl, "Too many failed attempts. Account locked for 60 seconds." );
+			} else {
+				SV_EconomyAccountsSave();
+				SV_EconomyPrint( cl, "Incorrect PIN." );
+			}
+			return qtrue;
+		}
+
+		// success: clear any lockout state and kick any other session already logged into this handle
+		acct->failedAttempts = 0;
+		acct->lockoutUntil = 0;
+
+		for ( c = 0; c < sv_maxclients->integer; c++ ) {
+			client_t *other = &svs.clients[c];
+			if ( other != cl && other->state >= CS_CONNECTED && other->economyHandle[0] &&
+				!Q_stricmp( other->economyHandle, acct->handle ) ) {
+				SV_EconomyPrint( other, "You were logged out because your account logged in elsewhere." );
+				other->economyHandle[0] = '\0';
+			}
+		}
+
+		Q_strncpyz( cl->economyHandle, acct->handle, sizeof( cl->economyHandle ) );
+		cl->economyCredits = acct->credits;
+		SV_EconomyAccountsSave();
+
+		SV_EconomyPrint( cl, va( "Logged in as '%s'. Balance: %d credits.", acct->handle, cl->economyCredits ) );
 		return qtrue;
 	}
 
@@ -1572,6 +1910,10 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 			"^7  List all players and active bounties.\n"
 			"^7  Type ^5!bounty <id> <credits> ^7to place a bounty.\n"
 			"^7  The player who kills them earns the bounty.\n"
+			"^2!register / !login\n"
+			"^7  Type ^5!register <handle> ^7to reserve a handle, then\n"
+			"^7  ^5!register <handle> <pin> ^7to set a 4-digit PIN and save your credits.\n"
+			"^7  Type ^5!login <handle> <pin> ^7on a new connection to restore your balance.\n"
 			"^3Credits are earned by getting kills.^7\""
 		);
 		return qtrue;
@@ -1684,7 +2026,12 @@ static qboolean SV_ClientCommand( client_t *cl, msg_t *msg ) {
 	cl->lastClientCommand = seq;
 	Com_sprintf(cl->lastClientCommandString, sizeof(cl->lastClientCommandString), "%s", s);
 
-	Com_Printf("%s \n", s);
+	// Don't leak !register/!login PINs to the server console/log.
+	if ( Q_stristr( s, "!register" ) || Q_stristr( s, "!login" ) ) {
+		Com_Printf( "(economy account command redacted)\n" );
+	} else {
+		Com_Printf("%s \n", s);
+	}
 
 
 	return qtrue;		// continue procesing
@@ -1892,6 +2239,8 @@ void SV_EconomyFrame( void ) {
 						SV_EconomyPrint( attacker, va( "Bounty payout: +%d credits for %s", payout, victim->name ) );
 						SV_EconomyPrint( victim, "Your bounty was claimed." );
 					}
+
+					SV_EconomyPersistCredits( attacker );
 				}
 			}
 		}
