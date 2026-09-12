@@ -1025,6 +1025,11 @@ void SV_Init (void) {
 	g_spinSpawnerHackSkillIndex = Cvar_Get("g_spinSpawnerHackSkillIndex", "54", CVAR_TEMP, "EAS skill index used for spawner (default: EAS_HI_SPAWNER)");
 	g_spinSpawnerHackSkillValue = Cvar_Get("g_spinSpawnerHackSkillValue", "1", CVAR_TEMP, "Value written into hasSkill[skillIndex] when spin gives spawner");
 
+	g_gungame = Cvar_Get("g_gungame", "0", CVAR_TEMP, "Enable Gun Game mode: everyone starts on one weapon and advances one step up a fixed ladder per kill");
+	g_gungameAnnounce = Cvar_Get("g_gungameAnnounce", "1", CVAR_TEMP, "Broadcast a chat message when a player advances a tier or wins Gun Game");
+	g_gungame->flags &= ~CVAR_ARCHIVE;
+	g_gungameAnnounce->flags &= ~CVAR_ARCHIVE;
+
 	// used by smod extensions
 	g_smodAdminPassword_1 = Cvar_Get("g_smodAdminPassword_1", "", CVAR_PROTECTED, "SMOD1");
 	g_smodAdminPassword_2 = Cvar_Get("g_smodAdminPassword_2", "", CVAR_PROTECTED, "SMOD2");

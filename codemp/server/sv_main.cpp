@@ -75,6 +75,8 @@ cvar_t* g_creditSystemEnable;
 cvar_t* g_spinSpawnerHackOffset;
 cvar_t* g_spinSpawnerHackSkillIndex;
 cvar_t* g_spinSpawnerHackSkillValue;
+cvar_t* g_gungame;
+cvar_t* g_gungameAnnounce;
 
 // Used by smod extension to check if password is correct
 cvar_t* g_smodAdminPassword_1;
@@ -1258,6 +1260,9 @@ void SV_Frame( int msec ) {
 
 	// per-frame credit/bounty award (must run once per frame)
 	SV_EconomyFrame();
+
+	// gun game: kill-detection and weapon enforcement
+	SV_GunGameFrame();
 
 	// check timeouts
 	SV_CheckTimeouts();

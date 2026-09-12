@@ -314,6 +314,8 @@ if(BuildMPEngine OR BuildMPDed)
 		"${MPDir}/server/server.h"
 		"${MPDir}/server/spin.h"
 		"${MPDir}/server/spin.cpp"
+		"${MPDir}/server/gungame.h"
+		"${MPDir}/server/gungame.cpp"
 		"${MPDir}/server/sv_bot.cpp"
 		"${MPDir}/server/sv_ccmds.cpp"
 		"${MPDir}/server/sv_smod.cpp"		

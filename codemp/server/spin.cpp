@@ -273,8 +273,11 @@ static void Spin_SpawnCompanionAndFollow(client_t* cl, const char* spawnCmd, int
 //
 // Ammo indices and maxes mirror weaponData[].ammoIndex / ammoData[].max
 // from moviebattles-master/game/bg_weapons.c.
+//
+// Not static: gungame.cpp reuses this directly rather than duplicating the
+// ammo table, same as it reuses SV_WannaGiveWeapon from sv_ccmds.cpp.
 // ─────────────────────────────────────────────────────────────────────────────
-static void Spin_GiveWeaponAmmo(client_t* cl, weapon_t weapon)
+void Spin_GiveWeaponAmmo(client_t* cl, weapon_t weapon)
 {
 	playerState_t* ps = cl->gentity->playerState;
 	if (!ps) return;
