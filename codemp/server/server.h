@@ -304,6 +304,8 @@ extern	cvar_t* g_creditSystemEnable;
 extern	cvar_t* g_spinSpawnerHackOffset;
 extern	cvar_t* g_spinSpawnerHackSkillIndex;
 extern	cvar_t* g_spinSpawnerHackSkillValue;
+extern	cvar_t* g_gungame;
+extern	cvar_t* g_gungameAnnounce;
 
 // Used by smod extension to check if password is correct
 extern cvar_t* g_smodAdminPassword_1;
@@ -452,6 +454,14 @@ void SV_SpinFrame(void);
 void SV_SpinForceGiveWin(client_t* cl, int winIndex);
 void SV_EconomyFrame(void);
 void SV_EconomyPersistCredits( client_t *cl );
+
+//
+// gungame.cpp
+//
+void SV_GunGameFrame(void);
+void SV_GunGameClientBegin(client_t* cl);
+void SV_GunGameClientDisconnect(int clientNum);
+void SV_GunGameClampWeaponSelect(client_t* cl, usercmd_t* cmd);
 void SV_EconomyShopInitCvars( void );
 
 

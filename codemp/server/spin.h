@@ -202,3 +202,8 @@ void SV_SpinWin_f(void);
 // logic (weapon/ammo/vehicle/holdable handling) never has to be duplicated.
 void SV_SpinForceGiveWin(client_t* cl, int winIndex);
 
+// Sets ps->ammo[] for the given weapon's ammo type, capped to its in-game
+// max. Shared with gungame.cpp so the ammo table lives in exactly one
+// place. Caller must include game/bg_weapons.h for weapon_t.
+void Spin_GiveWeaponAmmo(client_t* cl, weapon_t weapon);
+

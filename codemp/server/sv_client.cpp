@@ -400,6 +400,10 @@ void SV_DropClient( client_t *drop, const char *reason ) {
 	// this will remove the body, among other things
 	GVM_ClientDisconnect( drop - svs.clients );
 
+	// clear this slot's gun game tier so whoever connects into it next
+	// doesn't inherit someone else's progress
+	SV_GunGameClientDisconnect( (int)(drop - svs.clients) );
+
 	// add the disconnect command
 	SV_SendServerCommand( drop, "disconnect \"%s\"", reason );
 
@@ -593,6 +597,10 @@ void SV_ClientEnterWorld( client_t *client, usercmd_t *cmd ) {
 
 	// call the game begin function
 	GVM_ClientBegin( client - svs.clients );
+
+	// Re-apply gun game's current tier weapon after the game module's own
+	// spawn/loadout logic has run, so it isn't immediately overwritten.
+	SV_GunGameClientBegin( client );
 
 	SV_BeginAutoRecordDemos();
 }
@@ -2186,6 +2194,13 @@ Also called by bot code
 ==================
 */
 void SV_ClientThink (client_t *cl, usercmd_t *cmd) {
+	// GVM_ClientThink below is called with a NULL usercmd pointer - the
+	// game module retrieves the current command from cl->lastUsercmd
+	// itself (via its own syscall), not from a parameter. So the clamp has
+	// to land before this assignment, not after it, or the stored copy the
+	// game module actually reads still has the player's original request.
+	SV_GunGameClampWeaponSelect( cl, cmd );
+
 	cl->lastUsercmd = *cmd;
 
 	if ( cl->state != CS_ACTIVE ) {
