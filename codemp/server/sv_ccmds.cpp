@@ -24,6 +24,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #include <thread>
 #include <array>
+#include <math.h>
 
 #include "server.h"
 #include "spin.h"
@@ -35,9 +36,227 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #define SVTELL_PREFIX "\x19[Server^7\x19]\x19: "
 #define SVSAY_PREFIX "Server^7\x19: "
-#define SPAWN_VEHICLE_SUFFIX "(Spawns in 5 seconds)"
 
 client_t * SV_BetterGetPlayerByHandle(const char* handle);
+
+// --- spawnvehicle admin command ---------------------------------------
+//
+// npc spawn vehicle (and the map-author-placed t_use alternative) both
+// have real placement problems: the former traces 64 units in front of
+// wherever the calling player happens to be standing with no real
+// clearance check, so anything vehicle-sized regularly ends up clipped
+// into geometry; the latter only works on the handful of maps that
+// already have NPC_Vehicle entities built in by hand. This command fixes
+// both: it finds a genuinely clear spot itself (SV_VehicleFindClearSpot,
+// using the engine's own collision tracing - not the closed game module's,
+// which we don't have source for or control over), works on any map
+// since it depends on nothing but that map's own collision geometry, and
+// boards the player into the vehicle automatically instead of leaving
+// them to walk up and press use themselves.
+
+// A vehicle's actual collision footprint is declared right in its own
+// ext_data/vehicles/<name>.veh definition, under "// Collision &
+// Occlusion" (length/width/height). Reading it directly with our own
+// FS_FOpenFileRead - the same direct-file-read technique
+// SV_EconomyAccountsLoad already uses in sv_client.cpp, just for packaged
+// game content instead of a server-generated file - means every vehicle's
+// real size is used automatically, with no hardcoded table to keep in
+// sync as new vehicles get added to the assets.
+static qboolean SV_VehicleGetSize( const char *vehicleName, float *length, float *width, float *height ) {
+	char filename[MAX_QPATH];
+	fileHandle_t f;
+	int len;
+	char *buf;
+	const char *p;
+	char *token;
+
+	Com_sprintf( filename, sizeof( filename ), "ext_data/vehicles/%s.veh", vehicleName );
+	len = FS_FOpenFileRead( filename, &f, qfalse );
+	if ( len <= 0 ) {
+		if ( f ) {
+			FS_FCloseFile( f );
+		}
+		return qfalse;
+	}
+
+	buf = (char *)Z_Malloc( len + 1, TAG_TEMP_WORKSPACE );
+	FS_Read( buf, len, f );
+	FS_FCloseFile( f );
+	buf[len] = '\0';
+
+	*length = *width = *height = 0.0f;
+
+	p = buf;
+	for ( ;; ) {
+		token = COM_ParseExt( &p, qtrue );
+		if ( !token[0] ) {
+			break;
+		}
+		if ( !Q_stricmp( token, "length" ) ) {
+			token = COM_ParseExt( &p, qfalse );
+			*length = (float)atof( token );
+		} else if ( !Q_stricmp( token, "width" ) ) {
+			token = COM_ParseExt( &p, qfalse );
+			*width = (float)atof( token );
+		} else if ( !Q_stricmp( token, "height" ) ) {
+			token = COM_ParseExt( &p, qfalse );
+			*height = (float)atof( token );
+		}
+	}
+
+	Z_Free( buf );
+	return ( *length > 0.0f && *width > 0.0f ) ? qtrue : qfalse;
+}
+
+// Spirals outward from a starting point (rings of increasing radius, 8
+// compass points per ring) looking for a spot where a box of the given
+// footprint doesn't clip into world geometry or another entity.
+// SV_Trace (sv_world.cpp) wraps the engine's own CM_BoxTrace plus an
+// entity check - it's core collision functionality the engine itself
+// uses for movement, fully available here regardless of BuildMPGame being
+// off, since testing collision against the BSP has nothing to do with the
+// closed game module's own gameplay logic. MASK_PLAYERSOLID rather than
+// the narrower MASK_SOLID so a spot already standing-room-occupied by
+// another player also counts as blocked, not just static geometry.
+static qboolean SV_VehicleFindClearSpot( const vec3_t origin, float length, float width, float height, vec3_t result ) {
+	vec3_t mins, maxs;
+	trace_t trace;
+	int radius, angleDeg;
+
+	mins[0] = -width * 0.5f;
+	mins[1] = -length * 0.5f;
+	mins[2] = 0.0f;
+	maxs[0] = width * 0.5f;
+	maxs[1] = length * 0.5f;
+	maxs[2] = height;
+
+	for ( radius = 0; radius <= 1500; radius += 150 ) {
+		for ( angleDeg = 0; angleDeg < 360; angleDeg += 45 ) {
+			vec3_t candidate;
+			float rad = (float)angleDeg * ( 3.14159265358979323846f / 180.0f );
+
+			candidate[0] = origin[0] + (float)radius * cosf( rad );
+			candidate[1] = origin[1] + (float)radius * sinf( rad );
+			candidate[2] = origin[2] + 48.0f;
+
+			SV_Trace( &trace, candidate, mins, maxs, candidate, ENTITYNUM_NONE, MASK_PLAYERSOLID, qfalse, 0, 0 );
+
+			if ( !trace.startsolid && !trace.allsolid ) {
+				VectorCopy( candidate, result );
+				return qtrue;
+			}
+
+			if ( radius == 0 ) {
+				break; // dead center has no distinct compass points to test
+			}
+		}
+	}
+
+	return qfalse;
+}
+
+// spawnvehicle <player> <vehicle> - moves a player to the nearest clear
+// spot, spawns the named vehicle there next tick, and boards them into it
+// the tick after that.
+//
+// Live-tested bug, found the hard way over several crashes: firing
+// setviewpos and then "npc spawn vehicle" back to back, synchronously, in
+// this same console-command handler - even with no extra GVM_RunFrame
+// calls, even with sv_cheats already on beforehand - crashed the server
+// outright every time, no crash dump, no log line. Isolation testing
+// (temporarily skipping the setviewpos call) confirmed "npc spawn
+// vehicle" alone via this same SV_ExecuteClientCommand injection is
+// completely safe; it's specifically the combination, fired in the same
+// call stack with no frame in between, that's fatal - almost certainly
+// the vehicle spawn's own trace-based placement reading the player's
+// position/collision-world linkage before the teleport that just changed
+// it has been fully settled by a normal frame tick.
+//
+// Fix: setviewpos still fires immediately here (proven safe alone), but
+// the actual spawn is deferred - see client_t::vehiclePendingSpawnName
+// and SV_VehicleClientThinkHook in sv_client.cpp, called from
+// SV_ClientThink on the player's own next usercmd, a separate call one
+// full frame later. Boarding is deferred a further tick past that for
+// the same reason. One risky action per tick, never two in the same call.
+static void SV_SpawnVehicle_f( void ) {
+	const char *playerArg, *vehicleArg;
+	client_t *cl;
+	float length, width, height;
+	vec3_t origin, spot;
+	char cmdBuf[256];
+
+	if ( Cmd_Argc() < 3 ) {
+		Com_Printf( "Usage: spawnvehicle <player> <vehicle>\n" );
+		return;
+	}
+
+	playerArg = Cmd_Argv( 1 );
+	vehicleArg = Cmd_Argv( 2 );
+
+	cl = SV_BetterGetPlayerByHandle( playerArg );
+	if ( !cl || cl->state < CS_ACTIVE || !cl->gentity || !cl->gentity->playerState ) {
+		Com_Printf( "No such player: %s\n", playerArg );
+		return;
+	}
+
+	if ( !Cvar_VariableIntegerValue( "sv_cheats" ) ) {
+		Com_Printf( "sv_cheats must already be enabled (see: wannacheat 1).\n" );
+		return;
+	}
+
+	if ( !SV_VehicleGetSize( vehicleArg, &length, &width, &height ) ) {
+		Com_Printf( "No such vehicle (or missing length/width in its .veh): %s\n", vehicleArg );
+		return;
+	}
+
+	VectorCopy( cl->gentity->playerState->origin, origin );
+
+	if ( !SV_VehicleFindClearSpot( origin, length, width, height, spot ) ) {
+		Com_Printf( "Couldn't find a clear spot for %s near %s.\n", vehicleArg, cl->name );
+		return;
+	}
+
+	Com_sprintf( cmdBuf, sizeof( cmdBuf ), "setviewpos %.0f %.0f %.0f %.0f",
+		spot[0], spot[1], spot[2], cl->gentity->playerState->viewangles[YAW] );
+	SV_ExecuteClientCommand( cl, cmdBuf, qtrue );
+
+	Q_strncpyz( cl->vehiclePendingSpawnName, vehicleArg, sizeof( cl->vehiclePendingSpawnName ) );
+
+	Com_Printf( "Moving %s to %.0f %.0f %.0f, spawning %s next tick.\n",
+		cl->name, spot[0], spot[1], spot[2], vehicleArg );
+}
+
+// TEMP DEBUG: dump a client's own CS_PLAYERS configstring so we can verify
+// the index math / actual live content while chasing the Gunray detector.
+// dumpplayercs <clientnum>
+static void SV_DumpPlayerCS_f(void) {
+	int clientNum;
+	char csBuf[MAX_STRING_CHARS];
+
+	if (Cmd_Argc() < 2) {
+		Com_Printf("Usage: dumpplayercs <clientnum>\n");
+		return;
+	}
+	clientNum = atoi(Cmd_Argv(1));
+	if (clientNum < 0 || clientNum >= sv_maxclients->integer) {
+		Com_Printf("Bad clientnum.\n");
+		return;
+	}
+
+	SV_GetConfigstring(MB2_CS_PLAYERS + clientNum, csBuf, sizeof(csBuf));
+	Com_Printf("[GunrayDebug] MB2_CS_PLAYERS(%d) = %d, raw = \"%s\"\n", clientNum, MB2_CS_PLAYERS + clientNum, csBuf);
+	{
+		// Info_ValueForKey reuses a small round-robin pool of static
+		// buffers - copy each value out before calling it again, rather
+		// than passing two calls straight into the same Com_Printf (the
+		// second call can silently overwrite what the first one's pointer
+		// still points to before the arguments are actually read).
+		char m[128], sc[128];
+		Q_strncpyz(m, Info_ValueForKey(csBuf, "m"), sizeof(m));
+		Q_strncpyz(sc, Info_ValueForKey(csBuf, "sc"), sizeof(sc));
+		Com_Printf("[GunrayDebug] m=\"%s\" sc=\"%s\"\n", m, sc);
+	}
+}
 
 // Give credits to a player by slot or name: givecredits <player> <amount>
 static void SV_GiveCredits_f(void) {
@@ -2657,6 +2876,8 @@ void SV_AddOperatorCommands( void ) {
 	Cmd_AddCommand ("sv_bandel", SV_BanDel_f, "Removes a ban" );
 	Cmd_AddCommand ("sv_exceptdel", SV_ExceptDel_f, "Removes a ban exception" );
 	Cmd_AddCommand("givecredits", SV_GiveCredits_f, "Give credits to a player: givecredits <player> <amount>");
+	Cmd_AddCommand("dumpplayercs", SV_DumpPlayerCS_f, "TEMP DEBUG: dump a client's CS_PLAYERS configstring: dumpplayercs <clientnum>");
+	Cmd_AddCommand("spawnvehicle", SV_SpawnVehicle_f, "Move a player to a clear spot, spawn a vehicle, and board them in: spawnvehicle <player> <vehicle>");
 	Cmd_AddCommand("givelives", SV_GiveLives_f, "Give lives to a player: givelives <player> <amount>");
 	Cmd_AddCommand ("sv_flushbans", SV_FlushBans_f, "Removes all bans and exceptions" );
 

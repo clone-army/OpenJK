@@ -72,11 +72,16 @@ cvar_t	*sv_banFile;
 cvar_t* g_chaosEnable;
 cvar_t* g_chaosCooldown;
 cvar_t* g_creditSystemEnable;
+cvar_t* g_economyShopEnable;
+cvar_t* g_economyBountyEnable;
 cvar_t* g_spinSpawnerHackOffset;
 cvar_t* g_spinSpawnerHackSkillIndex;
 cvar_t* g_spinSpawnerHackSkillValue;
 cvar_t* g_gungame;
 cvar_t* g_gungameAnnounce;
+cvar_t* g_killstreakEnable;
+cvar_t* g_statsEnable;
+cvar_t* g_chatFloodEnable;
 
 // Used by smod extension to check if password is correct
 cvar_t* g_smodAdminPassword_1;
@@ -1263,6 +1268,17 @@ void SV_Frame( int msec ) {
 
 	// gun game: kill-detection and weapon enforcement
 	SV_GunGameFrame();
+
+	// kill streak announcements
+	SV_KillstreakFrame();
+
+	// native kill/death/suicide/playtime stats
+	SV_StatsFrame();
+
+	// TEMP DIAGNOSTIC: detect players on the Nute Gunray siege class (see
+	// SV_GunrayCheckFrame in sv_client.cpp) - logging only for now, no
+	// action taken yet
+	SV_GunrayCheckFrame();
 
 	// check timeouts
 	SV_CheckTimeouts();

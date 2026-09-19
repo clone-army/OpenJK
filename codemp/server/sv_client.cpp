@@ -31,6 +31,14 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #include <ctype.h>
 
+// Raw POSIX file I/O + advisory locking for the shared economy accounts
+// file (see SV_EconomyAccountsPath) - every instance is a separate OS
+// process, so writes across them need real cross-process locking the
+// engine's own FS_ layer doesn't provide.
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/file.h>
+
 #ifdef USE_INTERNAL_ZLIB
 #include "zlib/zlib.h"
 #else
@@ -40,6 +48,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "server/sv_gameapi.h"
 
 static const int kEconomyKillReward = 5;
+static const int kEconomyRoundReward = 1;
 
 
 static void SV_CloseDownload( client_t *cl );
@@ -403,6 +412,20 @@ void SV_DropClient( client_t *drop, const char *reason ) {
 	// clear this slot's gun game tier so whoever connects into it next
 	// doesn't inherit someone else's progress
 	SV_GunGameClientDisconnect( (int)(drop - svs.clients) );
+
+	// same, for kill streak state
+	SV_KillstreakClientDisconnect( (int)(drop - svs.clients) );
+
+	// flush this client's final partial playtime segment before their name/
+	// economyHandle (used as the stats key) are gone
+	SV_StatsClientDisconnect( drop );
+
+	// don't let whoever connects into this slot next inherit a stale mute
+	// or message count from a completely different player
+	drop->chatMsgCount = 0;
+	drop->chatWindowStart = 0;
+	drop->chatMutedUntil = 0;
+	drop->gunraySpecTime = 0;
 
 	// add the disconnect command
 	SV_SendServerCommand( drop, "disconnect \"%s\"", reason );
@@ -1426,7 +1449,28 @@ static int SV_EconomyFindItemByName( const char *name ) {
 }
 
 // --- Persistent economy accounts (!register / !login) ---------------------
-
+//
+// Shared by every instance (see SV_EconomyAccountsPath: fs_basepath/fs_game
+// is the same "/opt/openjk/MBII" for all of them, unlike fs_homepath) so an
+// account and its credits carry over between servers. Since each instance
+// is a genuinely separate OS process, this can't just be an in-memory cache
+// loaded once like everything else here used to be - SV_EconomyAccountsLoad
+// is called fresh immediately before every read AND every write (see
+// SV_EconomyAccountsEnsureLoaded), and both Load and Save take a real
+// cross-process flock() around their I/O, so a read never sees another
+// process's write half-finished and two writes never interleave.
+//
+// Residual limitation: a reload and its matching save are each atomic on
+// their own, but not combined into one lock spanning both. Two different
+// people registering/logging in/earning credits on two different instances
+// within the same instant could still have the later write overwrite the
+// earlier one - narrow (needs two real people acting within a fraction of a
+// second, on two different servers) and never corrupts the file or crashes
+// anything, just a rare last-write-wins for that one instant. Closing that
+// gap fully would mean holding one lock across an entire multi-step chat
+// command - PIN hashing, RNG, validation branches with early returns - and
+// a lock left held by a stuck/crashed step is a worse failure mode than the
+// gap it would close.
 #define ECONOMY_ACCOUNTS_FILE		"economy_accounts.dat"
 #define ECONOMY_MAX_ACCOUNTS		1024
 #define ECONOMY_HANDLE_SIZE			24	// must match client_t::economyHandle
@@ -1435,6 +1479,14 @@ static int SV_EconomyFindItemByName( const char *name ) {
 #define ECONOMY_HASH_SIZE			MD5_DIGEST_SIZE
 #define ECONOMY_LOGIN_MAX_ATTEMPTS	5
 #define ECONOMY_LOGIN_LOCKOUT_MS	60000
+
+// Paced multi-line menu delivery for "!buy" - see SV_EconomyMenuBegin/
+// AddLine/Pump below. Must match client_t::economyMenuLines in server.h.
+// 28 lines comfortably covers the largest category (rifles, 18 items) plus
+// a header and footer line.
+#define ECONOMY_MENU_LINES_MAX		28
+#define ECONOMY_MENU_LINE_SIZE		160
+#define ECONOMY_MENU_LINE_DELAY_MS	700
 
 typedef struct economyAccount_s {
 	char		handle[ECONOMY_HANDLE_SIZE];
@@ -1447,7 +1499,6 @@ typedef struct economyAccount_s {
 
 static economyAccount_t svEconomyAccounts[ECONOMY_MAX_ACCOUNTS];
 static int svEconomyAccountCount = 0;
-static qboolean svEconomyAccountsLoaded = qfalse;
 
 static void SV_EconomyBytesToHex( const byte *in, int inLen, char *out ) {
 	static const char *hexd = "0123456789abcdef";
@@ -1467,28 +1518,55 @@ static void SV_EconomyHexToBytes( const char *hex, byte *out, int outLen ) {
 	}
 }
 
+// fs_basepath and fs_game are identical across every instance (all of them
+// point at the same /opt/openjk MBII install; only fs_homepath differs per
+// instance), so this resolves to the same absolute file for all of them -
+// unlike ECONOMY_ACCOUNTS_FILE's old location under the engine's per-
+// instance FS_SV_ save path.
+static void SV_EconomyAccountsPath( char *out, int outSize ) {
+	Com_sprintf( out, outSize, "%s/%s/%s",
+		Cvar_VariableString( "fs_basepath" ), Cvar_VariableString( "fs_game" ), ECONOMY_ACCOUNTS_FILE );
+}
+
 static void SV_EconomyAccountsLoad( void ) {
-	int filelen;
-	fileHandle_t f;
-	char *buf, *line, *nextline;
 	char filepath[MAX_QPATH];
+	int fd;
+	off_t filelen;
+	char *buf, *line, *nextline;
 
 	svEconomyAccountCount = 0;
-	svEconomyAccountsLoaded = qtrue;
 
-	Com_sprintf( filepath, sizeof( filepath ), "%s/%s", FS_GetCurrentGameDir(), ECONOMY_ACCOUNTS_FILE );
+	SV_EconomyAccountsPath( filepath, sizeof( filepath ) );
 
-	filelen = FS_SV_FOpenFileRead( filepath, &f );
-	if ( filelen <= 0 ) {
-		if ( f ) {
-			FS_FCloseFile( f );
-		}
+	fd = open( filepath, O_RDONLY );
+	if ( fd < 0 ) {
+		return;	// doesn't exist yet - nobody's registered anywhere yet
+	}
+
+	if ( flock( fd, LOCK_SH ) != 0 ) {
+		Com_Printf( "Economy: failed to lock %s for reading\n", filepath );
+		close( fd );
 		return;
 	}
 
-	buf = (char *)Z_Malloc( filelen + 1, TAG_TEMP_WORKSPACE );
-	filelen = FS_Read( buf, filelen, f );
-	FS_FCloseFile( f );
+	filelen = lseek( fd, 0, SEEK_END );
+	lseek( fd, 0, SEEK_SET );
+
+	if ( filelen <= 0 ) {
+		flock( fd, LOCK_UN );
+		close( fd );
+		return;
+	}
+
+	buf = (char *)Z_Malloc( (int)filelen + 1, TAG_TEMP_WORKSPACE );
+	filelen = read( fd, buf, (size_t)filelen );
+	flock( fd, LOCK_UN );
+	close( fd );
+
+	if ( filelen <= 0 ) {
+		Z_Free( buf );
+		return;
+	}
 	buf[filelen] = '\0';
 
 	line = buf;
@@ -1521,24 +1599,39 @@ static void SV_EconomyAccountsLoad( void ) {
 	Z_Free( buf );
 }
 
+// Always re-reads rather than caching: this file can be written by up to
+// five OTHER server processes between one call and the next, so a load-once
+// cache (what this used to be, back when the file was per-instance and
+// nothing else could ever write it) would silently go stale the moment any
+// other instance's player registered, logged in, or earned a credit.
 static void SV_EconomyAccountsEnsureLoaded( void ) {
-	if ( !svEconomyAccountsLoaded ) {
-		SV_EconomyAccountsLoad();
-	}
+	SV_EconomyAccountsLoad();
 }
 
 static void SV_EconomyAccountsSave( void ) {
-	fileHandle_t f;
 	char filepath[MAX_QPATH];
+	int fd;
 	int i;
 
-	Com_sprintf( filepath, sizeof( filepath ), "%s/%s", FS_GetCurrentGameDir(), ECONOMY_ACCOUNTS_FILE );
+	SV_EconomyAccountsPath( filepath, sizeof( filepath ) );
 
-	f = FS_SV_FOpenFileWrite( filepath );
-	if ( !f ) {
+	fd = open( filepath, O_WRONLY | O_CREAT, 0600 );
+	if ( fd < 0 ) {
 		Com_Printf( "SV_EconomyAccountsSave: failed to open %s for writing\n", filepath );
 		return;
 	}
+
+	if ( flock( fd, LOCK_EX ) != 0 ) {
+		Com_Printf( "SV_EconomyAccountsSave: failed to lock %s for writing\n", filepath );
+		close( fd );
+		return;
+	}
+
+	// Truncate under the lock rather than via O_TRUNC on open, so a
+	// concurrent LOCK_SH reader (SV_EconomyAccountsLoad, from any of the
+	// other server processes) can never observe a momentarily-empty file.
+	if ( ftruncate( fd, 0 ) != 0 ) { /* best-effort; nothing else to do here */ }
+	lseek( fd, 0, SEEK_SET );
 
 	for ( i = 0; i < svEconomyAccountCount; i++ ) {
 		economyAccount_t *acct = &svEconomyAccounts[i];
@@ -1552,10 +1645,11 @@ static void SV_EconomyAccountsSave( void ) {
 
 		len = Com_sprintf( line, sizeof( line ), "%s %s %s %d %d %d\n",
 			acct->handle, saltHex, hashHex, acct->credits, acct->failedAttempts, acct->lockoutUntil );
-		FS_Write( line, len, f );
+		if ( write( fd, line, (size_t)len ) != len ) { /* best-effort; nothing else to do here */ }
 	}
 
-	FS_FCloseFile( f );
+	flock( fd, LOCK_UN );
+	close( fd );
 }
 
 static economyAccount_t *SV_EconomyFindAccount( const char *handle ) {
@@ -1639,8 +1733,140 @@ static qboolean SV_EconomyEnabled( void ) {
 	return (Cvar_VariableIntegerValue("g_creditSystemEnable") == 1) ? qtrue : qfalse;
 }
 
+// Shop and bounty are independent sub-toggles on top of the master economy
+// switch above - a server can run the credit system for kill rewards and
+// !balance while keeping only one of !buy / !bounty (or neither) turned on.
+static qboolean SV_EconomyShopEnabled( void ) {
+	return (g_economyShopEnable && g_economyShopEnable->integer == 1) ? qtrue : qfalse;
+}
+
+static qboolean SV_EconomyBountyEnabled( void ) {
+	return (g_economyBountyEnable && g_economyBountyEnable->integer == 1) ? qtrue : qfalse;
+}
+
 static void SV_EconomyPrint( client_t *cl, const char *text ) {
 	SV_SendServerCommand( cl, "chat \"^2[Economy]^7 %s\"\n", text );
+}
+
+// --- Chat flood control -----------------------------------------------------
+//
+// More than CHAT_FLOOD_MAX_MESSAGES say/say_team messages within
+// CHAT_FLOOD_WINDOW_MS mutes the sender's chat for CHAT_FLOOD_MUTE_MS,
+// counted from the message that tripped the limit (not from window start) -
+// so muting a client resets what "10 seconds of continuing to flood" even
+// means, rather than the mute silently expiring mid-flood at the original
+// window's end. Distinct from sv_floodProtect, which throttles the reliable
+// command channel generically (any command, one per floodTime) - this is
+// chat-specific and counts actual messages in a real window, not a fixed
+// per-command cooldown.
+#define CHAT_FLOOD_MAX_MESSAGES	5
+#define CHAT_FLOOD_WINDOW_MS		10000
+#define CHAT_FLOOD_MUTE_MS			10000
+
+// Returns qtrue if this message should be dropped (client is flood-limited).
+// Called once per say/say_team command, before it's parsed as an economy
+// command or forwarded to the game module - a muted client's messages never
+// reach either, so flooding !buy/!bounty spam is throttled the same as
+// ordinary chat spam.
+static qboolean SV_ChatFloodCheck( client_t *cl ) {
+	if ( !g_chatFloodEnable || !g_chatFloodEnable->integer ) {
+		return qfalse;
+	}
+
+	if ( cl->chatMutedUntil > svs.time ) {
+		return qtrue;
+	}
+
+	if ( cl->chatWindowStart == 0 || svs.time - cl->chatWindowStart >= CHAT_FLOOD_WINDOW_MS ) {
+		cl->chatWindowStart = svs.time;
+		cl->chatMsgCount = 0;
+	}
+
+	cl->chatMsgCount++;
+
+	if ( cl->chatMsgCount > CHAT_FLOOD_MAX_MESSAGES ) {
+		const qboolean justTripped = (cl->chatMutedUntil <= svs.time) ? qtrue : qfalse;
+		cl->chatMutedUntil = svs.time + CHAT_FLOOD_MUTE_MS;
+		if ( justTripped ) {
+			SV_SendServerCommand( cl, "cp \"^1Slow down!^7 You're chatting too fast - muted for 10 seconds.\"\n" );
+		}
+		return qtrue;
+	}
+
+	return qfalse;
+}
+
+// --- Nute Gunray class-selection block --------------------------------------
+//
+// SV_GunrayCheckFrame (below, in this file) can detect and react to a
+// player already playing as Gunray, but every Siege-mode self-service way
+// of getting them back out is a dead end, live-tested: "team s" only
+// calls SetTeam() if the round hasn't begun yet or the player is already
+// out of respawns for this round (Cmd_Team_f, g_cmds.c - otherwise it's a
+// deliberate no-op, by design, so players can't abandon a losing team
+// mid-round), and "kill" doesn't even reach Cmd_Kill_f in Siege gametype
+// at all (same file - it just sets an unrelated holocron-touch flag).
+// Both were confirmed to silently do nothing, repeatedly, for a player
+// still holding respawns.
+//
+// Rather than keep fighting those restrictions after the fact, block the
+// class pick at the source: "siegeclass v7_NuteG ..." is the literal
+// client command a real pick sends (captured live in legends-engine.log -
+// see SV_GunrayCheckFrame's header for the full line), intercepted here
+// and never forwarded to the game module, so they never actually spawn as
+// Gunray in the first place. Private message only (not a server-wide
+// broadcast like SV_GunrayCheckFrame's) - this can fire on every click if
+// someone keeps trying, and broadcasting each attempt would spam chat for
+// no added benefit once the pick is already blocked.
+static qboolean SV_GunrayClassBlockCheck( client_t *cl ) {
+	if ( Q_stricmp( Cmd_Argv( 0 ), "siegeclass" ) ) {
+		return qfalse;
+	}
+	if ( Q_stricmp( Cmd_Argv( 1 ), "v7_NuteG" ) ) {
+		return qfalse;
+	}
+
+	Com_Printf( "[GunrayDebug] %s blocked from picking Nute Gunray (siegeclass command intercepted)\n", cl->name );
+	SV_SendServerCommand( cl, "cp \"^1Nute Gunray is disabled on this server^7 - please pick another class.\"\n" );
+	return qtrue;
+}
+
+// --- Paced multi-line menu delivery ("!buy" listings) ----------------------
+//
+// A shop category can run to 18 items; sending all of it (plus header/
+// footer) as one "chat" servercommand is technically one message, but the
+// chat overlay only keeps a handful of lines on screen before older ones
+// scroll off, so most of a long listing was gone before it could be read.
+// This queues each line on the client and SV_EconomyFrame below drips them
+// out one per ECONOMY_MENU_LINE_DELAY_MS instead.
+
+static void SV_EconomyMenuBegin( client_t *cl ) {
+	cl->economyMenuLineCount = 0;
+	cl->economyMenuNextLine = 0;
+	cl->economyMenuNextSendTime = 0;	// 0 = send the first line on the next pump, whenever that is
+}
+
+static void SV_EconomyMenuAddLine( client_t *cl, const char *line ) {
+	if ( cl->economyMenuLineCount >= ECONOMY_MENU_LINES_MAX ) {
+		return;
+	}
+	Q_strncpyz( cl->economyMenuLines[cl->economyMenuLineCount], line, ECONOMY_MENU_LINE_SIZE );
+	cl->economyMenuLineCount++;
+}
+
+// Sends the next queued line, if any and if enough time has passed since the
+// last one. Safe to call every frame for every client - it's a no-op unless
+// there's something due.
+static void SV_EconomyMenuPump( client_t *cl ) {
+	if ( cl->economyMenuNextLine >= cl->economyMenuLineCount ) {
+		return;
+	}
+	if ( cl->economyMenuNextSendTime != 0 && svs.time < cl->economyMenuNextSendTime ) {
+		return;
+	}
+	SV_SendServerCommand( cl, "chat \"%s\"\n", cl->economyMenuLines[cl->economyMenuNextLine] );
+	cl->economyMenuNextLine++;
+	cl->economyMenuNextSendTime = svs.time + ECONOMY_MENU_LINE_DELAY_MS;
 }
 
 static void SV_EconomyGiveAmmoRefill( client_t *cl ) {
@@ -1741,14 +1967,25 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 		chatCursor++;
 	}
 
+	// "!stats" is its own independent feature (own g_statsEnable cvar) and
+	// "!help" always responds with whatever's actually enabled here (see
+	// below) - neither belongs behind the economy master gate the rest of
+	// these commands sit behind.
+	if ( !Q_stricmp( commandName, "stats" ) ) {
+		if ( !g_statsEnable || !g_statsEnable->integer ) {
+			return qfalse;	// feature off - let it pass through as ordinary chat
+		}
+		SV_StatsShowCommand( cl );
+		return qtrue;
+	}
+
 	if ( !SV_EconomyEnabled() &&
 		( !Q_stricmp( commandName, "balance" ) ||
 		  !Q_stricmp( commandName, "buy" ) ||
 		  !Q_stricmp( commandName, "bounty" ) ||
 		  !Q_stricmp( commandName, "bountry" ) ||
 		  !Q_stricmp( commandName, "register" ) ||
-		  !Q_stricmp( commandName, "login" ) ||
-		  !Q_stricmp( commandName, "help" ) ) ) {
+		  !Q_stricmp( commandName, "login" ) ) ) {
 		SV_EconomyPrint( cl, "Credit system is disabled." );
 		return qtrue;
 	}
@@ -1770,34 +2007,42 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 			return qtrue;
 		}
 
-		if ( sscanf( chatCursor, "%31s", firstArg ) != 1 ) {
-			char menuBuf[1024];
-			int  menuLen = 0;
-			int  c;
-			qboolean firstShown = qtrue;
+		if ( !SV_EconomyShopEnabled() ) {
+			SV_EconomyPrint( cl, "The shop is disabled on this server, but you're still earning credits here - "
+				"spend them with !buy on a server where the shop is on." );
+			return qtrue;
+		}
 
-			menuLen += Com_sprintf( menuBuf + menuLen, sizeof(menuBuf) - menuLen,
-				"^3=== SHOP === Balance: ^2%d ^3credits ===\n^7Categories: ", cl->economyCredits );
+		if ( sscanf( chatCursor, "%31s", firstArg ) != 1 ) {
+			char line[ECONOMY_MENU_LINE_SIZE];
+			int  c;
+
+			SV_EconomyMenuBegin( cl );
+
+			Com_sprintf( line, sizeof(line), "^3=== SHOP === Balance: ^2%d ^3credits ===", cl->economyCredits );
+			SV_EconomyMenuAddLine( cl, line );
+			SV_EconomyMenuAddLine( cl, "^7Categories - type ^5!buy <category> ^7to browse one, e.g. ^5!buy pistols^7:" );
+
 			for ( c = 0; c < (int)ARRAY_LEN( svEconomyShopCategories ); c++ ) {
 				if ( !SV_EconomyCategoryExists( svEconomyShopCategories[c] ) ) {
 					continue;
 				}
-				menuLen += Com_sprintf( menuBuf + menuLen, sizeof(menuBuf) - menuLen,
-					"%s^5%s", firstShown ? "" : "^7, ", svEconomyShopCategories[c] );
-				firstShown = qfalse;
+				Com_sprintf( line, sizeof(line), "^7 - ^5%s", svEconomyShopCategories[c] );
+				SV_EconomyMenuAddLine( cl, line );
 			}
-			menuLen += Com_sprintf( menuBuf + menuLen, sizeof(menuBuf) - menuLen,
-				"\n^7Type ^5!buy <category> ^7to view items, ^5!buy <name> ^7to purchase." );
-			SV_SendServerCommand( cl, "chat \"%s\"\n", menuBuf );
+
+			SV_EconomyMenuAddLine( cl, "^7Then ^5!buy <item name> ^7to purchase, e.g. ^5!buy bryar" );
+			SV_EconomyMenuPump( cl );
 			return qtrue;
 		}
 
 		if ( SV_EconomyCategoryExists( firstArg ) ) {
-			char catBuf[1024];
-			int  catLen = 0;
+			char line[ECONOMY_MENU_LINE_SIZE];
 
-			catLen += Com_sprintf( catBuf + catLen, sizeof(catBuf) - catLen,
-				"^3=== SHOP: %s === Balance: ^2%d ^3===\n", firstArg, cl->economyCredits );
+			SV_EconomyMenuBegin( cl );
+
+			Com_sprintf( line, sizeof(line), "^3=== SHOP: %s === Balance: ^2%d ^3===", firstArg, cl->economyCredits );
+			SV_EconomyMenuAddLine( cl, line );
 
 			for ( i = 0; i < (int)ARRAY_LEN( svEconomyItemDefs ); i++ ) {
 				if ( Q_stricmp( svEconomyItemDefs[i].category, firstArg ) ) {
@@ -1806,13 +2051,12 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 				if ( !SV_EconomyItemEnabled( i ) ) {
 					continue;
 				}
-				catLen += Com_sprintf( catBuf + catLen, sizeof(catBuf) - catLen,
-					"^7%s ^7- ^2%d ^7cr\n", svEconomyItemDefs[i].name, SV_EconomyItemCost( i ) );
+				Com_sprintf( line, sizeof(line), "^7%s ^7- ^2%d ^7cr", svEconomyItemDefs[i].name, SV_EconomyItemCost( i ) );
+				SV_EconomyMenuAddLine( cl, line );
 			}
 
-			catLen += Com_sprintf( catBuf + catLen, sizeof(catBuf) - catLen,
-				"^3Type !buy <name> to purchase" );
-			SV_SendServerCommand( cl, "chat \"%s\"\n", catBuf );
+			SV_EconomyMenuAddLine( cl, "^3Type !buy <name> to purchase, e.g. !buy bryar" );
+			SV_EconomyMenuPump( cl );
 			return qtrue;
 		}
 
@@ -1852,71 +2096,98 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 		return qtrue;
 	}
 
+	// "!bounty <player> <credits>" places one directly in a single command -
+	// <player> is resolved with the same SV_BetterGetPlayerByHandle every
+	// other economy/admin command already uses to target a player (client
+	// number, exact name, or name with color codes stripped - see
+	// sv_ccmds.cpp), so there's no separately-typed list position and no
+	// window between listing and placing where a reused client slot could
+	// end up bountied instead of who was actually meant.
+	//
+	// "!bounty" alone (or with an unresolvable target/amount) falls back to
+	// a quick reference instead: your own numbers plus anyone currently
+	// carrying a bounty.
 	if ( !Q_stricmp( commandName, "bounty" ) || !Q_stricmp( commandName, "bountry" ) ) {
-		int targetNum;
-		int amount;
-
 		if ( !SV_EconomyEnabled() ) {
 			SV_EconomyPrint( cl, "Credit system is disabled." );
 			return qtrue;
 		}
 
-		if ( sscanf( chatCursor, "%63s %63s", firstArg, secondArg ) != 2 ) {
+		if ( !SV_EconomyBountyEnabled() ) {
+			SV_EconomyPrint( cl, "The bounty system is currently disabled on this server." );
+			return qtrue;
+		}
+
+		if ( sscanf( chatCursor, "%63s %63s", firstArg, secondArg ) == 2 ) {
+			client_t *target = SV_BetterGetPlayerByHandle( firstArg );
+			int amount = atoi( secondArg );
+
+			if ( !target ) {
+				SV_EconomyPrint( cl, va( "No player found matching \"%s\". Usage: !bounty <player> <credits>", firstArg ) );
+				return qtrue;
+			}
+
+			if ( target == cl ) {
+				SV_EconomyPrint( cl, "You can't place a bounty on yourself." );
+				return qtrue;
+			}
+
+			if ( amount <= 0 ) {
+				SV_EconomyPrint( cl, "Bounty must be greater than 0." );
+				return qtrue;
+			}
+
+			if ( cl->economyCredits < amount ) {
+				SV_EconomyPrint( cl, va( "Not enough credits. You have %d.", cl->economyCredits ) );
+				return qtrue;
+			}
+
+			cl->economyCredits -= amount;
+			target->economyBounty += amount;
+			target->economyBountyPlacerNum = (int)( cl - svs.clients );
+			Q_strncpyz( target->economyBountyPlacerName, cl->name, sizeof( target->economyBountyPlacerName ) );
+			SV_EconomyPersistCredits( cl );
+
+			// Public, so a bounty puts pressure on the target and gives
+			// everyone else a reason to go hunt it - plus a personal tell to
+			// the target directly, since "on you" lands harder than reading
+			// their own name in a message meant for everyone.
+			SV_SendServerCommand( NULL, "chat \"" SVSAY_PREFIX "^3%s^7 put a bounty of ^1%d^7 credits on ^3%s^7!\"\n",
+				cl->name, amount, target->name );
+			SV_EconomyPrint( target, va( "%s put a bounty on you for %d credits!", cl->name, amount ) );
+			return qtrue;
+		}
+
+		{
 			char bBuf[1024];
 			int  bLen = 0;
+			qboolean anyBounties = qfalse;
+
 			bLen += Com_sprintf( bBuf + bLen, sizeof(bBuf) - bLen,
-				"^3=== BOUNTIES === Your bounty: ^1%d ^3credits ===\n", cl->economyBounty );
-			bLen += Com_sprintf( bBuf + bLen, sizeof(bBuf) - bLen,
-				"^3Usage: ^7!bounty <id> <credits>\n" );
+				"^3=== BOUNTY === ^7Your credits: ^2%d ^7| Bounty on you: ^1%d ^3===\n",
+				cl->economyCredits, cl->economyBounty );
+
 			for ( i = 0; i < sv_maxclients->integer; i++ ) {
 				client_t *target = &svs.clients[i];
-				if ( target->state >= CS_CONNECTED && target != cl ) {
-					if ( target->economyBounty > 0 ) {
-						bLen += Com_sprintf( bBuf + bLen, sizeof(bBuf) - bLen,
-							"^7%d) ^5%s ^7- bounty: ^1%d\n", i, target->name, target->economyBounty );
-					} else {
-						bLen += Com_sprintf( bBuf + bLen, sizeof(bBuf) - bLen,
-							"^7%d) ^5%s\n", i, target->name );
-					}
+
+				if ( target->state < CS_CONNECTED || target == cl || target->economyBounty <= 0 ) {
+					continue;
 				}
+
+				anyBounties = qtrue;
+				bLen += Com_sprintf( bBuf + bLen, sizeof(bBuf) - bLen,
+					"^7%s ^7- bounty: ^1%d\n", target->name, target->economyBounty );
 			}
+
+			if ( !anyBounties ) {
+				bLen += Com_sprintf( bBuf + bLen, sizeof(bBuf) - bLen, "^7No active bounties right now.\n" );
+			}
+
+			bLen += Com_sprintf( bBuf + bLen, sizeof(bBuf) - bLen,
+				"^3Usage: ^7!bounty <player> <credits> ^3e.g. ^7!bounty Bob 50\n" );
+
 			SV_SendServerCommand( cl, "chat \"%s\"\n", bBuf );
-			return qtrue;
 		}
-
-		targetNum = atoi( firstArg );
-		amount = atoi( secondArg );
-
-		if ( targetNum < 0 || targetNum >= sv_maxclients->integer ) {
-			SV_EconomyPrint( cl, "Invalid target clientnum." );
-			return qtrue;
-		}
-
-		if ( amount <= 0 ) {
-			SV_EconomyPrint( cl, "Bounty must be greater than 0." );
-			return qtrue;
-		}
-
-		if ( &svs.clients[targetNum] == cl ) {
-			SV_EconomyPrint( cl, "You cannot place a bounty on yourself." );
-			return qtrue;
-		}
-
-		if ( svs.clients[targetNum].state < CS_CONNECTED ) {
-			SV_EconomyPrint( cl, "Target player is not connected." );
-			return qtrue;
-		}
-
-		if ( cl->economyCredits < amount ) {
-			SV_EconomyPrint( cl, va( "Not enough credits. You have %d.", cl->economyCredits ) );
-			return qtrue;
-		}
-
-		cl->economyCredits -= amount;
-		svs.clients[targetNum].economyBounty += amount;
-		SV_EconomyPersistCredits( cl );
-		SV_EconomyPrint( cl, va( "Placed %d credit bounty on %s.", amount, svs.clients[targetNum].name ) );
-		SV_EconomyPrint( &svs.clients[targetNum], va( "Someone placed a %d credit bounty on you.", amount ) );
 		return qtrue;
 	}
 
@@ -1984,6 +2255,11 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 		byte candidateHash[ECONOMY_HASH_SIZE];
 		int c;
 
+		if ( cl->economyHandle[0] ) {
+			SV_EconomyPrint( cl, va( "You are already logged in as '%s'.", cl->economyHandle ) );
+			return qtrue;
+		}
+
 		if ( sscanf( chatCursor, "%23s %15s", firstArg, secondArg ) != 2 ) {
 			SV_EconomyPrint( cl, "Usage: !login <handle> <pin>" );
 			return qtrue;
@@ -2032,6 +2308,17 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 				!Q_stricmp( other->economyHandle, acct->handle ) ) {
 				SV_EconomyPrint( other, "You were logged out because your account logged in elsewhere." );
 				other->economyHandle[0] = '\0';
+				// Clearing the handle alone leaves economyCredits holding a
+				// stale spendable copy of the balance this session had a
+				// moment ago - !buy/bounty-placement only check that number,
+				// not login state, so without this a still-connected kicked
+				// session could keep spending (or losing to a bounty
+				// payout) credits that are also live on whichever session
+				// just logged in. Real risk now that accounts are shared
+				// across every instance: logging in on a second server
+				// while already logged in on a first is an ordinary thing
+				// to do, not an edge case.
+				other->economyCredits = 0;
 			}
 		}
 
@@ -2044,23 +2331,43 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 	}
 
 	if ( !Q_stricmp( commandName, "help" ) ) {
-		SV_SendServerCommand( cl, "chat \""
-			"^3=== CREDIT SYSTEM HELP ===\n"
-			"^2!balance\n"
-			"^7  Show your credits and your current bounty.\n"
-			"^2!buy\n"
-			"^7  Type ^5!buy ^7to list shop categories, ^5!buy <category> ^7to view items,\n"
-			"^7  and ^5!buy <name> ^7to purchase (e.g. ^5!buy bryar^7, ^5!buy jetpack^7).\n"
-			"^2!bounty\n"
-			"^7  List all players and active bounties.\n"
-			"^7  Type ^5!bounty <id> <credits> ^7to place a bounty.\n"
-			"^7  The player who kills them earns the bounty.\n"
-			"^2!register / !login\n"
-			"^7  Type ^5!register <handle> ^7to reserve a handle, then\n"
-			"^7  ^5!register <handle> <pin> ^7to set a 4-digit PIN and save your credits.\n"
-			"^7  Type ^5!login <handle> <pin> ^7on a new connection to restore your balance.\n"
-			"^3Credits are earned by getting kills.^7\"\n"
-		);
+		// Reflects whatever's actually turned on for THIS instance - shown
+		// nothing about !buy/!bounty if that particular sub-feature (or the
+		// whole economy) is off here, rather than describing commands that
+		// wouldn't work. Paced the same way "!buy" listings are (see
+		// SV_EconomyMenuBegin above) since this can run to a similar number
+		// of lines.
+		qboolean anySection = qfalse;
+
+		SV_EconomyMenuBegin( cl );
+		SV_EconomyMenuAddLine( cl, "^3=== SERVER HELP ===" );
+
+		if ( SV_EconomyEnabled() ) {
+			anySection = qtrue;
+			SV_EconomyMenuAddLine( cl, "^2!balance ^7- show your credits and any bounty on you." );
+
+			if ( SV_EconomyShopEnabled() ) {
+				SV_EconomyMenuAddLine( cl, "^2!buy ^7- list shop categories, ^5!buy <category> ^7to browse, ^5!buy <name> ^7to purchase." );
+			}
+
+			if ( SV_EconomyBountyEnabled() ) {
+				SV_EconomyMenuAddLine( cl, "^2!bounty <player> <credits> ^7- place a bounty. ^5!bounty ^7alone shows active bounties." );
+			}
+
+			SV_EconomyMenuAddLine( cl, "^2!register <handle> <pin> ^7- new account. ^2!login <handle> <pin> ^7- returning." );
+			SV_EconomyMenuAddLine( cl, "^3Credits are earned from kills while logged in." );
+		}
+
+		if ( g_statsEnable && g_statsEnable->integer ) {
+			anySection = qtrue;
+			SV_EconomyMenuAddLine( cl, "^2!stats ^7- your kills/deaths/suicides/playtime across all our servers." );
+		}
+
+		if ( !anySection ) {
+			SV_EconomyMenuAddLine( cl, "^7No special commands are currently enabled on this server." );
+		}
+
+		SV_EconomyMenuPump( cl );
 		return qtrue;
 	}
 
@@ -2092,6 +2399,18 @@ void SV_ExecuteClientCommand( client_t *cl, const char *s, qboolean clientOK ) {
 	}
 
 	if (clientOK) {
+		// Flood check runs first and covers both plain chat and economy chat
+		// commands (!buy, !bounty, etc.) - a muted client's messages are
+		// dropped before either path sees them.
+		if ( ( !Q_stricmp( Cmd_Argv(0), "say" ) || !Q_stricmp( Cmd_Argv(0), "say_team" ) ) &&
+			SV_ChatFloodCheck( cl ) ) {
+			return;
+		}
+
+		if ( SV_GunrayClassBlockCheck( cl ) ) {
+			return;
+		}
+
 		if ( SV_HandleEconomyChatCommand( cl ) ) {
 			return;
 		}
@@ -2186,6 +2505,32 @@ static qboolean SV_ClientCommand( client_t *cl, msg_t *msg ) {
 //==================================================================================
 
 
+// Handles both deferred vehicle actions client_t carries (see
+// vehiclePendingSpawnName/vehicleForceUseNextCmd in server.h) - each one
+// only ever acts on a single usercmd tick, one full SV_ClientThink call
+// per action, never both in the same call. That staggering is load-
+// bearing: firing the spawn command synchronously right after the
+// teleport that precedes it (both in the same call stack, no frame in
+// between) crashed the server outright in live testing, with no crash
+// dump or log line to explain why; giving the teleport's effects a full
+// frame to settle before the spawn fires - and the spawn a full frame to
+// settle before boarding - did not.
+void SV_VehicleClientThinkHook( client_t *cl, usercmd_t *cmd ) {
+	if ( cl->vehiclePendingSpawnName[0] ) {
+		char cmdBuf[96];
+		Com_sprintf( cmdBuf, sizeof( cmdBuf ), "npc spawn vehicle %s", cl->vehiclePendingSpawnName );
+		cl->vehiclePendingSpawnName[0] = '\0';
+		SV_ExecuteClientCommand( cl, cmdBuf, qtrue );
+		cl->vehicleForceUseNextCmd = qtrue; // board on a LATER tick, not this one
+		return;
+	}
+
+	if ( cl->vehicleForceUseNextCmd ) {
+		cmd->buttons |= BUTTON_USE;
+		cl->vehicleForceUseNextCmd = qfalse;
+	}
+}
+
 /*
 ==================
 SV_ClientThink
@@ -2200,6 +2545,7 @@ void SV_ClientThink (client_t *cl, usercmd_t *cmd) {
 	// to land before this assignment, not after it, or the stored copy the
 	// game module actually reads still has the player's original request.
 	SV_GunGameClampWeaponSelect( cl, cmd );
+	SV_VehicleClientThinkHook( cl, cmd );
 
 	cl->lastUsercmd = *cmd;
 
@@ -2332,6 +2678,37 @@ static void SV_UserMove( client_t *cl, msg_t *msg, qboolean delta ) {
 
 /*
 ===================
+SV_EconomyRoundRestart
+
+Called from SV_InitGame( qtrue ) in sv_gameapi.cpp - qtrue there means a
+routine round-to-round restart (SV_RestartGame, via the "map_restart 0"
+MBII's own ExitLevel() queues once a round concludes), not a fresh map load
+(SV_InitGame( qfalse ), from SV_InitGameProgs/SV_SpawnServer). Engine-owned
+signal we control and have directly confirmed fires on every real round
+restart - see the comment where this replaced the old CS_SIEGE_STATE-polling
+approach in SV_EconomyFrame below for why that one didn't work.
+===================
+*/
+void SV_EconomyRoundRestart( void ) {
+	int i;
+
+	if ( !SV_EconomyEnabled() ) {
+		return;
+	}
+
+	for ( i = 0; i < sv_maxclients->integer; i++ ) {
+		client_t *cl = &svs.clients[i];
+
+		if ( cl->state >= CS_ACTIVE && cl->economyHandle[0] ) {
+			cl->economyCredits += kEconomyRoundReward;
+			SV_EconomyPrint( cl, va( "Round credit: +%d credits (balance: %d)", kEconomyRoundReward, cl->economyCredits ) );
+			SV_EconomyPersistCredits( cl );
+		}
+	}
+}
+
+/*
+===================
 SV_EconomyFrame
 
 Runs once per server frame. Detects death transitions and awards the
@@ -2344,6 +2721,21 @@ attackers get nothing.
 void SV_EconomyFrame( void ) {
 	int i;
 
+	// Drip out any queued menu lines that are due (see SV_EconomyMenuPump
+	// above) - unconditionally, BEFORE the economy-enabled check below, and
+	// not just for CS_ACTIVE clients. "!help" now uses this same paced
+	// queue and works even when the economy system is fully disabled (see
+	// its handler) - if this pump loop were gated behind SV_EconomyEnabled()
+	// like the rest of this function, a disabled instance would send only
+	// !help's first line (from the explicit pump in its handler) and then
+	// silently never drain the rest, since nothing would ever call
+	// SV_EconomyMenuPump again for that client.
+	for ( i = 0; i < sv_maxclients->integer; i++ ) {
+		if ( svs.clients[i].state >= CS_CONNECTED ) {
+			SV_EconomyMenuPump( &svs.clients[i] );
+		}
+	}
+
 	if ( !SV_EconomyEnabled() ) {
 		return;
 	}
@@ -2355,11 +2747,48 @@ void SV_EconomyFrame( void ) {
 		SV_SendServerCommand(NULL, "chat \"" SVSAY_PREFIX "^3This server uses our Economy Credit System^7, type ^3!help^7 in chat for more info\"\n");
 	}
 
+	// Round-restart credit used to live here, polled per-frame off
+	// CS_SIEGE_STATE. Live-tested bug, found 2026-09-16: added debug logging
+	// that printed on every observed CS_SIEGE_STATE change, across multiple
+	// real rounds (including a full populated legends match with a genuine
+	// objective-completion round end) - it never printed once. The
+	// configstring approach was verified against the moviebattles-2 source
+	// dump, but that dump is explicitly not guaranteed to match the actual
+	// compiled qagame module this server loads, and live evidence says it
+	// doesn't: the value never changes, at all, ever, even at round start.
+	// Replaced with SV_EconomyRoundRestart() (below), called directly from
+	// SV_InitGame( qtrue ) in sv_gameapi.cpp - engine-owned state we control
+	// and have directly confirmed fires on every real round-restart, rather
+	// than polling a game-module-owned value that isn't behaving as its own
+	// source describes.
+
+	// Detection history: this used to award a kill reward (and consume any
+	// bounty) purely off stats[STAT_HEALTH] crossing zero, cross-referenced
+	// against persistant[PERS_ATTACKER]. Live-tested bug: MBII's round
+	// transition can produce a health readout that crosses zero on its own,
+	// with PERS_ATTACKER still holding a stale value from the *previous*
+	// round - so a round restart could hand out a free kill reward (and
+	// silently consume a bounty) with no actual kill involved. An interim
+	// fix gated the award on the attacker's own PERS_SCORE having also gone
+	// up that frame; this version replaces that with a signal verified
+	// directly against the real MBII source (moviebattles-2, not compiled
+	// into this build but available to read): G_Damage()/player_die() set
+	// persistant[PERS_ATTACKER] and pm_type together, synchronously, on
+	// every genuine death, and PERS_ATTACKER is never set to a mere
+	// assister - only whoever actually dealt the damage. Requiring
+	// pm_type == PM_DEAD (this project's own symbol - see killstreak.cpp's
+	// header for why moviebattles-2's own pmtype_t numbering isn't trusted
+	// here, only its logic) alongside the health check rules out the round-
+	// transition case directly, without needing to track or compare the
+	// attacker's own score at all - which also means no cross-client
+	// baseline dependency, so a single pass over each client's own previous
+	// health is enough; there's no ordering hazard to design around the way
+	// there would be if this needed another client's state to already be
+	// up to date.
 	for ( i = 0; i < sv_maxclients->integer; i++ ) {
 		client_t *victim = &svs.clients[i];
 		playerState_t *vps;
 		int health;
-		int attackerNum;
 
 		if ( victim->state < CS_ACTIVE || !victim->gentity || !victim->gentity->playerState ) {
 			continue;
@@ -2374,30 +2803,196 @@ void SV_EconomyFrame( void ) {
 			continue;
 		}
 
-		if ( victim->economyLastHealth > 0 && health <= 0 ) {
-			attackerNum = vps->persistant[PERS_ATTACKER];
+		if ( victim->economyLastHealth > 0 && health <= 0 && vps->pm_type == MB2_PM_DEAD ) {
+			const int attackerNum = vps->persistant[PERS_ATTACKER];
 
 			if ( attackerNum >= 0 && attackerNum < sv_maxclients->integer && attackerNum != i ) {
 				client_t *attacker = &svs.clients[attackerNum];
 
+				// Credits are only ever earned by a logged-in account (economyHandle
+				// set via !register/!login) - an unregistered attacker's kill simply
+				// isn't rewarded, and any bounty on the victim is left intact rather
+				// than being consumed by a kill nobody could actually collect it from.
 				if ( attacker->state >= CS_ACTIVE && attacker->gentity && attacker->gentity->playerState ) {
-					attacker->economyCredits += kEconomyKillReward;
-					SV_EconomyPrint( attacker, va( "Kill reward: +%d credits (balance: %d)", kEconomyKillReward, attacker->economyCredits ) );
+					if ( attacker->economyHandle[0] ) {
+						attacker->economyCredits += kEconomyKillReward;
+						SV_EconomyPrint( attacker, va( "Kill reward: +%d credits (balance: %d)", kEconomyKillReward, attacker->economyCredits ) );
 
-					if ( victim->economyBounty > 0 ) {
-						const int payout = victim->economyBounty;
-						victim->economyBounty = 0;
-						attacker->economyCredits += payout;
-						SV_EconomyPrint( attacker, va( "Bounty payout: +%d credits for %s", payout, victim->name ) );
-						SV_EconomyPrint( victim, "Your bounty was claimed." );
+						if ( victim->economyBounty > 0 ) {
+							const int payout = victim->economyBounty;
+							const int placerNum = victim->economyBountyPlacerNum;
+							char placerName[MAX_NAME_LENGTH];
+							Q_strncpyz( placerName, victim->economyBountyPlacerName, sizeof( placerName ) );
+
+							victim->economyBounty = 0;
+							victim->economyBountyPlacerName[0] = '\0';
+							attacker->economyCredits += payout;
+							SV_EconomyPrint( attacker, va( "You won %s's bounty of %d credits!", victim->name, payout ) );
+							SV_EconomyPrint( victim, "Your bounty was claimed." );
+
+							// Let whoever placed it know it paid off, if
+							// they're still around - reverify identity the
+							// same way every other slot-number lookup in
+							// this file does, since the slot could have been
+							// reused by someone else entirely since they
+							// placed it. Skipped if the placer is the same
+							// person who just got the kill - they already
+							// got the "You won" message above, so a second
+							// "claimed your own bounty" message would just
+							// be a confusing duplicate.
+							if ( placerNum >= 0 && placerNum < sv_maxclients->integer && placerNum != attackerNum &&
+								placerName[0] && svs.clients[placerNum].state >= CS_CONNECTED &&
+								!Q_stricmp( svs.clients[placerNum].name, placerName ) ) {
+								SV_EconomyPrint( &svs.clients[placerNum],
+									va( "%s claimed your bounty on %s for %d credits.", attacker->name, victim->name, payout ) );
+							}
+						}
+
+						SV_EconomyPersistCredits( attacker );
+					} else if ( victim->economyBounty > 0 ) {
+						// Bounty is left uncollected (see comment above) - but
+						// silently losing out on it with no explanation is a
+						// bad surprise, so tell them what they missed and how
+						// to actually get it next time.
+						SV_EconomyPrint( attacker, va( "You won %s's bounty (%d credits) but aren't logged in to receive it! Use !register or !login.",
+							victim->name, victim->economyBounty ) );
 					}
-
-					SV_EconomyPersistCredits( attacker );
 				}
 			}
 		}
 
 		victim->economyLastHealth = health;
+	}
+}
+
+/*
+===================
+SV_GunrayCheckFrame
+
+The Nute Gunray siege class (model "gunray/default", siege class token
+"v7_NuteG" - confirmed live from a real player's MB2_CS_PLAYERS broadcast
+string, e.g. legends-engine.log: cs 1231 "n\...\t\3\m\gunray/default\
+c1\0\c2\0\sc\v7_NuteG\...") reportedly causes server crashes. This scans
+every active client's own MB2_CS_PLAYERS configstring (engine-owned, the
+same broadcast string every client's HUD/scoreboard already depends on)
+once per frame.
+
+On the transition into that model: broadcasts a server-wide warning
+(everyone sees it, not just the offending player - people nearby should
+know why someone's about to vanish from the fight) and starts a 5-second
+grace timer (client_t::gunraySpecTime) rather than yanking them
+immediately, so the warning has time to actually be read. If they switch
+off the class themselves before the timer elapses, the pending force is
+cancelled (see the isGunray-false branch below) rather than firing anyway
+against a class they're no longer playing.
+
+The actual force, once the timer expires, injects "team s" (MBII's single-letter spectator command - see below) as if
+the client had typed it themselves (SV_ExecuteClientCommand) - the same
+real client-command path this always goes through when a player types it, not a
+novel injection like the vehicle-spawn feature's admin-only "npc spawn
+vehicle", so no reason to expect the same kind of same-frame-combination
+crash that one had.
+
+Checks the "m" (model) key specifically via Info_ValueForKey, not a raw
+substring search over the whole configstring - that string also embeds the
+player's own name (the "n" key), and a player named e.g. "xXgunrayXx"
+would false-positive a plain text search.
+
+Live-tested bug #1: forcing "team spectator" changes the "t" (team) key in
+this same broadcast string, but leaves "m" holding the stale last-selected
+model - it doesn't go back to empty until they actually pick a new class
+next time they join a team. Checking "m" alone meant wasGunray[i] never
+went back to false once forced to spectator, so re-picking Gunray a second
+time produced no new edge to detect (isGunray was already true both
+before and after - nothing to transition into). Now also requires "t" !=
+TEAM_SPECTATOR (see bg_public.h team_t - identical between this engine and
+the real MBII source, unlike pm_type/CS_PLAYERS, so no MB2_ prefix needed
+here) - being in spectator always counts as "not currently Gunray"
+regardless of what the stale model field says, which correctly resets the
+edge detector for the next pick.
+
+Live-tested bug #2: the single injection at T+5s was silently rejected,
+every attempt, indefinitely (still failing after 8+ retries a full 8+
+seconds later, which ruled out a mere timing/cooldown race). Actual root
+cause, found by reading Cmd_Team_f in the real MBII source (g_cmds.c):
+this mod's "team" command only accepts the literal single letter "s" for
+spectator (`if (strcmp(s, "s")) return;`) - not the standard "spectator"
+this code was originally sending, which failed that exact-match check and
+returned immediately every time, with zero feedback. Fixed by sending
+"team s" instead.
+
+The retry-every-second loop (rather than firing once) is kept regardless -
+Cmd_Team_f's own switchTeamTime cooldown (5s after any real team switch,
+same file) is a real, separate reason a single well-formed attempt could
+still land inside an active cooldown and need a second try, even with the
+right argument now.
+===================
+*/
+void SV_GunrayCheckFrame( void ) {
+	static qboolean wasGunray[MAX_CLIENTS];
+	int i;
+
+	for ( i = 0; i < sv_maxclients->integer; i++ ) {
+		client_t *cl = &svs.clients[i];
+		char csBuf[MAX_STRING_CHARS];
+		char model[128];
+		char team[128];
+		qboolean isGunray;
+
+		if ( cl->state < CS_ACTIVE ) {
+			wasGunray[i] = qfalse;
+			cl->gunraySpecTime = 0;
+			continue;
+		}
+
+		SV_GetConfigstring( MB2_CS_PLAYERS + i, csBuf, sizeof( csBuf ) );
+		// Info_ValueForKey returns a pointer into its own small pool of
+		// static buffers, reused (round-robin) on every call - copying out
+		// immediately avoids a later call in this same scope (even just
+		// another Info_ValueForKey for a different key) silently
+		// overwriting a value this code is still holding a pointer to.
+		Q_strncpyz( model, csBuf[0] ? Info_ValueForKey( csBuf, "m" ) : "", sizeof( model ) );
+		Q_strncpyz( team, csBuf[0] ? Info_ValueForKey( csBuf, "t" ) : "", sizeof( team ) );
+		isGunray = ( !Q_stricmp( model, "gunray/default" ) && atoi( team ) != TEAM_SPECTATOR ) ? qtrue : qfalse;
+
+		if ( isGunray && !wasGunray[i] ) {
+			char sc[128];
+			Q_strncpyz( sc, Info_ValueForKey( csBuf, "sc" ), sizeof( sc ) );
+			Com_Printf( "[GunrayDebug] %s (slot %d) picked Nute Gunray (model=%s, sc=%s) - forcing to spectator in 5s\n",
+				cl->name, i, model, sc );
+			SV_SendServerCommand( NULL, "chat \"^1%s^7 Gunray is disabled on this server, please choose another class.\"\n", cl->name );
+			cl->gunraySpecTime = svs.time + 5000;
+		} else if ( !isGunray && wasGunray[i] ) {
+			Com_Printf( "[GunrayDebug] %s (slot %d) is no longer Nute Gunray - cancelling pending spectator force\n", cl->name, i );
+			cl->gunraySpecTime = 0;
+		}
+
+		if ( isGunray && cl->gunraySpecTime && svs.time >= cl->gunraySpecTime ) {
+			Com_Printf( "[GunrayDebug] %s (slot %d) - grace period elapsed, forcing to spectator (retry)\n", cl->name, i );
+			// "team s" alone is not enough: Cmd_Team_f (g_cmds.c) only
+			// calls SetTeam() if the round hasn't begun yet OR the player
+			// is already out of respawns for this round
+			// (pers.iRespawnsLeftInRound < 1) - otherwise it deliberately
+			// no-ops (you can't abandon your team mid-round while you still
+			// have lives, by design). Live-tested: a real player still
+			// holding respawns gets silently ignored exactly like our
+			// injection did. "kill" (Cmd_Kill_f) has no such gate - only
+			// blocked if already dead or already spectator - so inject
+			// that too: it removes the live crash-risk window immediately
+			// (a dead player isn't actively playing as Gunray) and, once
+			// enough kills exhaust their round respawns, "team s" will
+			// finally succeed on its own on a later retry.
+			SV_ExecuteClientCommand( cl, "kill", qtrue );
+			SV_ExecuteClientCommand( cl, "team s", qtrue );
+			// Retry in 1s rather than clearing to 0 - keep going (killing
+			// them again each retry if they respawn as Gunray again, and
+			// re-attempting the team switch) until isGunray actually reads
+			// false, which is what really clears gunraySpecTime (see the
+			// isGunray-false branch above).
+			cl->gunraySpecTime = svs.time + 1000;
+		}
+
+		wasGunray[i] = isGunray;
 	}
 }
 

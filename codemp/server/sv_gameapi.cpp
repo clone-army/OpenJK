@@ -30,6 +30,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "icarus/GameInterface.h"
 #include "qcommon/timing.h"
 #include "NPCNav/navigator.h"
+#include "killstreak.h"
 
 botlib_export_t	*botlib_export;
 
@@ -2797,6 +2798,20 @@ void SV_InitGame( qboolean restart ) {
 		cl->gentity = NULL;
 
 	GVM_InitGame( sv.time, Com_Milliseconds(), restart );
+
+	// Unconditional (not gated on restart, unlike the block below) - covers
+	// both a fresh map load and a map_restart alike, which is the whole
+	// point: killstreak.cpp's own sv.serverId-based detection only catches
+	// the former. See its 2026-09-17 header note.
+	SV_KillstreakMapChange();
+
+	// restart == qtrue is a routine round-to-round restart (SV_RestartGame,
+	// via MBII's own "map_restart 0"), not a fresh map load
+	// (SV_InitGameProgs/SV_SpawnServer pass qfalse) - see SV_EconomyRoundRestart
+	// in sv_client.cpp for why this replaced polling CS_SIEGE_STATE.
+	if ( restart ) {
+		SV_EconomyRoundRestart();
+	}
 }
 
 void SV_BindGame( void ) {

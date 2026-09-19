@@ -36,6 +36,36 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #define	MAX_ENT_CLUSTERS	16
 
+// The compiled MBII game module (qagame, a separate closed binary we don't
+// build) uses moviebattles-2's own pmtype_t numbering, not this engine's
+// bg_public.h enum - the two orderings diverge starting at PM_CRYOFREEZE.
+// This engine's own PM_DEAD (bg_public.h) is 5, which is actually MBII's
+// PM_NOCLIP_DEAD; MBII's real PM_DEAD is 7. Live-verified 2026-09-15 via a
+// debug print at the moment of a real death: ps->pm_type read back as 7,
+// never 5 - confirming every pm_type==PM_DEAD check in sv_client.cpp
+// (economy), killstreak.cpp, and stats.cpp was silently never matching.
+// Use this constant instead of the engine's own PM_DEAD symbol anywhere
+// code is inspecting a playerState_t this game module actually wrote.
+#define MB2_PM_DEAD 7
+
+// Same class of mismatch as MB2_PM_DEAD above, this time in the
+// configstring index chain. This engine's own bg_public.h computes
+// CS_PLAYERS as 1131, but MBII's real bg_public.h (moviebattles-2 source)
+// adds dozens of configstrings this copy doesn't have - a full saber
+// swing-timer sound-set block (CS_SWING_TIMERS_START..END, indices 40-110)
+// plus much larger MAX_MODELS (512 vs this engine's smaller value) and
+// MAX_CLIENTS (64 vs 32) - which shift every later index. Recomputed by
+// hand from the real header's own chain (CS_AMBIENT_SET=133 there, not
+// 37): CS_SIEGE_STATE=389, CS_SIEGE_ICONS=393, CS_MODELS=394,
+// CS_SKYBOXORG=906 (+MAX_MODELS 512), CS_SOUNDS=907, CS_ICONS=1163
+// (+MAX_SOUNDS 256), CS_PLAYERS=1227 (+MAX_ICONS 64). That 1227 lines up
+// exactly with real per-player broadcast strings observed live in
+// legends-engine.log (e.g. "cs 1231 ...", client slot 4: 1227+4=1231).
+// Use this instead of the engine's own CS_PLAYERS macro when reading a
+// live client's broadcast info string (name/model/siege class/etc, the
+// same "n\...\m\...\sc\..." format SV_GunrayCheckFrame parses).
+#define MB2_CS_PLAYERS 1227
+
 
 #define SVTELL_PREFIX "\x19[Server^7\x19]\x19: "
 #define SVSAY_PREFIX "Server^7\x19: "
@@ -213,6 +243,61 @@ typedef struct client_s {
 	qboolean		economyHealthInitialized;
 	char			economyHandle[24];	// non-empty if logged into a persisted !register/!login account this session
 
+	// Set by the spawnvehicle admin command right after teleporting a
+	// player, instead of firing "npc spawn vehicle <name>" immediately in
+	// the same call - live-tested bug: firing setviewpos and npc spawn
+	// vehicle back to back, synchronously, in the same command handler
+	// invocation, crashed the server outright (no crash dump, no log
+	// line) every time; either command alone via this same fake-command
+	// injection was fine. Storing the name here and letting
+	// SV_VehicleClientThinkHook (below) fire the actual spawn on the
+	// player's next real usercmd tick - a separate call, one full frame
+	// later - avoided it in live testing. Checking
+	// vehiclePendingSpawnName[0] is the validity gate, matching the
+	// economyHandle[0] idiom elsewhere in this file.
+	char			vehiclePendingSpawnName[64];
+
+	// Set by SV_VehicleClientThinkHook right after firing the deferred
+	// spawn above (not by spawnvehicle directly, for the same one-risky-
+	// action-per-tick reason) - forces BUTTON_USE into the player's next
+	// usercmd after that to board them into the vehicle. There's no
+	// client command for "get in the vehicle in front of you", only the
+	// raw input button a player would normally have to press themselves.
+	qboolean		vehicleForceUseNextCmd;
+
+	// Who most recently added to this player's bounty, so whoever placed it
+	// can be told when it's claimed. Name stored alongside the slot number
+	// for the same reused-slot-reverification reason as everywhere else in
+	// this file (see SV_BetterGetPlayerByHandle callers) - checking
+	// economyBountyPlacerName[0] is the validity gate, matching the
+	// economyHandle[0] idiom above, since a fresh/disconnected client_t is
+	// zero-initialized and an empty name can never be a real placer.
+	int				economyBountyPlacerNum;
+	char			economyBountyPlacerName[MAX_NAME_LENGTH];
+
+	// Paced multi-line menu delivery ("!buy" category/item listings) - lines
+	// arrive one at a time on a short delay instead of all at once, so a long
+	// listing doesn't scroll past faster than it can be read. See
+	// ECONOMY_MENU_LINES_MAX / ECONOMY_MENU_LINE_SIZE in sv_client.cpp.
+	char			economyMenuLines[28][160];
+	int				economyMenuLineCount;
+	int				economyMenuNextLine;
+	int				economyMenuNextSendTime;
+
+	// Chat flood control (say/say_team only - see SV_ChatFloodCheck in
+	// sv_client.cpp). Separate from sv_floodProtect, which throttles the
+	// reliable command channel generically (one command per floodTime) and
+	// isn't chat-specific. chatWindowStart is 0 = no window open yet.
+	int				chatMsgCount;
+	int				chatWindowStart;
+	int				chatMutedUntil;
+
+	// Nute Gunray class ban (see SV_GunrayCheckFrame in sv_client.cpp) -
+	// svs.time this client should be force-moved to spectator, 5s after
+	// picking the class, giving the crash-warning message time to actually
+	// be read before they're yanked. 0 = no pending force.
+	int				gunraySpecTime;
+
 } client_t;
 
 //=============================================================================
@@ -301,11 +386,16 @@ extern	cvar_t	*sv_banFile;
 extern	cvar_t* g_chaosEnable;
 extern	cvar_t* g_chaosCooldown;
 extern	cvar_t* g_creditSystemEnable;
+extern	cvar_t* g_economyShopEnable;
+extern	cvar_t* g_economyBountyEnable;
 extern	cvar_t* g_spinSpawnerHackOffset;
 extern	cvar_t* g_spinSpawnerHackSkillIndex;
 extern	cvar_t* g_spinSpawnerHackSkillValue;
 extern	cvar_t* g_gungame;
 extern	cvar_t* g_gungameAnnounce;
+extern	cvar_t* g_killstreakEnable;
+extern	cvar_t* g_statsEnable;
+extern	cvar_t* g_chatFloodEnable;
 
 // Used by smod extension to check if password is correct
 extern cvar_t* g_smodAdminPassword_1;
@@ -388,6 +478,7 @@ void SV_DropClient( client_t *drop, const char *reason );
 
 void SV_ExecuteClientCommand( client_t *cl, const char *s, qboolean clientOK );
 void SV_ClientThink (client_t *cl, usercmd_t *cmd);
+void SV_VehicleClientThinkHook( client_t *cl, usercmd_t *cmd );
 
 void SV_WriteDownloadToClient( client_t *cl , msg_t *msg );
 
@@ -453,6 +544,8 @@ void SV_Spin(client_t* cl);
 void SV_SpinFrame(void);
 void SV_SpinForceGiveWin(client_t* cl, int winIndex);
 void SV_EconomyFrame(void);
+void SV_EconomyRoundRestart(void);
+void SV_GunrayCheckFrame(void);
 void SV_EconomyPersistCredits( client_t *cl );
 
 //
@@ -463,6 +556,19 @@ void SV_GunGameClientBegin(client_t* cl);
 void SV_GunGameClientDisconnect(int clientNum);
 void SV_GunGameClampWeaponSelect(client_t* cl, usercmd_t* cmd);
 void SV_EconomyShopInitCvars( void );
+
+//
+// killstreak.cpp
+//
+void SV_KillstreakFrame(void);
+void SV_KillstreakClientDisconnect(int clientNum);
+
+//
+// stats.cpp
+//
+void SV_StatsFrame(void);
+void SV_StatsClientDisconnect(client_t *cl);
+void SV_StatsShowCommand(client_t *cl);
 
 
 void *Bot_GetMemoryGame(int size);

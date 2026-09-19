@@ -1013,13 +1013,17 @@ void SV_Init (void) {
 
 	g_chaosEnable = Cvar_Get("g_chaosEnable", "0", CVAR_TEMP, "Enable the chaos/spin reward system");
 	g_chaosCooldown = Cvar_Get("g_chaosCooldown", "20", CVAR_TEMP, "File to use to store bans and exceptions");
-	g_creditSystemEnable = Cvar_Get("g_creditSystemEnable", "0", CVAR_TEMP, "Enable the server-side credit/bounty system");
+	g_creditSystemEnable = Cvar_Get("g_creditSystemEnable", "0", CVAR_TEMP, "Enable the server-side credit system (kills earn credits, !balance/!register/!login)");
+	g_economyShopEnable = Cvar_Get("g_economyShopEnable", "0", CVAR_TEMP, "Enable the !buy shop (also requires g_creditSystemEnable 1)");
+	g_economyBountyEnable = Cvar_Get("g_economyBountyEnable", "0", CVAR_TEMP, "Enable !bounty / !<n> <credits> (also requires g_creditSystemEnable 1)");
 	SV_EconomyShopInitCvars();
 
 	// These toggles are per-instance runtime controls and should never persist.
 	// If they were ever set with 'seta' in the past, strip ARCHIVE every startup.
 	g_chaosEnable->flags &= ~CVAR_ARCHIVE;
 	g_creditSystemEnable->flags &= ~CVAR_ARCHIVE;
+	g_economyShopEnable->flags &= ~CVAR_ARCHIVE;
+	g_economyBountyEnable->flags &= ~CVAR_ARCHIVE;
 
 	g_spinSpawnerHackOffset = Cvar_Get("g_spinSpawnerHackOffset", "-1", CVAR_TEMP, "Byte offset from gclient base to hasSkill[] (memory-hack for use_spawner)");
 	g_spinSpawnerHackSkillIndex = Cvar_Get("g_spinSpawnerHackSkillIndex", "54", CVAR_TEMP, "EAS skill index used for spawner (default: EAS_HI_SPAWNER)");
@@ -1029,6 +1033,15 @@ void SV_Init (void) {
 	g_gungameAnnounce = Cvar_Get("g_gungameAnnounce", "1", CVAR_TEMP, "Broadcast a chat message when a player advances a tier or wins Gun Game");
 	g_gungame->flags &= ~CVAR_ARCHIVE;
 	g_gungameAnnounce->flags &= ~CVAR_ARCHIVE;
+
+	g_killstreakEnable = Cvar_Get("g_killstreakEnable", "0", CVAR_TEMP, "Broadcast escalating kill streak messages (resets each round)");
+	g_killstreakEnable->flags &= ~CVAR_ARCHIVE;
+
+	g_statsEnable = Cvar_Get("g_statsEnable", "0", CVAR_TEMP, "Track kills/deaths/suicides/playtime and answer !stats (shared across all instances)");
+	g_statsEnable->flags &= ~CVAR_ARCHIVE;
+
+	g_chatFloodEnable = Cvar_Get("g_chatFloodEnable", "1", CVAR_TEMP, "Mute a client's say/say_team chat for 10s after more than 5 messages in 10s");
+	g_chatFloodEnable->flags &= ~CVAR_ARCHIVE;
 
 	// used by smod extensions
 	g_smodAdminPassword_1 = Cvar_Get("g_smodAdminPassword_1", "", CVAR_PROTECTED, "SMOD1");

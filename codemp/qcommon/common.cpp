@@ -1241,7 +1241,15 @@ void Com_Init( char *commandLine ) {
 
 		com_bootlogo = Cvar_Get( "com_bootlogo", "1", CVAR_ARCHIVE_ND, "Show intro movies" );
 
-		s = va("%s %s %s", JK_VERSION_OLD, PLATFORM_STRING, SOURCE_DATE );
+		// CA branding: MBII's master server browser doesn't echo this string
+		// verbatim (it shows "Linux OpenJK <date>" even though the stock
+		// string here is "JAmp: v1.0.1.0 linux-i386 <date>", which doesn't
+		// contain the substring "OpenJK" at all) - it clearly does its own
+		// platform-name capitalization and adds a fixed "OpenJK" label
+		// rather than reading it from us. Not yet confirmed whether "CA"
+		// survives whatever the browser does to this string - untested
+		// until deployed against the real master server.
+		s = va("Linux CA OpenJK %s", SOURCE_DATE );
 		com_version = Cvar_Get ("version", s, CVAR_ROM | CVAR_SERVERINFO );
 
 		SE_Init();
