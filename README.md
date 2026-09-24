@@ -1,70 +1,123 @@
+# OpenJK - Clone Army fork (`caded.i386`)
 
-## This Fork
+This is the Clone Army fork of [OpenJK](https://github.com/JACoders/OpenJK), used to run our Movie Battles II
+servers. It builds a customised multiplayer **dedicated server**, installed as **`/usr/bin/caded.i386`**, that
+adds server-side features on top of MBII without touching MBII itself:
 
-This fork of OpenJK contains a customised dedicated server for spin and is used on "New Republic Clan" spin server. Changes to this fork include
+| Feature | Switched on by | Player commands |
+|---|---|---|
+| [Economy](#economy--credit-system): credits, shop, bounties, accounts | `g_creditSystemEnable`, `g_economyShopEnable`, `g_economyBountyEnable` | `!balance` `!buy` `!bounty` `!register` `!login` `!help` |
+| [Chaos Mode](#chaos-mode): a random prize for everyone every few seconds | `g_chaosEnable`, `g_chaosCooldown` | |
+| [Gun Game](#gun-game): climb a weapon ladder one kill at a time | `g_gungame`, `g_gungameAnnounce` | |
+| [Kill streaks](#kill-streaks): server-wide streak callouts | `g_killstreakEnable` | |
+| [Stats](#stats): kills, deaths, suicides and playtime across all servers | `g_statsEnable` | `!stats` |
+| [Chat flood control](#chat-flood-control) | always on | |
+| [Nute Gunray block](#nute-gunray-class-block) | always on | |
 
-## Spin Mode
+**Every feature is compiled into the one binary and off by default.** Each is switched on with cvars, so any
+server can run any combination of them.
 
-This fork has spin mode available. 
-If enabled any client doing `!spin` in the chat will be given a random perk. 
+### Using it with MBIIEZ
 
-Spin mode can be enabled using the following CVARS
-`sv_spin <1/0>` enable or disable spin
-`sv_spinCoolDown X` cooldown between spins
+These servers are managed with **[MBIIEZ](https://github.com/clone-army/mbiiez)**. An MBIIEZ instance uses
+this engine when its config says `"engine": "caded.i386"`, and each feature has an MBIIEZ plugin that sets
+its cvars: `creditsystem`, `chaos`, `gungame`, `killstreak` and `stats`. **Those plugins do nothing on any
+other engine** (`mbiided.i386`, `openjkded.i386`), because the cvars only exist here. The plugins also re-apply
+their cvars every minute, so a manual `rcon set` won't stick. Change the instance's settings in MBIIEZ
+instead.
 
-The weights for various perks are coded into `spin.h` with conditional exclusions coded in `sv_ccmds` along with the code for awarding the spin. 
+You can also use the cvars directly in a server config (`seta g_chaosEnable 1`) or on the command line
+(`+set g_chaosEnable 1`) without MBIIEZ.
 
-**Perks include:**
-- Weapons + Ammo
-- Big Model, 
-- Small Model, 
-- Items, 
-- Vehicles
-- God Mode (30 seconds)
+---
 
+## Building and installing
 
-### Notes
-- Giving a saber will automatically give BP (which is also jet fuel)
-and saber defence 3. Which can then be removed using removeforce if not needed
-- Giving a jetpack will automatically give 100 fuel
-- Removing force will remove saber defence as well
+On the server (Linux, 32-bit build like MBII itself):
+
+```bash
+git clone https://github.com/clone-army/OpenJK
+cd OpenJK
+./build.sh --install   # first time only: installs build dependencies, then builds
+./build.sh             # every later build
+```
+
+`build.sh`:
+
+1. does a clean CMake build of the dedicated server only (a few minutes on a 2-core VPS)
+2. installs it to `/usr/bin/caded.i386`, swapping the file in atomically, so running servers aren't affected
+3. finds every MBIIEZ instance (`/root/mbiiez/configs/*.json`) whose engine is `caded.i386` and restarts the
+   ones that are **empty**. Instances with players on keep running the old build and pick up the new one the
+   next time they restart (their daily scheduled restart, or a later `build.sh` run while they're empty).
+
+For building on other platforms, see the upstream [compilation guide](https://github.com/JACoders/OpenJK/wiki/Compilation-guide).
+
+---
 
 ## Economy / Credit System
 
-This fork adds an optional server-side credit and bounty economy. It is disabled by default and controlled with:
+A server-side economy driven entirely by chat commands. Replies go only to the player who typed the
+command: nothing is broadcast, and the commands never show up as chat.
 
-`g_creditSystemEnable <1/0>` enable or disable the credit system
+### Switches
 
-When enabled, players earn credits for kills and can spend them in a chat-driven shop, all via `say`/`say_team` chat commands (nothing is broadcast to other players or the server console):
+| Cvar | Default | Meaning |
+|---|---|---|
+| `g_creditSystemEnable` | `0` | Master switch: accounts, earning credits, `!balance`, `!register`, `!login`, `!help` |
+| `g_economyShopEnable` | `0` | The `!buy` shop (needs the master switch too) |
+| `g_economyBountyEnable` | `0` | Bounties (needs the master switch too) |
+| `g_shopCost_<item>` | per item | Price of one shop item; `0` removes it (see [Shop catalog](#shop-catalog)) |
 
-- `!balance` - show your current credits and any bounty on your head
-- `!buy` - show shop categories and balance; `!buy <category>` to list items in a category; `!buy <name>` to purchase (e.g. `!buy bryar`, `!buy jetpack`)
-- `!bounty` - list players and active bounties; `!bounty <clientnum> <credits>` to place a bounty (paid to whoever gets the kill)
-- `!help` - summary of the above
+### Earning credits
 
-Credits are awarded automatically: killing another player grants a fixed kill reward plus any bounty on the victim.
+**Credits are only earned while logged into an account** (`!register` or `!login`, below). Unregistered
+players can see the commands but don't earn.
+
+- **5 credits per kill**, plus any bounty on the victim.
+- **1 credit per round** for every logged-in player on the server when a round ends.
+- A bounty is only paid (and removed) by a kill that could actually be paid out, so a kill by an
+  unregistered player doesn't use up the bounty.
+
+### Commands
+
+| Command | What it does |
+|---|---|
+| `!help` | Summary of the commands |
+| `!balance` | Your credits, and any bounty on your head |
+| `!buy` | Shop categories and your balance |
+| `!buy <category>` | Items in a category, e.g. `!buy rifles` |
+| `!buy <item>` | Buy something, e.g. `!buy bryar`, `!buy jetpack` |
+| `!bounty` | A numbered list of players (up to 10) and any bounties on them |
+| `!<n> <credits>` | Put a bounty on player `n` from your last `!bounty` list, e.g. `!2 50`. Paid to whoever kills them. |
+| `!register <handle>` | Check whether a handle is free (3-23 letters, numbers or `_`) |
+| `!register <handle> <pin>` | Create the account with a 4-digit PIN. Your current credits go into it and you're logged in. |
+| `!login <handle> <pin>` | Log in on a new connection and get your balance back |
+
+`!<n> <credits>` only counts as a bounty command when `n` is a valid number from your own latest `!bounty`
+list. Anything else (like typing `!1 lol`) is left alone as normal chat. Long `!buy` listings are sent a line
+at a time so they don't scroll off the chat overlay before you can read them.
 
 ### Shop catalog
 
-The shop is built from the same "spin" prize system used by `!spin`/Chaos Mode (see Spin Mode above), so every purchasable item reuses the exact same granting logic as a random spin win - no separate gameplay code path to keep in sync. Vehicles, NPC spawns, and the debug-only "all skills" win are intentionally excluded from the shop.
+Everything in the shop is granted through the same prize code as Chaos Mode, so a bought item behaves
+exactly like the same item won from a prize. Vehicles and NPC spawns aren't for sale.
 
-Categories (`!buy <category>`):
-
-| Category | Contents |
+| Category (`!buy <category>`) | Contents |
 | --- | --- |
 | `pistols` | Bryar, DC-17, Westar-34, Heavy Pistol, classic Bryar, EE-3 |
 | `rifles` | E-11, DC-15, CR-2, E-22, DLT-19, bowcasters, Disruptor, repeaters, A280, DLT-20A, M5, T-21, EE-4, Amban, Projectile Rifle, SBD wrist blaster |
 | `special` | DEMP2, Flechette, Concussion Rifle, Thrower, Minigun, Shotgun |
 | `launchers` | Rocket Launcher, PLX-1 |
-| `nades` | All grenade/explosive types (frag, pulse, thermal, proximity, fire, sonic, cryo, concussion, trip mine, det pack) |
+| `nades` | All grenades and explosives (frag, pulse, thermal, proximity, fire, sonic, cryo, concussion, trip mine, det pack) |
 | `melee` | Lightsaber (random style) |
-| `gadgets` | Armor, cloak, EWEB, sentry, seeker, bacta, forcefield, spawner, stimpack, jetpack, shockfield, protocol droid |
-| `size` | Size-change fun perks (XS/S/L/XL) |
+| `gadgets` | Armor, cloak, E-Web, sentry, seeker, bacta, forcefield, spawner, stimpack, jetpack, shockfield, protocol droid |
+| `size` | Size changes (XS / S / L / XL) |
 | `ammo` | Ammo refill for your current loadout |
 
-Each item's cost is its own server cvar named `g_shopCost_<name>` (e.g. `g_shopCost_bryar`, `g_shopCost_rocket_launcher`), registered with a sensible default the first time the server starts. **Setting a cost to `0` disables that item** - no separate enable flag exists, and a whole category is automatically hidden from `!buy` once every item in it is set to 0. Changes take effect immediately (`set g_shopCost_bryar 0`), no reload needed, and being `CVAR_ARCHIVE` they persist in the server config across restarts.
-
-Full list of shop cvars and their default costs:
+Each item's price is its own cvar, `g_shopCost_<name>`, created with the default below when the server first
+starts. **A price of `0` removes the item**, and a category disappears from `!buy` once all its items are at
+`0`. Price changes apply immediately (`set g_shopCost_bryar 0`, no restart) and, being `CVAR_ARCHIVE`, persist
+across restarts. MBIIEZ's `creditsystem` plugin can set any of them from the instance config's `cvars`.
 
 | Category | Cvar | Default |
 | --- | --- | --- |
@@ -93,6 +146,7 @@ Full list of shop cvars and their default costs:
 | rifles | `g_shopCost_proj` | 22 |
 | rifles | `g_shopCost_amban` | 25 |
 | special | `g_shopCost_shotgun` | 18 |
+| special | `g_shopCost_demp2` | 25 |
 | special | `g_shopCost_thrower` | 20 |
 | special | `g_shopCost_flechette` | 22 |
 | special | `g_shopCost_concussion` | 22 |
@@ -129,19 +183,129 @@ Full list of shop cvars and their default costs:
 | size | `g_shopCost_size_xl` | 18 |
 | ammo | `g_shopCost_ammo` | 6 |
 
-### Persistent accounts
+### Accounts
 
-Credits can optionally be saved across reconnects/restarts using a lightweight handle + PIN account system, also driven entirely through chat commands:
+- A handle plus a 4-digit PIN. PINs are never stored: each account has a random salt and only a salted
+  HMAC-MD5 hash of the PIN is kept.
+- **5 wrong PINs lock the account for 60 seconds.**
+- Logging in from a new connection kicks any other session logged into the same handle.
+- Accounts live in `economy_accounts.dat` in the game folder (`fs_basepath/fs_game`, e.g.
+  `/opt/openjk/MBII/`). Every server on the machine shares that folder, so **accounts and balances are shared
+  across all your servers**. The file is locked while it's being written, so several servers can use it at
+  once.
 
-- `!register <handle>` - check whether a handle (3-23 letters/numbers/underscores) is available
-- `!register <handle> <pin>` - create the account with a 4-digit PIN, saving your current session's credits to it and logging you in
-- `!login <handle> <pin>` - log into an existing account on a new connection, restoring its saved credit balance
+### Admin commands
 
-Accounts are stored server-side in `economy_accounts.dat`. PINs are never stored in plaintext - each account has a random salt and only a salted HMAC-MD5 hash of the PIN is saved. Repeated failed `!login` attempts lock that account out for 60 seconds. Logging in from a new connection will kick any other session currently logged into the same handle.
+| Command | What it does |
+|---|---|
+| `givecredits <player> <amount>` | Give (or with a negative amount, take) credits from a connected player, by slot or name |
 
-Admins can also grant credits directly from the server console/rcon with:
+MBIIEZ's web panel has an **Economy** page for managing balances by account handle, including players who
+are offline.
 
-`givecredits <player> <amount>`
+---
+
+## Chaos Mode
+
+Every `g_chaosCooldown` seconds, **every player gets a random prize**: a weapon with ammo, an item, armor, a
+size change, a vehicle, god mode and so on, from the same prize pool the shop uses.
+
+| Cvar | Default | Meaning |
+|---|---|---|
+| `g_chaosEnable` | `0` | Turn Chaos Mode on |
+| `g_chaosCooldown` | `20` | Seconds between prizes, per player |
+
+- Each player's timer starts when they spawn: the first prize comes 2 seconds in, then one every cooldown.
+  Timers reset every round.
+- Spectators and Droidekas are skipped.
+- A reminder ("Chaos Mode enabled! Prizes for everyone every N seconds!") is broadcast every 3 minutes.
+
+---
+
+## Gun Game
+
+Every player, whatever class they pick, has **one weapon (plus melee)** and moves up a fixed ladder with each
+kill:
+
+> Bryar pistol → E-11 blaster → DC carbine → CR-2 → E-22 → clone rifle → A280 → DLT-19 → repeater → bowcaster →
+> disruptor → shotgun → flechette → DEMP2 → concussion rifle → rocket launcher → **lightsaber**
+
+| Cvar | Default | Meaning |
+|---|---|---|
+| `g_gungame` | `0` | Turn Gun Game on |
+| `g_gungameAnnounce` | `1` | Broadcast "X advanced to weapon n/17!" and "X WINS Gun Game!" |
+
+- **Dying doesn't cost you your place**: you only go up. Your place carries over between rounds and resets
+  when you disconnect, or when Gun Game is switched off and on again.
+- Switching to any other weapon is blocked, so you can't get around the ladder.
+- Reaching the lightsaber wins.
+- MBIIEZ's `gungame` plugin can also limit which classes can be picked while Gun Game is on
+  (`gungame_restrict_classes`).
+
+---
+
+## Kill streaks
+
+Kills in a row without dying trigger a **server-wide callout**, with a random phrase for each level and a
+mention of how the kill was made when it's distinctive (saber, explosives, a sniper shot, bare hands).
+
+| Cvar | Default | Meaning |
+|---|---|---|
+| `g_killstreakEnable` | `0` | Turn kill streak callouts on |
+
+- Callouts at **3, 5, 7, 10 and 15** kills, then every 5 kills after that (20, 25...).
+- Streaks reset every round and on map changes. A player who leaves doesn't pass their streak on to whoever
+  joins in their slot next.
+
+---
+
+## Stats
+
+The engine keeps **kills, deaths, suicides and playtime** for every player and answers `!stats`.
+
+| Cvar | Default | Meaning |
+|---|---|---|
+| `g_statsEnable` | `0` | Turn stats tracking and `!stats` on |
+
+- Stored in `player_stats.dat` in the game folder (e.g. `/opt/openjk/MBII/`), so **stats are shared across
+  every server on the machine**. The file is locked while being written.
+- Players who are **logged into an economy account** are tracked by account handle, so their stats follow
+  them even if they change name. Everyone else is tracked by player name.
+- Playtime is saved every minute.
+- MBIIEZ's web panel has a **Stats** page showing everyone's stats.
+
+---
+
+## Chat flood control
+
+Always on. A player who sends **more than 5 chat messages (`say` / `say_team`) within 10 seconds is muted for
+10 seconds**, counted from the message that set it off. This covers economy commands too, so `!buy` and
+`!bounty` spam is limited like any other chat. It's separate from the engine's generic `sv_floodProtect`,
+which limits all commands.
+
+## Nute Gunray class block
+
+Always on. Selecting Nute Gunray is blocked at the class-selection step. Once someone is playing as him,
+MBII's Siege rules give them no way to switch back out mid-round, so the server stops it from happening
+in the first place.
+
+---
+
+## Other server commands
+
+| Command | What it does |
+|---|---|
+| `spinwin <clientNum> <prize>` | Give a player a specific prize from the Chaos/shop prize pool, by name or index (testing and admin fun) |
+| `givecredits <player> <amount>` | See [Economy admin commands](#admin-commands) |
+
+Notes on how prizes are granted:
+
+- A lightsaber also gives BP (which is also jetpack fuel) and saber defence 3. Use `removeforce` to take them
+  away if needed.
+- A jetpack comes with 100 fuel.
+- Removing force also removes saber defence.
+
+---
 
 ## License
 
