@@ -1047,7 +1047,7 @@ void SV_Init (void) {
 	g_socialRespawnTime = Cvar_Get("g_socialRespawnTime", "3", CVAR_TEMP, "Social mode respawn wait in seconds");
 	g_socialDuels = Cvar_Get("g_socialDuels", "1", CVAR_TEMP, "Social mode: bow at someone with your saber out to challenge them to a lightsaber duel (damage on between the two duelists)");
 	g_socialRoundTime = Cvar_Get("g_socialRoundTime", "0", CVAR_TEMP, "Social mode round length in seconds (0 = the map default)");
-	g_socialBots = Cvar_Get("g_socialBots", "0", CVAR_TEMP, "Social mode: give bots a random Legends class so they spawn (they never pick one themselves)");
+	g_socialBots = Cvar_Get("g_socialBots", "1", CVAR_TEMP, "Social mode: give bots a random Legends class so they spawn (they never pick one themselves)");
 	g_socialMode->flags &= ~CVAR_ARCHIVE;
 	g_socialBots->flags &= ~CVAR_ARCHIVE;
 	g_socialDuels->flags &= ~CVAR_ARCHIVE;
