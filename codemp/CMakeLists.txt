@@ -318,6 +318,8 @@ if(BuildMPEngine OR BuildMPDed)
 		"${MPDir}/server/gungame.cpp"
 		"${MPDir}/server/killstreak.h"
 		"${MPDir}/server/killstreak.cpp"
+		"${MPDir}/server/social.h"
+		"${MPDir}/server/social.cpp"
 		"${MPDir}/server/stats.h"
 		"${MPDir}/server/stats.cpp"
 		"${MPDir}/server/sv_bot.cpp"

@@ -1043,6 +1043,17 @@ void SV_Init (void) {
 	g_chatFloodEnable = Cvar_Get("g_chatFloodEnable", "1", CVAR_TEMP, "Mute a client's say/say_team chat for 10s after more than 5 messages in 10s");
 	g_chatFloodEnable->flags &= ~CVAR_ARCHIVE;
 
+	g_socialMode = Cvar_Get("g_socialMode", "0", CVAR_TEMP, "Social mode: players take no damage and can spawn in at any time on a short respawn timer");
+	g_socialRespawnTime = Cvar_Get("g_socialRespawnTime", "3", CVAR_TEMP, "Social mode respawn wait in seconds");
+	g_socialDuels = Cvar_Get("g_socialDuels", "1", CVAR_TEMP, "Social mode: bow at someone with your saber out to challenge them to a lightsaber duel (damage on between the two duelists)");
+	g_socialRoundTime = Cvar_Get("g_socialRoundTime", "0", CVAR_TEMP, "Social mode round length in seconds (0 = the map default)");
+	g_socialBots = Cvar_Get("g_socialBots", "0", CVAR_TEMP, "Social mode: give bots a random Legends class so they spawn (they never pick one themselves)");
+	g_socialMode->flags &= ~CVAR_ARCHIVE;
+	g_socialBots->flags &= ~CVAR_ARCHIVE;
+	g_socialDuels->flags &= ~CVAR_ARCHIVE;
+	g_socialRoundTime->flags &= ~CVAR_ARCHIVE;
+	g_socialRespawnTime->flags &= ~CVAR_ARCHIVE;
+
 	// used by smod extensions
 	g_smodAdminPassword_1 = Cvar_Get("g_smodAdminPassword_1", "", CVAR_PROTECTED, "SMOD1");
 	g_smodAdminPassword_2 = Cvar_Get("g_smodAdminPassword_2", "", CVAR_PROTECTED, "SMOD2");

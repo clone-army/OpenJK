@@ -9,6 +9,7 @@ adds server-side features on top of MBII without touching MBII itself:
 | [Economy](#economy--credit-system): credits, shop, bounties, accounts | `g_creditSystemEnable`, `g_economyShopEnable`, `g_economyBountyEnable` | `!balance` `!buy` `!bounty` `!register` `!login` `!help` |
 | [Chaos Mode](#chaos-mode): a random prize for everyone every few seconds | `g_chaosEnable`, `g_chaosCooldown` | |
 | [Gun Game](#gun-game): climb a weapon ladder one kill at a time | `g_gungame`, `g_gungameAnnounce` | |
+| [Social Mode](#social-mode): no damage, spawn any time, duels; bots that pick Legends classes | `g_socialMode`, `g_socialRespawnTime`, `g_socialDuels`, `g_socialRoundTime`, `g_socialBots` | |
 | [Kill streaks](#kill-streaks): server-wide streak callouts | `g_killstreakEnable` | |
 | [Stats](#stats): kills, deaths, suicides and playtime across all servers | `g_statsEnable` | `!stats` |
 | [Chat flood control](#chat-flood-control) | always on | |
@@ -21,7 +22,7 @@ server can run any combination of them.
 
 These servers are managed with **[MBIIEZ](https://github.com/clone-army/mbiiez)**. An MBIIEZ instance uses
 this engine when its config says `"engine": "caded.i386"`, and each feature has an MBIIEZ plugin that sets
-its cvars: `creditsystem`, `chaos`, `gungame`, `killstreak` and `stats`. **Those plugins do nothing on any
+its cvars: `creditsystem`, `chaos`, `gungame`, `killstreak`, `social` and `stats`. **Those plugins do nothing on any
 other engine** (`mbiided.i386`, `openjkded.i386`), because the cvars only exist here. The plugins also re-apply
 their cvars every minute, so a manual `rcon set` won't stick. Change the instance's settings in MBIIEZ
 instead.
@@ -241,6 +242,37 @@ kill:
 - Reaching the lightsaber wins.
 - MBIIEZ's `gungame` plugin can also limit which classes can be picked while Gun Game is on
   (`gungame_restrict_classes`).
+
+---
+
+## Social Mode
+
+A hang-out mode on top of whatever MBII mode the server runs (e.g. Legends, with all its classes):
+
+- **Nobody takes damage**, players or NPCs (including vehicles). Death pits, lava/water, out-of-bounds, doors, `/kill` and team/class switches still
+  work as normal.
+- **Spawn in any time.** Dying or joining mid-round puts you on a short respawn timer instead of sitting out the
+  round. Players who pick a class but somehow don't spawn are automatically re-joined for them.
+- **Duels.** Bow at someone to challenge them; they bow back to accept. Any class, any weapon, as in MBII's
+  Duel mode. The two duelists can hurt each other (and only each other) until one dies, then the loser respawns as normal.
+- **No team-kill points.** A teammate killing you (say, in a duel) counts as a suicide: no TK points, no
+  punish/forgive prompt, no TK respawn penalty.
+- **Optional round length** that replaces the map's own round timer, with the on-screen clock kept in step.
+
+| Cvar | Default | Meaning |
+|---|---|---|
+| `g_socialMode` | `0` | Turn Social Mode on |
+| `g_socialRespawnTime` | `3` | Respawn wait in seconds |
+| `g_socialDuels` | `1` | Allow duels (bow to challenge / accept) |
+| `g_socialRoundTime` | `0` | Round length in seconds; `0` keeps the map's own |
+| `g_socialBots` | `0` | Bots pick a random Legends class so they actually spawn (they never pick one themselves). Works with `g_socialMode` off too, on any Legends server |
+
+Only servers with `g_socialMode 1` have MBII's damage function hooked; everywhere else it runs untouched.
+
+MBII isn't modified: the engine finds MBII's own respawn-mode, duel and round-timer code by name in the loaded
+game module and switches it on (see the header of `codemp/server/social.cpp` for exactly how, and which MBII
+internals it relies on). If an MBII update renames or changes something it needs, the affected part switches
+itself off with a yellow `Social mode:` line in the server console rather than guessing.
 
 ---
 

@@ -2425,6 +2425,7 @@ void SV_ExecuteClientCommand( client_t *cl, const char *s, qboolean clientOK ) {
 					Cmd_Args_Sanitize( MAX_CVAR_VALUE_STRING, ";", " " );
 				}
 			}
+			SV_SocialClientCommand( cl );
 			GVM_ClientCommand( cl - svs.clients );
 		}
 	}
@@ -2554,6 +2555,8 @@ void SV_ClientThink (client_t *cl, usercmd_t *cmd) {
 	}
 
 	GVM_ClientThink( cl - svs.clients, NULL );
+
+	SV_SocialClientThink( cl );
 }
 
 /*
