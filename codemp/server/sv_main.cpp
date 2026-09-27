@@ -82,6 +82,11 @@ cvar_t* g_gungameAnnounce;
 cvar_t* g_killstreakEnable;
 cvar_t* g_statsEnable;
 cvar_t* g_chatFloodEnable;
+cvar_t* g_socialMode;
+cvar_t* g_socialRespawnTime;
+cvar_t* g_socialDuels;
+cvar_t* g_socialRoundTime;
+cvar_t* g_socialBots;
 
 // Used by smod extension to check if password is correct
 cvar_t* g_smodAdminPassword_1;
@@ -1274,6 +1279,9 @@ void SV_Frame( int msec ) {
 
 	// native kill/death/suicide/playtime stats
 	SV_StatsFrame();
+
+	// social mode: keep respawn-anytime overrides applied
+	SV_SocialFrame();
 
 	// TEMP DIAGNOSTIC: detect players on the Nute Gunray siege class (see
 	// SV_GunrayCheckFrame in sv_client.cpp) - logging only for now, no

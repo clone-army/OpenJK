@@ -21,6 +21,8 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #pragma once
 
 void		GVM_InitGame						( int levelTime, int randomSeed, int restart );
+void *		GVM_GetDllHandle					( void );
+void		GVM_CallNative						( void (*fn)( void *ent ), void *ent );
 void		GVM_ShutdownGame					( int restart );
 char *		GVM_ClientConnect					( int clientNum, qboolean firstTime, qboolean isBot );
 void		GVM_ClientBegin						( int clientNum );

@@ -42,6 +42,18 @@ static vm_t *gvm; // game vm, valid for legacy and new api
 // game vmMain calls
 //
 
+// Native game module handle, for looking up MBII symbols by name (social.cpp).
+void *GVM_GetDllHandle( void ) {
+	return gvm ? gvm->dllHandle : NULL;
+}
+
+// Calls an exported game module function directly (social.cpp), with the game
+// VM current so any syscalls it makes land in the right place.
+void GVM_CallNative( void (*fn)( void *ent ), void *ent ) {
+	VMSwap v( gvm );
+	fn( ent );
+}
+
 void GVM_InitGame( int levelTime, int randomSeed, int restart ) {
 	if ( gvm->isLegacy ) {
 		VM_Call( gvm, GAME_INIT, levelTime, randomSeed, restart );
@@ -2804,6 +2816,9 @@ void SV_InitGame( qboolean restart ) {
 	// point: killstreak.cpp's own sv.serverId-based detection only catches
 	// the former. See its 2026-09-17 header note.
 	SV_KillstreakMapChange();
+
+	// Same reason: G_InitGame recomputes MBII's respawn-mode flag every round.
+	SV_SocialGameInit();
 
 	// restart == qtrue is a routine round-to-round restart (SV_RestartGame,
 	// via MBII's own "map_restart 0"), not a fresh map load

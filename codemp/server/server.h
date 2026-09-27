@@ -396,6 +396,11 @@ extern	cvar_t* g_gungameAnnounce;
 extern	cvar_t* g_killstreakEnable;
 extern	cvar_t* g_statsEnable;
 extern	cvar_t* g_chatFloodEnable;
+extern	cvar_t* g_socialMode;
+extern	cvar_t* g_socialRespawnTime;
+extern	cvar_t* g_socialDuels;
+extern	cvar_t* g_socialRoundTime;
+extern	cvar_t* g_socialBots;
 
 // Used by smod extension to check if password is correct
 extern cvar_t* g_smodAdminPassword_1;
@@ -562,6 +567,14 @@ void SV_EconomyShopInitCvars( void );
 //
 void SV_KillstreakFrame(void);
 void SV_KillstreakClientDisconnect(int clientNum);
+
+//
+// social.cpp
+//
+void SV_SocialGameInit(void);
+void SV_SocialFrame(void);
+void SV_SocialClientThink(client_t* cl);
+void SV_SocialClientCommand(client_t* cl);
 
 //
 // stats.cpp
