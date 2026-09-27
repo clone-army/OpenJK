@@ -265,7 +265,7 @@ A hang-out mode on top of whatever MBII mode the server runs (e.g. Legends, with
 | `g_socialRespawnTime` | `3` | Respawn wait in seconds |
 | `g_socialDuels` | `1` | Allow duels (bow to challenge / accept) |
 | `g_socialRoundTime` | `0` | Round length in seconds; `0` keeps the map's own |
-| `g_socialBots` | `0` | Bots pick a random Legends class so they actually spawn (they never pick one themselves). Works with `g_socialMode` off too, on any Legends server |
+| `g_socialBots` | `1` | Bots pick a random Legends class so they actually spawn (they never pick one themselves). On by default on every Legends server, social mode or not; only affects bots |
 
 Only servers with `g_socialMode 1` have MBII's damage function hooked; everywhere else it runs untouched.
 
