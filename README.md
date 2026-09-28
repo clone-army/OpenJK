@@ -70,7 +70,7 @@ command: nothing is broadcast, and the commands never show up as chat.
 | `g_economyBarEnable` | `0` | The `!bar` drinks menu (needs the master switch too) |
 | `g_economyJukeboxEnable` | `0` | The `!jukebox` (needs the master switch too): `g_jukeboxCost` (10) per track, `g_jukeboxCooldown` (60) seconds before it can change again |
 | `g_economyPazaakEnable` | `0` | `!pazaak` challenges for credits (needs the master switch too) |
-| `g_economyBetEnable` | `0` | `!bet` on duels (needs the master switch too): `g_betWindowSeconds` (30), `g_betMax` (100), `g_betWinBonus` (20) |
+| `g_economyBetEnable` | `0` | `!bet` on duels (needs the master switch too): `g_betWindowSeconds` (30), `g_betMax` (100), `g_betWinBonus` (20), `g_betLoserRefund` (25) |
 | `g_economyChanceEnable` | `0` | `!chance` red/blue challenges for credits (needs the master switch too) |
 | `g_economyRaffleEnable` | `0` | The `!raffle` (needs the master switch too): `g_raffleIntervalMinutes` (60), `g_raffleOpenMinutes` (10), `g_raffleTicketPrice` (5), `g_raffleMinEntrants` (5) |
 | `g_economyRegisterBonus` | `100` | Credits given once when a player `!register`s a new account |
@@ -167,7 +167,8 @@ health. That announces it to the server and freezes both fighters for `g_betWind
 "FIGHT!". One fight takes bets at a time, until it's decided. `!bet` shows that fight and what's backing each
 fighter; `!bet <fighter> <credits>` backs one, up to `g_betMax`, on one side only, and never on your own duel. Back the winner and
 you get your stake back, plus a flat win bonus (`g_betWinBonus`, capped at your stake), plus a share of the losing bets by
-stake; a duel with no clear winner (a fighter leaving) or nobody on the winning side refunds everyone. See `codemp/server/betting.cpp`.
+stake. Losing bets are lost, though if nobody backed the winner they get `g_betLoserRefund` percent back; a duel with
+no clear winner (a fighter leaving) refunds everyone. See `codemp/server/betting.cpp`.
 
 ### Chance
 
