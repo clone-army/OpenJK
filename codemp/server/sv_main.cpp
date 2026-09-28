@@ -88,6 +88,7 @@ cvar_t* g_economyChanceEnable;
 cvar_t* g_economyBetEnable;
 cvar_t* g_betWindowSeconds;
 cvar_t* g_betMax;
+cvar_t* g_betWinBonus;
 cvar_t* g_economyRaffleEnable;
 cvar_t* g_raffleIntervalMinutes;
 cvar_t* g_raffleOpenMinutes;
