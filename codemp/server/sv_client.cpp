@@ -1711,6 +1711,37 @@ static qboolean SV_EconomySecureCompare( const byte *a, const byte *b, int len )
 
 // Writes a logged-in client's current credits back to their persisted account.
 // Safe to call for clients that aren't logged into an account (no-op).
+// The stored balance can change under a logged-in session: the web panel's
+// Give Credits edits economy_accounts.dat directly, and it's shared by
+// every instance. Anything that moved it since this session last read or
+// wrote it is folded into the in-memory balance here, instead of being
+// overwritten the next time the session saves. acct must be freshly
+// loaded (SV_EconomyFindAccount reloads the file).
+static void SV_EconomyMergeExternal( client_t *cl, economyAccount_t *acct ) {
+	const int delta = acct->credits - cl->economyCreditsSynced;
+
+	if ( !delta ) {
+		return;
+	}
+	cl->economyCredits += delta;
+	cl->economyCreditsSynced = acct->credits;
+	SV_EconomyPrint( cl, va( "Your balance was %s by %d credits. Balance: %d",
+		delta > 0 ? "topped up" : "reduced", delta > 0 ? delta : -delta, cl->economyCredits ) );
+}
+
+// Picks up any outside change to a logged-in session's balance.
+static void SV_EconomySyncCredits( client_t *cl ) {
+	economyAccount_t *acct;
+
+	if ( !cl->economyHandle[0] ) {
+		return;
+	}
+	acct = SV_EconomyFindAccount( cl->economyHandle );
+	if ( acct ) {
+		SV_EconomyMergeExternal( cl, acct );
+	}
+}
+
 void SV_EconomyPersistCredits( client_t *cl ) {
 	economyAccount_t *acct;
 
@@ -1723,7 +1754,9 @@ void SV_EconomyPersistCredits( client_t *cl ) {
 		return;
 	}
 
+	SV_EconomyMergeExternal( cl, acct );
 	acct->credits = cl->economyCredits;
+	cl->economyCreditsSynced = acct->credits;
 	SV_EconomyAccountsSave();
 }
 
@@ -1989,6 +2022,10 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 		return qtrue;
 	}
 
+	if ( SV_EconomyEnabled() ) {
+		SV_EconomySyncCredits( cl );
+	}
+
 	if ( !Q_stricmp( commandName, "balance" ) ) {
 		char balBuf[256];
 		Com_sprintf( balBuf, sizeof(balBuf),
@@ -2244,6 +2281,7 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 			Q_strncpyz( acct->handle, firstArg, sizeof( acct->handle ) );
 			SV_EconomyHashPin( acct->salt, secondArg, acct->hash );
 			acct->credits = cl->economyCredits;
+			cl->economyCreditsSynced = acct->credits;
 
 			Q_strncpyz( cl->economyHandle, acct->handle, sizeof( cl->economyHandle ) );
 			SV_EconomyAccountsSave();
@@ -2327,6 +2365,7 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 
 		Q_strncpyz( cl->economyHandle, acct->handle, sizeof( cl->economyHandle ) );
 		cl->economyCredits = acct->credits;
+		cl->economyCreditsSynced = acct->credits;
 		SV_EconomyAccountsSave();
 
 		SV_EconomyPrint( cl, va( "Logged in as '%s'. Balance: %d credits.", acct->handle, cl->economyCredits ) );
@@ -2749,6 +2788,29 @@ void SV_EconomyFrame( void ) {
 
 	if ( !SV_EconomyEnabled() ) {
 		return;
+	}
+
+	// Pick up outside balance changes (web panel gifts, other servers)
+	// every few seconds - one fresh load of the shared file, then a merge
+	// for each logged-in session.
+	static int nextCreditSync = 0;
+	if ( svs.time >= nextCreditSync ) {
+		nextCreditSync = svs.time + 5000;
+		SV_EconomyAccountsEnsureLoaded();
+		for ( i = 0; i < sv_maxclients->integer; i++ ) {
+			client_t *cl = &svs.clients[i];
+			int a;
+
+			if ( cl->state < CS_ACTIVE || !cl->economyHandle[0] ) {
+				continue;
+			}
+			for ( a = 0; a < svEconomyAccountCount; a++ ) {
+				if ( !Q_stricmp( svEconomyAccounts[a].handle, cl->economyHandle ) ) {
+					SV_EconomyMergeExternal( cl, &svEconomyAccounts[a] );
+					break;
+				}
+			}
+		}
 	}
 
 	// Broadcast economy mode announcement every 3 minutes
