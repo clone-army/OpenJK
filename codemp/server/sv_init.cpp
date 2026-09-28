@@ -1058,6 +1058,8 @@ void SV_Init (void) {
 	g_economyBountyEnable->flags &= ~CVAR_ARCHIVE;
 	g_economyBarEnable->flags &= ~CVAR_ARCHIVE;
 	g_economyRegisterBonus->flags &= ~CVAR_ARCHIVE;
+	g_economyDailyBonus = Cvar_Get("g_economyDailyBonus", "25", CVAR_TEMP, "Credits for the first !login in any 24 hours, across every server (0 = off)");
+	g_economyDailyBonus->flags &= ~CVAR_ARCHIVE;
 	g_economyJukeboxEnable->flags &= ~CVAR_ARCHIVE;
 	g_jukeboxCost->flags &= ~CVAR_ARCHIVE;
 	g_jukeboxCooldown->flags &= ~CVAR_ARCHIVE;

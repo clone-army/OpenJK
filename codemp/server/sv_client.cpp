@@ -38,6 +38,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/file.h>
+#include <time.h>
 
 #ifdef USE_INTERNAL_ZLIB
 #include "zlib/zlib.h"
@@ -1521,6 +1522,80 @@ static void SV_EconomyHexToBytes( const char *hex, byte *out, int outLen ) {
 // instance), so this resolves to the same absolute file for all of them -
 // unlike ECONOMY_ACCOUNTS_FILE's old location under the engine's per-
 // instance FS_SV_ save path.
+// --- Daily login bonus ------------------------------------------------------
+//
+// The first !login in any 24 hours, on any instance, pays g_economyDailyBonus.
+// Shared by every instance the same way as the accounts file (fs_basepath,
+// not fs_homepath) but in its own file - one "handle unixtime" line per
+// account - since MBIIEZ's Economy page reads economy_accounts.dat expecting
+// exactly six fields a line. The whole check-and-record happens under one
+// flock(), so logging in on two servers at once can't pay twice.
+#define ECONOMY_DAILY_FILE		"economy_daily.dat"
+#define ECONOMY_DAILY_SECS		( 24 * 60 * 60 )
+#define ECONOMY_DAILY_MAX		ECONOMY_MAX_ACCOUNTS
+
+typedef struct {
+	char handle[24];
+	long claimed;
+} economyDaily_t;
+
+// Claims today's bonus for handle (or, with recordOnly, just marks today as
+// claimed). Returns seconds until the next one is due if it's too soon,
+// else 0 - with *paid set when a bonus should actually be paid.
+static int SV_EconomyDailyClaim( const char *handle, qboolean recordOnly, qboolean *paid ) {
+	static economyDaily_t entries[ECONOMY_DAILY_MAX];
+	char path[MAX_OSPATH];
+	char line[128];
+	int count = 0, found = -1, wait = 0, fd, i;
+	const long now = (long)time( NULL );
+	FILE *f;
+
+	*paid = qfalse;
+	Com_sprintf( path, sizeof( path ), "%s/%s/%s",
+		Cvar_VariableString( "fs_basepath" ), Cvar_VariableString( "fs_game" ), ECONOMY_DAILY_FILE );
+
+	fd = open( path, O_RDWR | O_CREAT, 0600 );
+	if ( fd < 0 ) {
+		Com_Printf( "SV_EconomyDailyClaim: failed to open %s\n", path );
+		return 0;
+	}
+	if ( flock( fd, LOCK_EX ) != 0 || !( f = fdopen( fd, "r+" ) ) ) {
+		close( fd );
+		return 0;
+	}
+
+	while ( count < ECONOMY_DAILY_MAX && fgets( line, sizeof( line ), f ) ) {
+		if ( sscanf( line, "%23s %ld", entries[count].handle, &entries[count].claimed ) == 2 ) {
+			if ( !Q_stricmp( entries[count].handle, handle ) ) {
+				found = count;
+			}
+			count++;
+		}
+	}
+
+	if ( found >= 0 && now - entries[found].claimed < ECONOMY_DAILY_SECS ) {
+		wait = (int)( ECONOMY_DAILY_SECS - ( now - entries[found].claimed ) );
+	} else {
+		if ( found < 0 && count < ECONOMY_DAILY_MAX ) {
+			found = count++;
+			Q_strncpyz( entries[found].handle, handle, sizeof( entries[found].handle ) );
+		}
+		if ( found >= 0 ) {
+			entries[found].claimed = now;
+			*paid = recordOnly ? qfalse : qtrue;
+			rewind( f );
+			if ( ftruncate( fd, 0 ) != 0 ) { /* best-effort; nothing else to do here */ }
+			for ( i = 0; i < count; i++ ) {
+				fprintf( f, "%s %ld\n", entries[i].handle, entries[i].claimed );
+			}
+			fflush( f );
+		}
+	}
+
+	fclose( f ); // also releases the lock
+	return wait;
+}
+
 static void SV_EconomyAccountsPath( char *out, int outSize ) {
 	Com_sprintf( out, outSize, "%s/%s/%s",
 		Cvar_VariableString( "fs_basepath" ), Cvar_VariableString( "fs_game" ), ECONOMY_ACCOUNTS_FILE );
@@ -2506,6 +2581,11 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 			SV_EconomyAccountsSave();
 
 			SV_EconomyPrint( cl, va( "Registered! Logged in as '%s'. Use !login %s <pin> on future connects.", acct->handle, acct->handle ) );
+			{
+				// The welcome bonus is today's; the daily one starts tomorrow.
+				qboolean paid;
+				SV_EconomyDailyClaim( acct->handle, qtrue, &paid );
+			}
 			if ( bonus > 0 ) {
 				SV_EconomyPrint( cl, va( "Welcome bonus: +%d credits! Balance: %d", bonus, cl->economyCredits ) );
 			}
@@ -2591,6 +2671,19 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 		SV_EconomyAccountsSave();
 
 		SV_EconomyPrint( cl, va( "Logged in as '%s'. Balance: %d credits.", acct->handle, cl->economyCredits ) );
+
+		if ( g_economyDailyBonus && g_economyDailyBonus->integer > 0 ) {
+			qboolean paid;
+			const int wait = SV_EconomyDailyClaim( cl->economyHandle, qfalse, &paid );
+			if ( paid ) {
+				cl->economyCredits += g_economyDailyBonus->integer;
+				SV_EconomyPersistCredits( cl );
+				SV_EconomyPrint( cl, va( "Daily login bonus: ^2+%d ^7credits! Balance: %d. Next one in 24 hours, on any of our servers.",
+					g_economyDailyBonus->integer, cl->economyCredits ) );
+			} else if ( wait > 0 ) {
+				SV_EconomyPrint( cl, va( "Next daily login bonus in %dh %dm.", wait / 3600, ( wait % 3600 ) / 60 ) );
+			}
+		}
 		return qtrue;
 	}
 
