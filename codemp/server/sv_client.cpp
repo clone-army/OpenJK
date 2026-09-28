@@ -2023,6 +2023,21 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 		return qtrue;
 	}
 
+	// Balances, spending and bounties all live on an account - without one
+	// there's nothing to show but a confusing 0, so say how to get one.
+	if ( SV_EconomyEnabled() && !cl->economyHandle[0] &&
+		( !Q_stricmp( commandName, "balance" ) ||
+		  !Q_stricmp( commandName, "buy" ) ||
+		  !Q_stricmp( commandName, "bar" ) ||
+		  !Q_stricmp( commandName, "jukebox" ) ||
+		  !Q_stricmp( commandName, "bounty" ) ||
+		  !Q_stricmp( commandName, "bountry" ) ) ) {
+		SV_EconomyPrint( cl, "You need to be logged in to use this. "
+			"^5!login <handle> <pin> ^7if you have an account, or "
+			"^5!register <handle> <pin> ^7to make one (with free welcome credits!)." );
+		return qtrue;
+	}
+
 	if ( SV_EconomyEnabled() ) {
 		SV_EconomySyncCredits( cl );
 	}
