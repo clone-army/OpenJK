@@ -1017,6 +1017,7 @@ void SV_Init (void) {
 	g_economyShopEnable = Cvar_Get("g_economyShopEnable", "0", CVAR_TEMP, "Enable the !buy shop (also requires g_creditSystemEnable 1)");
 	g_economyBountyEnable = Cvar_Get("g_economyBountyEnable", "0", CVAR_TEMP, "Enable !bounty / !<n> <credits> (also requires g_creditSystemEnable 1)");
 	g_economyBarEnable = Cvar_Get("g_economyBarEnable", "0", CVAR_TEMP, "Enable the !bar drinks menu (also requires g_creditSystemEnable 1)");
+	g_economyRegisterBonus = Cvar_Get("g_economyRegisterBonus", "100", CVAR_TEMP, "Credits given once when a player !registers a new account");
 	SV_EconomyShopInitCvars();
 	SV_BarInitCvars();
 
@@ -1027,6 +1028,7 @@ void SV_Init (void) {
 	g_economyShopEnable->flags &= ~CVAR_ARCHIVE;
 	g_economyBountyEnable->flags &= ~CVAR_ARCHIVE;
 	g_economyBarEnable->flags &= ~CVAR_ARCHIVE;
+	g_economyRegisterBonus->flags &= ~CVAR_ARCHIVE;
 
 	g_spinSpawnerHackOffset = Cvar_Get("g_spinSpawnerHackOffset", "-1", CVAR_TEMP, "Byte offset from gclient base to hasSkill[] (memory-hack for use_spawner)");
 	g_spinSpawnerHackSkillIndex = Cvar_Get("g_spinSpawnerHackSkillIndex", "54", CVAR_TEMP, "EAS skill index used for spawner (default: EAS_HI_SPAWNER)");

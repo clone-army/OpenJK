@@ -75,6 +75,7 @@ cvar_t* g_creditSystemEnable;
 cvar_t* g_economyShopEnable;
 cvar_t* g_economyBountyEnable;
 cvar_t* g_economyBarEnable;
+cvar_t* g_economyRegisterBonus;
 cvar_t* g_spinSpawnerHackOffset;
 cvar_t* g_spinSpawnerHackSkillIndex;
 cvar_t* g_spinSpawnerHackSkillValue;
