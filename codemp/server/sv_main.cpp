@@ -79,6 +79,12 @@ cvar_t* g_economyRegisterBonus;
 cvar_t* g_economyJukeboxEnable;
 cvar_t* g_jukeboxCost;
 cvar_t* g_jukeboxCooldown;
+cvar_t* g_economyPazaakEnable;
+cvar_t* g_economyRaffleEnable;
+cvar_t* g_raffleIntervalMinutes;
+cvar_t* g_raffleOpenMinutes;
+cvar_t* g_raffleTicketPrice;
+cvar_t* g_raffleMinEntrants;
 cvar_t* g_spinSpawnerHackOffset;
 cvar_t* g_spinSpawnerHackSkillIndex;
 cvar_t* g_spinSpawnerHackSkillValue;
@@ -1278,6 +1284,10 @@ void SV_Frame( int msec ) {
 
 	// bar drinks: timed sizes, drunk sway and glows
 	SV_BarFrame();
+
+	// pazaak turn timers and walkouts; raffle schedule
+	SV_PazaakFrame();
+	SV_RaffleFrame();
 
 	// gun game: kill-detection and weapon enforcement
 	SV_GunGameFrame();

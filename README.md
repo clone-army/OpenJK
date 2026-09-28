@@ -69,6 +69,8 @@ command: nothing is broadcast, and the commands never show up as chat.
 | `g_economyBountyEnable` | `0` | Bounties (needs the master switch too) |
 | `g_economyBarEnable` | `0` | The `!bar` drinks menu (needs the master switch too) |
 | `g_economyJukeboxEnable` | `0` | The `!jukebox` (needs the master switch too): `g_jukeboxCost` (10) per track, `g_jukeboxCooldown` (60) seconds before it can change again |
+| `g_economyPazaakEnable` | `0` | `!pazaak` challenges for credits (needs the master switch too) |
+| `g_economyRaffleEnable` | `0` | The `!raffle` (needs the master switch too): `g_raffleIntervalMinutes` (60), `g_raffleOpenMinutes` (10), `g_raffleTicketPrice` (5), `g_raffleMinEntrants` (5) |
 | `g_economyRegisterBonus` | `100` | Credits given once when a player `!register`s a new account |
 | `g_shopCost_<item>` | per item | Price of one shop item; `0` removes it (see [Shop catalog](#shop-catalog)) |
 
@@ -138,6 +140,14 @@ header of `codemp/server/bar.cpp` for how each effect works.
 ### The jukebox
 
 `!jukebox` lists fifteen tracks - Cantina Band, Nightclub, Jabba's Sail Barge, Duel of the Fates, Benny Hill, Crazy Train and more, all from MBII's own files so nobody downloads anything - and `!jukebox <number>` pays to play one for everyone, announced in chat. The map's own music comes back next round. See `codemp/server/jukebox.cpp`.
+
+### Pazaak
+
+`!pazaak <player> <credits>` challenges someone to KOTOR's card game; they `!pazaak accept` or `!pazaak decline` within 60 seconds. Both stakes are taken on accept and the winner gets the pot. The server deals from a 1-10 deck and each player gets four side cards (+1..+6 or -1..-6). On your turn you're dealt a card, may `!pz play <n>` one side card, then `!pz end` or `!pz stand`. Over 20 is a bust; closest to 20 wins the set, first to two sets wins. Turns time out after 30 seconds (you stand); leaving or `!pz forfeit` loses. See `codemp/server/pazaak.cpp`.
+
+### The raffle
+
+A draw every `g_raffleIntervalMinutes` (on the hour by default). Tickets go on sale `g_raffleOpenMinutes` before each draw, announced with the price and how to buy, with reminders at 5 minutes and 1 minute. `!raffle <count>` buys tickets, `!raffle` shows the pool and time left. One ticket wins the whole pool, paid into the account. Fewer than `g_raffleMinEntrants` different players and everyone is refunded instead. Tickets survive a restart. See `codemp/server/raffle.cpp`.
 
 ### Shop catalog
 

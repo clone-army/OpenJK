@@ -1021,6 +1021,12 @@ void SV_Init (void) {
 	g_economyJukeboxEnable = Cvar_Get("g_economyJukeboxEnable", "0", CVAR_TEMP, "Enable the !jukebox (also requires g_creditSystemEnable 1)");
 	g_jukeboxCost = Cvar_Get("g_jukeboxCost", "10", CVAR_TEMP, "Credits to put a track on the jukebox");
 	g_jukeboxCooldown = Cvar_Get("g_jukeboxCooldown", "60", CVAR_TEMP, "Seconds a jukebox track plays before anyone can change it");
+	g_economyPazaakEnable = Cvar_Get("g_economyPazaakEnable", "0", CVAR_TEMP, "Enable !pazaak challenges for credits (also requires g_creditSystemEnable 1)");
+	g_economyRaffleEnable = Cvar_Get("g_economyRaffleEnable", "0", CVAR_TEMP, "Enable the !raffle (also requires g_creditSystemEnable 1)");
+	g_raffleIntervalMinutes = Cvar_Get("g_raffleIntervalMinutes", "60", CVAR_TEMP, "Minutes between raffle draws (on the clock)");
+	g_raffleOpenMinutes = Cvar_Get("g_raffleOpenMinutes", "10", CVAR_TEMP, "Minutes before each draw that raffle tickets go on sale");
+	g_raffleTicketPrice = Cvar_Get("g_raffleTicketPrice", "5", CVAR_TEMP, "Credits per raffle ticket");
+	g_raffleMinEntrants = Cvar_Get("g_raffleMinEntrants", "5", CVAR_TEMP, "Different players who must enter for a raffle draw to happen (otherwise refunded)");
 	SV_EconomyShopInitCvars();
 	SV_BarInitCvars();
 
@@ -1035,6 +1041,12 @@ void SV_Init (void) {
 	g_economyJukeboxEnable->flags &= ~CVAR_ARCHIVE;
 	g_jukeboxCost->flags &= ~CVAR_ARCHIVE;
 	g_jukeboxCooldown->flags &= ~CVAR_ARCHIVE;
+	g_economyPazaakEnable->flags &= ~CVAR_ARCHIVE;
+	g_economyRaffleEnable->flags &= ~CVAR_ARCHIVE;
+	g_raffleIntervalMinutes->flags &= ~CVAR_ARCHIVE;
+	g_raffleOpenMinutes->flags &= ~CVAR_ARCHIVE;
+	g_raffleTicketPrice->flags &= ~CVAR_ARCHIVE;
+	g_raffleMinEntrants->flags &= ~CVAR_ARCHIVE;
 
 	g_spinSpawnerHackOffset = Cvar_Get("g_spinSpawnerHackOffset", "-1", CVAR_TEMP, "Byte offset from gclient base to hasSkill[] (memory-hack for use_spawner)");
 	g_spinSpawnerHackSkillIndex = Cvar_Get("g_spinSpawnerHackSkillIndex", "54", CVAR_TEMP, "EAS skill index used for spawner (default: EAS_HI_SPAWNER)");
