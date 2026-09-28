@@ -46,9 +46,9 @@ playerState_t / entityState_t / usercmd_t fields:
     (Other powerup looks aren't used: players never see their own - the
     engine sends MBII's playerState powerups field as a 1-bit value.)
 
-Drink too much, too fast (within 3 minutes): the 8th order knocks you out
-cold for a few seconds (MBII's own G_Knockdown); the 11th is alcohol
-poisoning and the 5th Spice an overdose - MBII's own /kill (its usual 5
+Drink too much, too fast (within 5 minutes): the 8th order knocks you out
+cold for a few seconds (MBII's own G_Knockdown); the 10th is alcohol
+poisoning and the 3rd Spice an overdose - MBII's own /kill (its usual 5
 second countdown), and everyone is told what killed you when you drop.
 Every order burps (plus a Jawa line for Jawa Juice, a cough for spice and
 death sticks), through MBII's G_SoundOnEnt.
@@ -256,11 +256,11 @@ static barState_t gBarState[MAX_CLIENTS];
 // The tab: recent orders per player, across lives (the drinking doesn't stop
 // because you died), cleared when the slot empties. Drives passing out,
 // alcohol poisoning and the spice overdose.
-#define BAR_TAB_WINDOW_MS     180000
+#define BAR_TAB_WINDOW_MS     300000
 #define BAR_TAB_SIZE          16
-#define BAR_SPICE_OVERDOSE    5       // spice orders within the window that kill you
+#define BAR_SPICE_OVERDOSE    3       // spice orders within the window that kill you
 #define BAR_PASSOUT_ORDERS    8       // orders within the window that knock you out
-#define BAR_POISONING_ORDERS  11      // orders within the window that kill you
+#define BAR_POISONING_ORDERS  10      // orders within the window that kill you
 #define BAR_PASSOUT_MS        4000    // extra time on the floor, on top of MBII's own
 #define BAR_OVERDOSE_WAIT_MS  15000   // longer than MBII's 5s /kill countdown
 typedef struct {

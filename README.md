@@ -131,7 +131,7 @@ bubbles, frost, dust, flames, sparks) that everyone sees, you included:
 | 16 | Death Stick | Super speed and twitchy hops, crackling | 30 s |
 | 17 | Spice | Low gravity, a slowly spinning view and a grey haze (you're slower while it lasts) | 45 s |
 
-Drink too much within 3 minutes and it catches up with you: the 8th drink knocks you out cold for a few seconds, the 11th is alcohol poisoning and the 5th Spice an overdose - both kill you (MBII's usual 5-second `/kill` countdown) and everyone is told what did it.
+Drink too much within 5 minutes and it catches up with you: the 8th drink knocks you out cold for a few seconds, the 10th is alcohol poisoning and the 3rd Spice an overdose - both kill you (MBII's usual 5-second `/kill` countdown) and everyone is told what did it.
 
 Every order burps (Jawa Juice adds a Jawa line, spice and death sticks a cough), and the 8th order in 3 minutes knocks you out cold for a few seconds.
 
