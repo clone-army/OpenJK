@@ -17,12 +17,14 @@ fighters are frozen for g_betWindowSeconds (30) - their input is rewritten
 before the game sees it, like the bar's control drinks, so nobody lands a
 hit - and bets are only taken during that freeze: up to g_betMax credits a
 duel (100, 0 = no limit), on one side only, never on your own duel. The
-two fighters see a countdown to the fight on screen, with the pot so far. The stake is taken when you bet and goes into the duel's pot;
-the winning side splits the whole pot in proportion to what each put in,
-so no credits are made or lost overall (if nobody backed the loser,
-winners just get their stake back). Paid into the account, so it counts if
-you've left. A duel with no clear winner - a fighter leaving, say - or
-with nobody on the winning side refunds everyone. Switched on with
+two fighters see a countdown to the fight on screen, with the pot so far.
+
+The stake is taken when you bet; back the winner and you get it back, plus
+a flat win bonus (g_betWinBonus, 20 - capped at your stake so a 1-credit
+bet can't farm it, and the only credits betting creates), plus a share of
+the losing bets in proportion to your stake. Paid into the account, so it
+counts if you've left. A duel with no clear winner - a fighter leaving,
+say - or with nobody on the winning side refunds everyone. Switched on with
 g_economyBetEnable.
 ===========================================================================
 */
@@ -132,8 +134,9 @@ static void Bet_Pay(bet_t* b, int amount)
 	}
 }
 
-// winner: 0 or 1, or -1 to refund everyone. The winning side splits the
-// whole pot by stake; nobody on the winning side refunds everyone.
+// winner: 0 or 1, or -1 to refund everyone. Winners get their stake back,
+// the win bonus (up to their stake) and a share of the losing bets by
+// stake; nobody on the winning side refunds everyone.
 static void Bet_Resolve(betDuel_t* duel, int winner)
 {
 	int winners = 0, losers = 0, paid = 0;
@@ -158,12 +161,15 @@ static void Bet_Resolve(betDuel_t* duel, int winner)
 				Bet_Print(cl, va("No winning bets on that duel - your %d credits are back.", b->amount));
 			}
 		} else if (b->side == winner) {
-			const int payout = (int)((long long)b->amount * pot / winningSide);
+			const int bonus = Q_min(b->amount, g_betWinBonus ? Q_max(0, g_betWinBonus->integer) : 20);
+			const int share = (int)((long long)b->amount * (pot - winningSide) / winningSide);
+			const int payout = b->amount + bonus + share;
 			Bet_Pay(b, payout);
 			winners++;
 			paid += payout;
 			if (here) {
-				Bet_Print(cl, va("Your fighter won! ^2+%d ^7credits.", payout));
+				Bet_Print(cl, va("Your fighter won! ^2%d ^7credits back (stake %d + bonus %d + %d from the losers).",
+					payout, b->amount, bonus, share));
 			}
 		} else {
 			losers++;
@@ -175,8 +181,8 @@ static void Bet_Resolve(betDuel_t* duel, int winner)
 	}
 
 	if (winner >= 0 && (winners || losers)) {
-		SV_SendServerCommand(NULL, "chat \"^6[Bet] ^7%s ^7beat %s^7! The ^2%d ^7credit pot goes to %d bettor%s (%d lost).\"\n",
-			duel->handle[winner], duel->handle[1 - winner], pot, winners, winners == 1 ? "" : "s", losers);
+		SV_SendServerCommand(NULL, "chat \"^6[Bet] ^7%s ^7beat %s^7! %d winning bettor%s paid ^2%d ^7credits, %d lost.\"\n",
+			duel->handle[winner], duel->handle[1 - winner], winners, winners == 1 ? "" : "s", paid, losers);
 	}
 	memset(duel, 0, sizeof(*duel));
 }
@@ -301,7 +307,8 @@ static void Bet_List(client_t* cl)
 			SV_EconomyMenuAddLine(cl, va("^7Your bet: ^2%d ^7on %s", bt->amount, duel->handle[bt->side]));
 		}
 	}
-	SV_EconomyMenuAddLine(cl, "^7The winning side splits the whole pot. ^5!bet <fighter> <credits>^7, e.g. ^5!bet ricks 50");
+	SV_EconomyMenuAddLine(cl, va("^7Winners get their bet back + up to ^2%d ^7bonus + a share of the losing bets. ^5!bet ricks 50",
+		g_betWinBonus ? g_betWinBonus->integer : 20));
 	SV_EconomyMenuPump(cl);
 }
 

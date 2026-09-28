@@ -1035,6 +1035,8 @@ void SV_Init (void) {
 	g_betWindowSeconds->flags &= ~CVAR_ARCHIVE;
 	g_betMax = Cvar_Get("g_betMax", "100", CVAR_TEMP, "Most credits one player can bet on one duel (0 = no limit)");
 	g_betMax->flags &= ~CVAR_ARCHIVE;
+	g_betWinBonus = Cvar_Get("g_betWinBonus", "20", CVAR_TEMP, "Flat bonus a winning duel bet earns on top of its share, capped at the stake (0 = none)");
+	g_betWinBonus->flags &= ~CVAR_ARCHIVE;
 	SV_EconomyShopInitCvars();
 	SV_BarInitCvars();
 	g_barTabMinutes = Cvar_Get("g_barTabMinutes", "5", CVAR_TEMP, "Minutes of bar orders that count towards passing out, poisoning and overdoses");

@@ -2631,7 +2631,7 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 			}
 
 			if ( g_economyBetEnable && g_economyBetEnable->integer ) {
-				SV_EconomyMenuAddLine( cl, "^2!bet ^7- the fight taking bets. ^5!bet <fighter> <credits> ^7to back one. In a duel: ^5!bets start ^7to open it to bets." );
+				SV_EconomyMenuAddLine( cl, "^2!bet ^7- the fight taking bets. ^5!bet <fighter> <credits> ^7to back one. In a duel: ^5!bets start ^7to take bets." );
 			}
 
 			if ( g_economyRaffleEnable && g_economyRaffleEnable->integer ) {
