@@ -41,8 +41,9 @@ playerState_t / entityState_t / usercmd_t fields:
     for everyone else (SVF_NOTSINGLECLIENT) plus a copy in front of the
     drinker's view for them alone (SVF_SINGLECLIENT). Ones with a sound only
     play every few seconds
-  - Spotchka is the one look that only others can see: MBII's cloak
-    shimmer, switched on by setting its bit in the entityState_t powerups
+  - Spotchka's cloak shimmer, Mustafar Magma's flames and Ion Fizz's
+    crackle are looks only others can see (on top of the effects above for
+    the last two): MBII's own powerup visuals, switched on by setting its bit in the entityState_t powerups
     mask cgame draws from (cg_players.c) after each game frame. It's
     display-only; pmove and the game read playerState, never touched here.
     (Other powerup looks aren't used: players never see their own - the
@@ -176,7 +177,9 @@ static void Bar_Puff(client_t* cl, const char* fx, int where)
 // MBII's powerup numbers (bg_public.h), which differ from base JKA's: these
 // are what MBII's cgame checks in entityState_t.powerups to draw each one.
 #define BAR_LOOK_NONE      -1
+#define BAR_PW_FLAMES      1        // PW_QUAD, "hijacked for flameburning effects"
 #define BAR_PW_CLOAKED     11       // cloak shimmer
+#define BAR_PW_ELECTRIFY   19       // electric crackle
 
 #define BAR_MOON_GRAVITY_CANCEL  0.65f   // share of gravity Moon Milk cancels in the air
 #define BAR_RUSH_MAX_SPEED       900.0f  // Sugar Rush ground speed cap (normal run is ~250)
@@ -230,8 +233,8 @@ static const barDrink_t kBarDrinks[] = {
 	{ "low_ceiling_lager", "Low-Ceiling Lager", "stuck crouching for a minute",                 10, BAR_CROUCH,  0,   60,  BAR_LOOK_NONE,    BAR_LOOK_NONE, BAR_LOOK, NULL, 0, BAR_FX_HEAD },
 	{ "spotchka",          "Spotchka",          "you shimmer nearly invisible for 45 seconds",  20, BAR_LOOK,    0,   45,  BAR_PW_CLOAKED,   BAR_LOOK_NONE, BAR_LOOK, NULL, 0, BAR_FX_HEAD },
 	{ "hoth_chiller",      "Hoth Chiller",      "frost forms all over you for a minute",           12, BAR_LOOK,    0,   60,  BAR_LOOK_NONE,    BAR_LOOK_NONE, BAR_LOOK, "effects/Flamethrower/ice", 1000, BAR_FX_BODY },
-	{ "mustafar_magma",    "Mustafar Magma",    "you're on fire (just for show) for a minute",  12, BAR_LOOK,    0,   60,  BAR_LOOK_NONE,    BAR_LOOK_NONE, BAR_LOOK, "effects/Emitter/flamestiny", 2000, BAR_FX_BODY },
-	{ "ion_fizz",          "Ion Fizz",          "you crackle with electricity for a minute",    12, BAR_LOOK,    0,   60,  BAR_LOOK_NONE, BAR_LOOK_NONE, BAR_LOOK, "effects/Swords/shock_person", 3000, BAR_FX_BODY },
+	{ "mustafar_magma",    "Mustafar Magma",    "you're on fire (just for show) for a minute",  12, BAR_LOOK,    0,   60, BAR_PW_FLAMES,    BAR_LOOK_NONE, BAR_LOOK, "effects/Emitter/flamestiny", 2000, BAR_FX_BODY },
+	{ "ion_fizz",          "Ion Fizz",          "you crackle with electricity for a minute",    12, BAR_LOOK,    0,   60, BAR_PW_ELECTRIFY, BAR_LOOK_NONE, BAR_LOOK, "effects/Swords/shock_person", 3000, BAR_FX_BODY },
 	{ "death_stick",       "Death Stick",       "you want to go home and rethink your life",    20, BAR_RUSH,    0,   30,  BAR_LOOK_NONE, BAR_LOOK_NONE,    BAR_HICCUP, "effects/spice/pipe_smoke", 500, BAR_FX_HEAD },
 	{ "spice",             "Spice",             "floaty, spinny and hazy for 45 seconds", 20, BAR_MOON,    0,   45,  BAR_LOOK_NONE,    BAR_LOOK_NONE,   BAR_SPIN, "effects/spice/pipe_smoke", 500, BAR_FX_HEAD },
 };
