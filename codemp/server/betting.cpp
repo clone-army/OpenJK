@@ -23,8 +23,9 @@ The stake is taken when you bet; back the winner and you get it back, plus
 a flat win bonus (g_betWinBonus, 20 - capped at your stake so a 1-credit
 bet can't farm it, and the only credits betting creates), plus a share of
 the losing bets in proportion to your stake. Paid into the account, so it
-counts if you've left. A duel with no clear winner - a fighter leaving,
-say - or with nobody on the winning side refunds everyone. Switched on with
+counts if you've left. Losing bets are lost - though if nobody backed the
+winner, they get g_betLoserRefund percent (25) back. A duel with no clear
+winner - a fighter leaving, say - refunds everyone. Switched on with
 g_economyBetEnable.
 ===========================================================================
 */
@@ -136,16 +137,15 @@ static void Bet_Pay(bet_t* b, int amount)
 
 // winner: 0 or 1, or -1 to refund everyone. Winners get their stake back,
 // the win bonus (up to their stake) and a share of the losing bets by
-// stake; nobody on the winning side refunds everyone.
+// stake. If nobody backed the winner, losers get g_betLoserRefund percent
+// of their stake back and the rest is gone.
 static void Bet_Resolve(betDuel_t* duel, int winner)
 {
 	int winners = 0, losers = 0, paid = 0;
 	const int pot = Bet_Backing(duel->id, 0) + Bet_Backing(duel->id, 1);
 	const int winningSide = (winner >= 0) ? Bet_Backing(duel->id, winner) : 0;
-
-	if (winningSide <= 0) {
-		winner = -1;
-	}
+	// Nobody backed the winner: losing bets still lose, but get a little back.
+	const int refundPct = (winningSide <= 0) ? Com_Clampi(0, 100, g_betLoserRefund ? g_betLoserRefund->integer : 25) : 0;
 
 	for (int i = 0; i < BET_MAX_BETS; i++) {
 		bet_t* b = &gBets[i];
@@ -158,7 +158,7 @@ static void Bet_Resolve(betDuel_t* duel, int winner)
 		if (winner < 0) {
 			Bet_Pay(b, b->amount);
 			if (here) {
-				Bet_Print(cl, va("No winning bets on that duel - your %d credits are back.", b->amount));
+				Bet_Print(cl, va("That duel ended without a winner - your %d credits are back.", b->amount));
 			}
 		} else if (b->side == winner) {
 			const int bonus = Q_min(b->amount, g_betWinBonus ? Q_max(0, g_betWinBonus->integer) : 20);
@@ -172,9 +172,15 @@ static void Bet_Resolve(betDuel_t* duel, int winner)
 					payout, b->amount, bonus, share));
 			}
 		} else {
+			const int refund = b->amount * refundPct / 100;
 			losers++;
+			if (refund > 0) {
+				Bet_Pay(b, refund);
+			}
 			if (here) {
-				Bet_Print(cl, va("Your fighter lost - there go your %d credits.", b->amount));
+				Bet_Print(cl, refund > 0
+					? va("Your fighter lost, and nobody backed the winner - %d of your %d credits back.", refund, b->amount)
+					: va("Your fighter lost - there go your %d credits.", b->amount));
 			}
 		}
 		memset(b, 0, sizeof(*b));

@@ -410,6 +410,7 @@ extern	cvar_t* g_economyBetEnable;
 extern	cvar_t* g_betWindowSeconds;
 extern	cvar_t* g_betMax;
 extern	cvar_t* g_betWinBonus;
+extern	cvar_t* g_betLoserRefund;
 extern	cvar_t* g_economyRaffleEnable;
 extern	cvar_t* g_raffleIntervalMinutes;
 extern	cvar_t* g_raffleOpenMinutes;
