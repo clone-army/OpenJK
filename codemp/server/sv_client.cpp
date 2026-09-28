@@ -1745,47 +1745,99 @@ static void SV_EconomySyncCredits( client_t *cl ) {
 // Adds to an account's stored balance directly (raffle winnings, Pazaak
 // payouts to someone who's left). A logged-in session picks the change up
 // through SV_EconomyMergeExternal like any other outside change.
-// Finds the player a chat command means: a slot number or an exact name
-// (SV_BetterGetPlayerByHandle), else any connected player whose name -
-// colours stripped, any case - contains what was typed. More than one
-// match lists them for the asker and finds nobody; no match says so.
+// Lower-case letters and digits only: colours, spaces and clan-tag
+// punctuation dropped, so "CA[212]CE-Ricks" becomes "ca212cericks".
+static void SV_FuzzyNormalize( const char *in, char *out, int outSize ) {
+	char clean[MAX_STRING_CHARS];
+	int n = 0;
+
+	Q_strncpyz( clean, in, sizeof( clean ) );
+	Q_CleanStr( clean );
+	for ( const char *c = clean; *c && n < outSize - 1; c++ ) {
+		if ( isalnum( (unsigned char)*c ) ) {
+			out[n++] = tolower( (unsigned char)*c );
+		}
+	}
+	out[n] = '\0';
+}
+
+// How well what someone typed matches a name, ignoring case, colours and
+// punctuation: 4 exact, 3 start of the name, 2 anywhere in it, 1 its letters
+// in order with gaps ("cdy" for Cody), 0 no match.
+int SV_FuzzyNameScore( const char *name, const char *query ) {
+	char n[MAX_STRING_CHARS], q[MAX_STRING_CHARS];
+	const char *hit;
+	int k = 0;
+
+	SV_FuzzyNormalize( name, n, sizeof( n ) );
+	SV_FuzzyNormalize( query, q, sizeof( q ) );
+	if ( !q[0] || !n[0] ) {
+		return 0;
+	}
+	if ( !strcmp( n, q ) ) {
+		return 4;
+	}
+	hit = strstr( n, q );
+	if ( hit ) {
+		return ( hit == n ) ? 3 : 2;
+	}
+	for ( const char *c = n; *c && q[k]; c++ ) {
+		if ( *c == q[k] ) {
+			k++;
+		}
+	}
+	return q[k] ? 0 : 1;
+}
+
+// Finds the player a chat command means: a slot number, or the best fuzzy
+// match on name (SV_FuzzyNameScore). A tie for the best match lists them
+// for the asker and finds nobody; no match says so.
 client_t *SV_EconomyFindPlayer( client_t *asker, const char *query ) {
 	client_t *found = NULL;
 	char names[512] = "";
-	int matches = 0;
+	int best = 0, ties = 0;
 	int i;
+	const char *p = query;
 
-	found = SV_BetterGetPlayerByHandle( query );
-	if ( found && found->state == CS_ACTIVE ) {
-		return found;
+	while ( *p >= '0' && *p <= '9' ) {
+		p++;
 	}
-	found = NULL;
+	if ( p != query && !*p ) {
+		i = atoi( query );
+		if ( i >= 0 && i < sv_maxclients->integer && svs.clients[i].state == CS_ACTIVE ) {
+			return &svs.clients[i];
+		}
+	}
 
 	for ( i = 0; i < sv_maxclients->integer; i++ ) {
 		client_t *c = &svs.clients[i];
-		char clean[64];
+		int score;
 
 		if ( c->state != CS_ACTIVE ) {
 			continue;
 		}
-		Q_strncpyz( clean, c->name, sizeof( clean ) );
-		Q_CleanStr( clean );
-		if ( !Q_stristr( clean, query ) ) {
+		score = SV_FuzzyNameScore( c->name, query );
+		if ( !score || score < best ) {
 			continue;
 		}
-		matches++;
+		if ( score > best ) {
+			best = score;
+			ties = 0;
+			names[0] = '\0';
+		}
+		ties++;
 		found = c;
-		if ( matches <= 5 ) {
-			Q_strcat( names, sizeof( names ), va( "%s%s^7", matches > 1 ? ", " : "", c->name ) );
+		if ( ties <= 5 ) {
+			Q_strcat( names, sizeof( names ), va( "%s%s^7", ties > 1 ? ", " : "", c->name ) );
 		}
 	}
 
-	if ( matches == 1 ) {
+	if ( ties == 1 ) {
 		return found;
 	}
-	if ( matches > 1 ) {
+	if ( ties > 1 ) {
 		SV_EconomyPrint( asker, va( "\"%s\" matches %d players: %s%s - type more of the name.",
-			query, matches, names, matches > 5 ? ", ..." : "" ) );
+			query, ties, names, ties > 5 ? ", ..." : "" ) );
 	} else {
 		SV_EconomyPrint( asker, va( "No player found matching \"%s\".", query ) );
 	}
@@ -2579,7 +2631,7 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 			}
 
 			if ( g_economyBetEnable && g_economyBetEnable->integer ) {
-				SV_EconomyMenuAddLine( cl, "^2!bet ^7- duels taking bets. ^5!bet <number> <credits> ^7to back a fighter. In a duel: ^5!bets start ^7to open it to bets." );
+				SV_EconomyMenuAddLine( cl, "^2!bet ^7- the fight taking bets. ^5!bet <fighter> <credits> ^7to back one. In a duel: ^5!bets start ^7to open it to bets." );
 			}
 
 			if ( g_economyRaffleEnable && g_economyRaffleEnable->integer ) {
