@@ -1745,6 +1745,53 @@ static void SV_EconomySyncCredits( client_t *cl ) {
 // Adds to an account's stored balance directly (raffle winnings, Pazaak
 // payouts to someone who's left). A logged-in session picks the change up
 // through SV_EconomyMergeExternal like any other outside change.
+// Finds the player a chat command means: a slot number or an exact name
+// (SV_BetterGetPlayerByHandle), else any connected player whose name -
+// colours stripped, any case - contains what was typed. More than one
+// match lists them for the asker and finds nobody; no match says so.
+client_t *SV_EconomyFindPlayer( client_t *asker, const char *query ) {
+	client_t *found = NULL;
+	char names[512] = "";
+	int matches = 0;
+	int i;
+
+	found = SV_BetterGetPlayerByHandle( query );
+	if ( found && found->state == CS_ACTIVE ) {
+		return found;
+	}
+	found = NULL;
+
+	for ( i = 0; i < sv_maxclients->integer; i++ ) {
+		client_t *c = &svs.clients[i];
+		char clean[64];
+
+		if ( c->state != CS_ACTIVE ) {
+			continue;
+		}
+		Q_strncpyz( clean, c->name, sizeof( clean ) );
+		Q_CleanStr( clean );
+		if ( !Q_stristr( clean, query ) ) {
+			continue;
+		}
+		matches++;
+		found = c;
+		if ( matches <= 5 ) {
+			Q_strcat( names, sizeof( names ), va( "%s%s^7", matches > 1 ? ", " : "", c->name ) );
+		}
+	}
+
+	if ( matches == 1 ) {
+		return found;
+	}
+	if ( matches > 1 ) {
+		SV_EconomyPrint( asker, va( "\"%s\" matches %d players: %s%s - type more of the name.",
+			query, matches, names, matches > 5 ? ", ..." : "" ) );
+	} else {
+		SV_EconomyPrint( asker, va( "No player found matching \"%s\".", query ) );
+	}
+	return NULL;
+}
+
 qboolean SV_EconomyAddCreditsToAccount( const char *handle, int amount ) {
 	economyAccount_t *acct = SV_EconomyFindAccount( handle );
 
@@ -2212,11 +2259,10 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 			SV_EconomyPrint( cl, "Usage: ^5!gift <player> <credits>^7, e.g. ^5!gift Ricks 50" );
 			return qtrue;
 		}
-		target = SV_BetterGetPlayerByHandle( firstArg );
+		target = SV_EconomyFindPlayer( cl, firstArg );
 		amount = atoi( secondArg );
 
-		if ( !target || target->state != CS_ACTIVE ) {
-			SV_EconomyPrint( cl, va( "No player found matching \"%s\".", firstArg ) );
+		if ( !target ) {
 			return qtrue;
 		}
 		if ( target == cl ) {
@@ -2263,11 +2309,10 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 		}
 
 		if ( sscanf( chatCursor, "%63s %63s", firstArg, secondArg ) == 2 ) {
-			client_t *target = SV_BetterGetPlayerByHandle( firstArg );
+			client_t *target = SV_EconomyFindPlayer( cl, firstArg );
 			int amount = atoi( secondArg );
 
 			if ( !target ) {
-				SV_EconomyPrint( cl, va( "No player found matching \"%s\". Usage: !bounty <player> <credits>", firstArg ) );
 				return qtrue;
 			}
 
