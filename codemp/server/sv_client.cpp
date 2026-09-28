@@ -2087,6 +2087,7 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 		  !Q_stricmp( commandName, "gift" ) ||
 		  !Q_stricmp( commandName, "chance" ) ||
 		  !Q_stricmp( commandName, "bet" ) ||
+		  !Q_stricmp( commandName, "bets" ) ||
 		  !Q_stricmp( commandName, "bounty" ) ||
 		  !Q_stricmp( commandName, "bountry" ) ||
 		  !Q_stricmp( commandName, "register" ) ||
@@ -2108,6 +2109,7 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 		  !Q_stricmp( commandName, "gift" ) ||
 		  !Q_stricmp( commandName, "chance" ) ||
 		  !Q_stricmp( commandName, "bet" ) ||
+		  !Q_stricmp( commandName, "bets" ) ||
 		  !Q_stricmp( commandName, "bounty" ) ||
 		  !Q_stricmp( commandName, "bountry" ) ) ) {
 		SV_EconomyPrint( cl, "You need to be logged in to use this. "
@@ -2151,7 +2153,7 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 		return SV_ChanceCommand( cl, chatCursor );
 	}
 
-	if ( !Q_stricmp( commandName, "bet" ) ) {
+	if ( !Q_stricmp( commandName, "bet" ) || !Q_stricmp( commandName, "bets" ) ) {
 		return SV_BetCommand( cl, chatCursor );
 	}
 
@@ -2577,7 +2579,7 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 			}
 
 			if ( g_economyBetEnable && g_economyBetEnable->integer ) {
-				SV_EconomyMenuAddLine( cl, "^2!bet ^7- duels you can bet on. ^5!bet <number> <credits> ^7to back a fighter; winners split the pot." );
+				SV_EconomyMenuAddLine( cl, "^2!bet ^7- duels taking bets. ^5!bet <number> <credits> ^7to back a fighter. In a duel: ^5!bets start ^7to open it to bets." );
 			}
 
 			if ( g_economyRaffleEnable && g_economyRaffleEnable->integer ) {
@@ -2787,6 +2789,7 @@ void SV_ClientThink (client_t *cl, usercmd_t *cmd) {
 	// game module actually reads still has the player's original request.
 	SV_GunGameClampWeaponSelect( cl, cmd );
 	SV_BarClientThink( cl, cmd );
+	SV_BetClientThink( cl, cmd );
 	SV_VehicleClientThinkHook( cl, cmd );
 
 	cl->lastUsercmd = *cmd;
