@@ -41,6 +41,11 @@ static const jukeboxTrack_t kJukeboxTracks[] = {
 	{ "Crazy Train",               "music/crazytrain/crazytrain" },
 	{ "Strings of Life",           "music/tlp/strings-of-life2" },
 	{ "The Ultimate Showdown",     "Music/ultimate_showdown" },
+	{ "Pokemon Stadium",           "Music/pkmnstad" },
+	{ "Pokemon Town",              "Music/pokemon/ptown" },
+	{ "Teenage Mutant Ninja Turtles", "Music/tmnt" },
+	{ "Halo",                      "Music/halo_for" },
+	{ "Portal",                    "music/portal" },
 };
 
 static int gJukeboxNextChange = 0;
