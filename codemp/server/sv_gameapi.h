@@ -23,6 +23,8 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 void		GVM_InitGame						( int levelTime, int randomSeed, int restart );
 void *		GVM_GetDllHandle					( void );
 void		GVM_CallNative						( void (*fn)( void *ent ), void *ent );
+int			GVM_CallEffectIndex					( int (*fn)( const char *name ), const char *name );
+void		GVM_CallPlayEffectID				( void *(*fn)( int fxID, float *org, float *ang ), int fxID, float *org, float *ang );
 void		GVM_ShutdownGame					( int restart );
 char *		GVM_ClientConnect					( int clientNum, qboolean firstTime, qboolean isBot );
 void		GVM_ClientBegin						( int clientNum );

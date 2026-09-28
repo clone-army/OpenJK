@@ -54,6 +54,18 @@ void GVM_CallNative( void (*fn)( void *ent ), void *ent ) {
 	fn( ent );
 }
 
+// Game-module effects by name (bar.cpp): G_EffectIndex registers (or finds)
+// the effect's configstring, G_PlayEffectID spawns the temp entity.
+int GVM_CallEffectIndex( int (*fn)( const char *name ), const char *name ) {
+	VMSwap v( gvm );
+	return fn( name );
+}
+
+void GVM_CallPlayEffectID( void *(*fn)( int fxID, float *org, float *ang ), int fxID, float *org, float *ang ) {
+	VMSwap v( gvm );
+	fn( fxID, org, ang );
+}
+
 void GVM_InitGame( int levelTime, int randomSeed, int restart ) {
 	if ( gvm->isLegacy ) {
 		VM_Call( gvm, GAME_INIT, levelTime, randomSeed, restart );
