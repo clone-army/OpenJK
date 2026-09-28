@@ -2086,6 +2086,7 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 		  !Q_stricmp( commandName, "raffle" ) ||
 		  !Q_stricmp( commandName, "gift" ) ||
 		  !Q_stricmp( commandName, "chance" ) ||
+		  !Q_stricmp( commandName, "bet" ) ||
 		  !Q_stricmp( commandName, "bounty" ) ||
 		  !Q_stricmp( commandName, "bountry" ) ||
 		  !Q_stricmp( commandName, "register" ) ||
@@ -2106,6 +2107,7 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 		  !Q_stricmp( commandName, "raffle" ) ||
 		  !Q_stricmp( commandName, "gift" ) ||
 		  !Q_stricmp( commandName, "chance" ) ||
+		  !Q_stricmp( commandName, "bet" ) ||
 		  !Q_stricmp( commandName, "bounty" ) ||
 		  !Q_stricmp( commandName, "bountry" ) ) ) {
 		SV_EconomyPrint( cl, "You need to be logged in to use this. "
@@ -2147,6 +2149,10 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 
 	if ( !Q_stricmp( commandName, "chance" ) ) {
 		return SV_ChanceCommand( cl, chatCursor );
+	}
+
+	if ( !Q_stricmp( commandName, "bet" ) ) {
+		return SV_BetCommand( cl, chatCursor );
 	}
 
 	if ( !Q_stricmp( commandName, "buy" ) ) {
@@ -2568,6 +2574,10 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 
 			if ( g_economyChanceEnable && g_economyChanceEnable->integer ) {
 				SV_EconomyMenuAddLine( cl, "^2!chance <player> <credits> ^7- they pick red or blue, the server rolls, winning colour takes the pot." );
+			}
+
+			if ( g_economyBetEnable && g_economyBetEnable->integer ) {
+				SV_EconomyMenuAddLine( cl, "^2!bet ^7- duels you can bet on. ^5!bet <number> <credits> ^7to back a fighter; winners split the pot." );
 			}
 
 			if ( g_economyRaffleEnable && g_economyRaffleEnable->integer ) {

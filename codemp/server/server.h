@@ -406,6 +406,9 @@ extern	cvar_t* g_jukeboxCost;
 extern	cvar_t* g_jukeboxCooldown;
 extern	cvar_t* g_economyPazaakEnable;
 extern	cvar_t* g_economyChanceEnable;
+extern	cvar_t* g_economyBetEnable;
+extern	cvar_t* g_betWindowSeconds;
+extern	cvar_t* g_betMax;
 extern	cvar_t* g_economyRaffleEnable;
 extern	cvar_t* g_raffleIntervalMinutes;
 extern	cvar_t* g_raffleOpenMinutes;
@@ -620,6 +623,12 @@ qboolean SV_PazaakCommand(client_t* cl, const char* args);
 // chance.cpp
 //
 qboolean SV_ChanceCommand(client_t* cl, const char* args);
+
+//
+// betting.cpp
+//
+qboolean SV_BetCommand(client_t* cl, const char* args);
+void SV_BetFrame(void);
 void SV_PazaakFrame(void);
 
 //

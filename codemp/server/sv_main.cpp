@@ -85,6 +85,9 @@ cvar_t* g_jukeboxCost;
 cvar_t* g_jukeboxCooldown;
 cvar_t* g_economyPazaakEnable;
 cvar_t* g_economyChanceEnable;
+cvar_t* g_economyBetEnable;
+cvar_t* g_betWindowSeconds;
+cvar_t* g_betMax;
 cvar_t* g_economyRaffleEnable;
 cvar_t* g_raffleIntervalMinutes;
 cvar_t* g_raffleOpenMinutes;
@@ -1292,6 +1295,7 @@ void SV_Frame( int msec ) {
 
 	// pazaak turn timers and walkouts; raffle schedule
 	SV_PazaakFrame();
+	SV_BetFrame();
 	SV_EmotesFrame();
 	SV_RaffleFrame();
 
