@@ -70,6 +70,7 @@ command: nothing is broadcast, and the commands never show up as chat.
 | `g_economyBarEnable` | `0` | The `!bar` drinks menu (needs the master switch too) |
 | `g_economyJukeboxEnable` | `0` | The `!jukebox` (needs the master switch too): `g_jukeboxCost` (10) per track, `g_jukeboxCooldown` (60) seconds before it can change again |
 | `g_economyPazaakEnable` | `0` | `!pazaak` challenges for credits (needs the master switch too) |
+| `g_economyBetEnable` | `0` | `!bet` on duels (needs the master switch too): `g_betWindowSeconds` (30), `g_betMax` (100) |
 | `g_economyChanceEnable` | `0` | `!chance` red/blue challenges for credits (needs the master switch too) |
 | `g_economyRaffleEnable` | `0` | The `!raffle` (needs the master switch too): `g_raffleIntervalMinutes` (60), `g_raffleOpenMinutes` (10), `g_raffleTicketPrice` (5), `g_raffleMinEntrants` (5) |
 | `g_economyRegisterBonus` | `100` | Credits given once when a player `!register`s a new account |
@@ -154,6 +155,14 @@ in chat; the map's own music comes back next round. See `codemp/server/jukebox.c
 ### Pazaak
 
 `!pazaak <player> <credits>` challenges someone to KOTOR's card game; they `!pazaak accept` or `!pazaak decline` within 60 seconds. Both stakes are taken on accept and the winner gets the pot. The server deals from a 1-10 deck and each player gets four side cards (+1..+6 or -1..-6). On your turn you're dealt a card, may `!pz play <n>` one side card, then `!pz end` or `!pz stand` - or `!pz auto` to let the server play the turn for you. `!pazaak` and `!pz` are interchangeable. Over 20 is a bust; closest to 20 wins the set, first to two sets wins. Turns time out after 30 seconds (you stand); leaving or `!pz forfeit` loses. See `codemp/server/pazaak.cpp`.
+
+### Betting on duels
+
+`!bet` lists each fighter in each duel as a numbered option (`1. Ricks vs Cody (Ricks to win) - 150 cr backing`);
+`!bet <number> <credits>` backs that option (or `!bet <fighter> <credits>`, by part of the name). Bets are only taken in a
+duel's first `g_betWindowSeconds`, up to `g_betMax` a duel, on one side only, and never on your own duel. Every stake goes
+into the duel's pot and the winning side splits the whole pot by stake, so no credits are created; a duel with no clear
+winner (a fighter leaving) or nobody on the winning side refunds everyone. See `codemp/server/betting.cpp`.
 
 ### Chance
 

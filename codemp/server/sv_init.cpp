@@ -1029,6 +1029,12 @@ void SV_Init (void) {
 	g_raffleMinEntrants = Cvar_Get("g_raffleMinEntrants", "5", CVAR_TEMP, "Different players who must enter for a raffle draw to happen (otherwise refunded)");
 	g_economyChanceEnable = Cvar_Get("g_economyChanceEnable", "0", CVAR_TEMP, "Enable !chance red/blue challenges for credits (also requires g_creditSystemEnable 1)");
 	g_economyChanceEnable->flags &= ~CVAR_ARCHIVE;
+	g_economyBetEnable = Cvar_Get("g_economyBetEnable", "0", CVAR_TEMP, "Enable !bet on duels (also requires g_creditSystemEnable 1)");
+	g_economyBetEnable->flags &= ~CVAR_ARCHIVE;
+	g_betWindowSeconds = Cvar_Get("g_betWindowSeconds", "30", CVAR_TEMP, "Seconds after a duel starts that bets are taken");
+	g_betWindowSeconds->flags &= ~CVAR_ARCHIVE;
+	g_betMax = Cvar_Get("g_betMax", "100", CVAR_TEMP, "Most credits one player can bet on one duel (0 = no limit)");
+	g_betMax->flags &= ~CVAR_ARCHIVE;
 	SV_EconomyShopInitCvars();
 	SV_BarInitCvars();
 	g_barTabMinutes = Cvar_Get("g_barTabMinutes", "5", CVAR_TEMP, "Minutes of bar orders that count towards passing out, poisoning and overdoses");

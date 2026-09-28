@@ -320,6 +320,7 @@ if(BuildMPEngine OR BuildMPDed)
 		"${MPDir}/server/emotes.cpp"
 		"${MPDir}/server/pazaak.cpp"
 		"${MPDir}/server/chance.cpp"
+		"${MPDir}/server/betting.cpp"
 		"${MPDir}/server/raffle.cpp"
 		"${MPDir}/server/gungame.h"
 		"${MPDir}/server/gungame.cpp"
