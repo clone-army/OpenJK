@@ -133,7 +133,7 @@ bubbles, frost, dust, flames, sparks) that everyone sees, you included:
 | 16 | Death Stick | Super speed and twitchy hops, crackling | 30 s |
 | 17 | Spice | Low gravity, a slowly spinning view and a grey haze (you're slower while it lasts) | 45 s |
 | 18 | Nurse Wine | Cures every drink effect at once and clears your tab | - |
-| 19 | Doctor Vodka | The doctor prescribes you two random drinks (never Spice or Death Sticks) | - |
+| 19 | Doctor Vodka | One of everything on the menu at once (the Spice in it doesn't count towards an overdose) | - |
 
 Drink too much within `g_barTabMinutes` (5) and it catches up with you: the `g_barPassOutDrinks`-th drink (8) knocks you out cold for a few seconds, the `g_barPoisoningDrinks`-th (10) is alcohol poisoning and the `g_barSpiceOverdose`-th Spice (3) an overdose - both kill you (MBII's usual 5-second `/kill` countdown) and everyone is told what did it.
 
