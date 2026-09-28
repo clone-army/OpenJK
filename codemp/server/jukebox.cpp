@@ -18,7 +18,9 @@ g_jukeboxCooldown how long one plays before anyone can change it.
 The music is the stock CS_MUSIC configstring (2 in both MBII and the
 engine): cgame restarts the background track whenever it changes
 (CG_StartMusic, cg_main.c), exactly as it does for a map's own worldspawn
-"music" key. G_InitGame puts the map's own music back on the next round.
+"music" key, taking an intro and a loop: a pick is the intro and the map's
+own music the loop, so the track plays through once and then the map's
+music comes back by itself. G_InitGame resets it every round anyway.
 ===========================================================================
 */
 
@@ -36,6 +38,21 @@ typedef struct {
 #define JUKEBOX_SEARCH_MAX    20
 
 static int gJukeboxNextChange = 0;
+static char gJukeboxLastSet[MAX_STRING_CHARS];   // what we last put in CS_MUSIC
+static char gJukeboxMapMusic[MAX_QPATH];         // the map's own track, to go back to
+
+// If CS_MUSIC isn't what we last set, the map (or a new round) set it, so
+// that's the music to return to: its loop track, or its only track.
+static void Jukebox_NoteMapMusic(void)
+{
+	const char* cur = sv.configstrings[CS_MUSIC] ? sv.configstrings[CS_MUSIC] : "";
+	if (!Q_stricmp(cur, gJukeboxLastSet)) {
+		return;
+	}
+	char intro[MAX_QPATH] = "", loop[MAX_QPATH] = "";
+	sscanf(cur, "%63s %63s", intro, loop);
+	Q_strncpyz(gJukeboxMapMusic, loop[0] ? loop : intro, sizeof(gJukeboxMapMusic));
+}
 
 static int Jukebox_Cost(void)
 {
@@ -116,7 +133,11 @@ static void Jukebox_Play(client_t* cl, int index)
 	const jukeboxTrack_t* t = &kJukeboxTracks[index];
 	cl->economyCredits -= cost;
 	SV_EconomyPersistCredits(cl);
-	SV_SetConfigstring(CS_MUSIC, t->path);
+	Jukebox_NoteMapMusic();
+	// Intro = the pick, loop = the map's music: one play-through, then back.
+	Q_strncpyz(gJukeboxLastSet, gJukeboxMapMusic[0] ? va("%s %s", t->path, gJukeboxMapMusic) : t->path,
+		sizeof(gJukeboxLastSet));
+	SV_SetConfigstring(CS_MUSIC, gJukeboxLastSet);
 	gJukeboxNextChange = svs.time + (g_jukeboxCooldown ? Q_max(0, g_jukeboxCooldown->integer) : 60) * 1000;
 
 	SV_SendServerCommand(NULL, "chat \"^5[Jukebox] ^7%s ^7put on ^3%s^7.\"\n", cl->name, t->name);

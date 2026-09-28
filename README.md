@@ -107,13 +107,14 @@ at a time so they don't scroll off the chat overlay before you can read them.
 
 `!bar` lists the drinks and `!bar <number>` orders one; every order is announced in chat. There's no drinking
 animation in the game, and the bar is meant for the no-damage social server, so drinks change how you look, move and
-steer - nothing that matters in a fight - and you glow while they're working:
+steer - nothing that matters in a fight - and most play one of MBII's own effects on you (smoke, a confusion swirl,
+bubbles, frost, dust, flames, sparks) that everyone sees, you included:
 
 | # | Drink | Does | Lasts |
 |---|---|---|---|
 | 1 | Jawa Juice | Tiny | 2 min |
 | 2 | Hutt Brew | Huge | 2 min |
-| 3 | Corellian Whiskey | Drunk: your view sways and you stagger | 90 s |
+| 3 | Corellian Whiskey | Drunk: your view sways hard, and you choke on it | 90 s |
 | 4 | Tatooine Twister | Your view spins | 20 s |
 | 5 | Bubble Brew | Hiccups: you hop every few seconds | 1 min |
 | 6 | Moon Milk | Low gravity | 1 min |
@@ -123,15 +124,13 @@ steer - nothing that matters in a fight - and you glow while they're working:
 | 10 | Runaway Rum | You can't stop running forward | 30 s |
 | 11 | Low-Ceiling Lager | Stuck crouching | 1 min |
 | 12 | Spotchka | Shimmer nearly invisible | 45 s |
-| 13 | Hoth Chiller | Frozen in slow motion (looks only) | 1 min |
+| 13 | Hoth Chiller | Frost forms all over you | 1 min |
 | 14 | Mustafar Magma | On fire (looks only) | 1 min |
 | 15 | Ion Fizz | Crackling with electricity (looks only) | 1 min |
 | 16 | Death Stick | Super speed and twitchy hops, crackling | 30 s |
-| 17 | Spice | Low gravity and a slowly spinning view; looks slow-motion to others | 45 s |
+| 17 | Spice | Low gravity, a slowly spinning view and a grey haze (you're slower while it lasts) | 45 s |
 
-Order a few in quick succession (3 or more within 3 minutes) and the bar starts announcing it: tipsy, then
-wasted, then "needs to lay off the booze", with a random line each time. A third Spice within 3 minutes is an
-overdose: announced, then MBII's usual 5-second `/kill` countdown.
+Drink too much within 3 minutes and it catches up with you: the 8th drink knocks you out cold for a few seconds, the 11th is alcohol poisoning and the 5th Spice an overdose - both kill you (MBII's usual 5-second `/kill` countdown) and everyone is told what did it.
 
 Every order burps (Jawa Juice adds a Jawa line, spice and death sticks a cough), and the 8th order in 3 minutes knocks you out cold for a few seconds.
 
