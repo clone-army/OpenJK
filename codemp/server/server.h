@@ -579,6 +579,7 @@ void SV_EconomyMenuPump( client_t *cl );
 void SV_BarInitCvars(void);
 qboolean SV_BarCommand(client_t* cl, const char* args);
 void SV_BarFrame(void);
+void SV_BarClientThink(client_t* cl, usercmd_t* cmd);
 
 //
 // killstreak.cpp

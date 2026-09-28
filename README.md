@@ -101,24 +101,31 @@ at a time so they don't scroll off the chat overlay before you can read them.
 
 ### The bar
 
-`!bar` lists the drinks, `!bar <number>` orders one for yourself and `!bar round <number>` buys one for every living
-player (price x players served). Every order is announced in chat. There's no drinking animation in the game, so
-drinks do something instead, and you glow while they're working:
+`!bar` lists the drinks and `!bar <number>` orders one; every order is announced in chat. There's no drinking
+animation in the game, and the bar is meant for the no-damage social server, so drinks change how you look, move and
+steer - nothing that matters in a fight - and you glow while they're working:
 
-| # | Drink | Does | Glow | Default price |
-|---|---|---|---|---|
-| 1 | Jawa Juice | Shrinks you for 2 minutes | Gold | 10 |
-| 2 | Hutt Brew | Makes you huge for 2 minutes | Green | 15 |
-| 3 | Blue Milk | +100 armour | Blue shimmer (30s) | 10 |
-| 4 | Bacta Shot | A bacta tank | White-blue (30s) | 8 |
-| 5 | Spotchka | A cloak generator | None (it's a cloak) | 20 |
-| 6 | Corellian Whiskey | Drunk for a minute: your view sways and you stagger | Red | 12 |
-| 7 | Ion Fizz | A shockfield | Electric crackle (30s) | 20 |
-| 8 | Jet Juice | A jetpack | Plasma flames (30s) | 22 |
+| # | Drink | Does | Lasts |
+|---|---|---|---|
+| 1 | Jawa Juice | Tiny | 2 min |
+| 2 | Hutt Brew | Huge | 2 min |
+| 3 | Corellian Whiskey | Drunk: your view sways and you stagger | 90 s |
+| 4 | Tatooine Twister | Your view spins | 20 s |
+| 5 | Bubble Brew | Hiccups: you hop every few seconds | 1 min |
+| 6 | Moon Milk | Low gravity | 1 min |
+| 7 | Sugar Rush | Super speed | 30 s |
+| 8 | Bantha Sludge | Quarter speed | 1 min |
+| 9 | Backwards Brandy | Controls reversed | 1 min |
+| 10 | Runaway Rum | You can't stop running forward | 30 s |
+| 11 | Low-Ceiling Lager | Stuck crouching | 1 min |
+| 12 | Spotchka | Shimmer nearly invisible | 45 s |
+| 13 | Hoth Chiller | Frozen in slow motion (looks only) | 1 min |
+| 14 | Mustafar Magma | On fire (looks only) | 1 min |
+| 15 | Ion Fizz | Crackling with electricity (looks only) | 1 min |
 
-Each price is its own cvar, `g_barCost_<drink>` (`jawa_juice`, `hutt_brew`, `blue_milk`, `bacta_shot`, `spotchka`,
-`corellian_whiskey`, `ion_fizz`, `jet_juice`); `0` takes a drink off the menu. Effects only last for the life they
-were bought in. See the header of `codemp/server/bar.cpp` for how the effects and glows work.
+Each price is its own cvar, `g_barCost_<drink>` (the drink's name in lower case with underscores, e.g.
+`g_barCost_jawa_juice`); `0` takes a drink off the menu. Effects only last for the life they were bought in. See the
+header of `codemp/server/bar.cpp` for how each effect works.
 
 ### Shop catalog
 
