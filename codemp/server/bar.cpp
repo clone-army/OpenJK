@@ -12,6 +12,8 @@ no-damage social server, so drinks are all about how you look, move and
 steer - nothing that matters in a fight. Everything goes through stock
 playerState_t / entityState_t / usercmd_t fields:
 
+  - Nurse Wine cures everything at once (and clears the tab), with MBII's
+    heal grenade burst; Doctor Vodka applies two random drinks
   - Gungan Grog trips you up every few seconds (MBII's own G_Knockdown,
     short, quick getup)
   - size drinks set iModelScale (the same field spin.cpp's size prizes use),
@@ -116,6 +118,10 @@ static void Bar_OrderSounds(client_t* cl, const char* id)
 		Bar_Sound(cl, va("Sound/Chars/r_jawa_bane/misc/gloat%d.mp3", Q_irand(1, 3)));
 	} else if (!Q_stricmp(id, "death_stick") || !Q_stricmp(id, "spice")) {
 		Bar_Sound(cl, "sound/chars/grievous/misc/cough.mp3");
+	} else if (!Q_stricmp(id, "nurse_wine")) {
+		Bar_Sound(cl, "sound/dreamtime/healing.wav");
+	} else if (!Q_stricmp(id, "doctor_vodka")) {
+		Bar_Sound(cl, "sound/items/use_bacta.wav");
 	}
 }
 
@@ -200,6 +206,8 @@ typedef enum {
 	BAR_RUNAWAY,
 	BAR_CROUCH,
 	BAR_CLUMSY,     // tripping over every few seconds
+	BAR_CURE,       // Nurse Wine: ends everything and clears the tab (at order)
+	BAR_PRESCRIBE,  // Doctor Vodka: two random drinks (at order)
 	BAR_LOOK,       // just the visual in .look
 	BAR_NUM_EFFECTS
 } barEffect_t;
@@ -239,6 +247,8 @@ static const barDrink_t kBarDrinks[] = {
 	{ "ion_fizz",          "Ion Fizz",          "you crackle with electricity for a minute",    12, BAR_LOOK,    0,   60, BAR_PW_ELECTRIFY, BAR_LOOK_NONE, BAR_LOOK, "effects/Swords/shock_person", 3000, BAR_FX_BODY },
 	{ "death_stick",       "Death Stick",       "you want to go home and rethink your life",    20, BAR_RUSH,    0,   30,  BAR_LOOK_NONE, BAR_LOOK_NONE,    BAR_HICCUP, "effects/spice/pipe_smoke", 500, BAR_FX_HEAD },
 	{ "spice",             "Spice",             "floaty, spinny and hazy for 45 seconds", 20, BAR_MOON,    0,   45,  BAR_LOOK_NONE,    BAR_LOOK_NONE,   BAR_SPIN, "effects/spice/pipe_smoke", 500, BAR_FX_HEAD },
+	{ "nurse_wine",        "Nurse Wine",        "cures every drink effect and clears your tab", 15, BAR_CURE,    0,   0,   BAR_LOOK_NONE,    BAR_LOOK_NONE, BAR_LOOK, NULL, 0, BAR_FX_HEAD },
+	{ "doctor_vodka",      "Doctor Vodka",      "the doctor prescribes you two random drinks",  12, BAR_PRESCRIBE, 0, 0,   BAR_LOOK_NONE,    BAR_LOOK_NONE, BAR_LOOK, NULL, 0, BAR_FX_HEAD },
 };
 
 static cvar_t* gBarCostCvars[ARRAY_LEN(kBarDrinks)];
@@ -446,6 +456,65 @@ static void Bar_ShowMenu(client_t* cl)
 	SV_EconomyMenuPump(cl);
 }
 
+// Nurse Wine: undoes every drink effect on this life - the sway and size
+// put back exactly, the Spice haze let go - and clears the tab. A /kill
+// already under way isn't stopped.
+static void Bar_Cure(client_t* cl, barTab_t* tab)
+{
+	playerState_t* ps = cl->gentity->playerState;
+	barState_t* st = Bar_StateFor(cl);
+
+	if (st->until[BAR_DRUNK]) {
+		ps->delta_angles[YAW] -= st->swayYaw;
+		ps->delta_angles[PITCH] -= st->swayPitch;
+	}
+	if (st->until[BAR_SCALE] && ps->iModelScale == st->scaleSet) {
+		ps->iModelScale = st->scaleOriginal;
+	}
+	if (st->hazeUntil > svs.time) {
+		ps->fd.forceRageRecoveryTime = 0;
+	}
+	const int spawnCount = st->spawnCount;
+	memset(st, 0, sizeof(*st));
+	st->spawnCount = spawnCount;
+
+	memset(tab->orderTimes, 0, sizeof(tab->orderTimes));
+	memset(tab->spiceTimes, 0, sizeof(tab->spiceTimes));
+
+	// MBII's heal grenade burst, once, where everyone - the drinker included - sees it.
+	if (Bar_ResolveFx()) {
+		const int id = GVM_CallEffectIndex(gBarEffectIndex, "effects/Grenades/EXP_Heal");
+		if (id > 0) {
+			vec3_t org;
+			VectorCopy(ps->origin, org);
+			Bar_PlayFx(id, org, cl - svs.clients, 0);
+		}
+	}
+}
+
+// Doctor Vodka: two different random drinks off the menu - never Spice,
+// Death Sticks, or the nurse and doctor themselves. Returns how many.
+static int Bar_Prescribe(client_t* cl, const char** names)
+{
+	int picked[2] = { -1, -1 }, n = 0;
+
+	for (int tries = 0; tries < 50 && n < 2; tries++) {
+		const int d = Q_irand(0, (int)ARRAY_LEN(kBarDrinks) - 1);
+		const barDrink_t* k = &kBarDrinks[d];
+		if (k->effect == BAR_CURE || k->effect == BAR_PRESCRIBE ||
+			!Q_stricmp(k->id, "spice") || !Q_stricmp(k->id, "death_stick") || d == picked[0]) {
+			continue;
+		}
+		picked[n] = d;
+		names[n] = k->name;
+		n++;
+	}
+	for (int i = 0; i < n; i++) {
+		Bar_Apply(cl, picked[i]);
+	}
+	return n;
+}
+
 // Drunk (or spiced) to death: MBII's own /kill - a 5 second countdown, then
 // they drop - and Bar_OverdoseFrame tells everyone why once they do.
 static void Bar_Kill(client_t* cl, barTab_t* tab, const char* cause)
@@ -491,7 +560,22 @@ qboolean SV_BarCommand(client_t* cl, const char* args)
 
 	cl->economyCredits -= Bar_Cost(drink);
 	SV_EconomyPersistCredits(cl);
-	Bar_Apply(cl, drink);
+
+	if (kBarDrinks[drink].effect == BAR_CURE) {
+		Bar_OrderSounds(cl, kBarDrinks[drink].id);
+		Bar_Cure(cl, &gBarTab[cl - svs.clients]);
+		SV_SendServerCommand(NULL, "chat \"^5[Bar] ^7%s ^7is being looked after by the nurse - all better!\"\n", cl->name);
+		SV_EconomyPrint(cl, va("Nurse Wine: every drink wears off and your tab's cleared. New balance: %d", cl->economyCredits));
+		return qtrue;
+	}
+	if (kBarDrinks[drink].effect == BAR_PRESCRIBE) {
+		const char* rx[2] = { "", "" };
+		const int n = Bar_Prescribe(cl, rx);
+		SV_SendServerCommand(NULL, "chat \"^5[Bar] ^7Doctor's orders for %s^7: ^3%s%s%s^7!\"\n", cl->name,
+			rx[0], n > 1 ? " ^7and ^3" : "", n > 1 ? rx[1] : "");
+	} else {
+		Bar_Apply(cl, drink);
+	}
 	SV_SendServerCommand(NULL, "chat \"^5[Bar] ^7%s ^7orders %s^3%s^7!\"\n", cl->name,
 		!Q_stricmp(kBarDrinks[drink].id, "spice") ? "" : "a ", kBarDrinks[drink].name);
 	SV_EconomyPrint(cl, va("%s: %s. New balance: %d", kBarDrinks[drink].name, kBarDrinks[drink].blurb, cl->economyCredits));
