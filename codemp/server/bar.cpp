@@ -15,10 +15,9 @@ playerState_t / entityState_t / usercmd_t fields:
   - size drinks set iModelScale (the same field spin.cpp's size prizes use),
     and put back the class's own scale, which MBII sets per class on spawn
   - Corellian Whiskey makes you drunk: delta_angles is nudged every frame so
-    your view sways (the field the game itself uses to turn a player's view
-    on teleport), and ps->velocity gets regular shoves so you stagger. Every
-    nudge is tracked and undone exactly when it wears off. Tatooine Twister
-    spins your view the same way
+    your view sways hard (the field the game itself uses to turn a player's
+    view on teleport). Every nudge is tracked and undone exactly when it
+    wears off. Tatooine Twister spins your view the same way
   - Bubble Brew (hiccup hops), Moon Milk (part of gravity cancelled while
     airborne) and Sugar Rush (ground speed boosted) push ps->velocity after
     each game frame
@@ -28,28 +27,31 @@ playerState_t / entityState_t / usercmd_t fields:
     crouching. The client still predicts its own unaltered input, so these
     feel a little rubbery - which rather suits a drink
   - Death Stick and Spice combine two of the above (speed + hiccups,
-    low gravity + spin), with a look on top; most drinks also play one of
-    MBII's own effects on you while they last - spice smoke, a confusion
-    swirl, bubbles, frost, dust, sparks, flames (G_EffectIndex /
-    G_PlayEffectID, found by name like everything else). They're real world
-    effects, so everyone sees them, the drinker included; ones with a sound
-    only play every few seconds
-  - the rest are looks: one of MBII's own powerup visuals - the cloak
-    shimmer, the Hoth freeze (slowed animation), flames, electric crackle -
-    switched on by setting its bit in the entityState_t powerups mask cgame
-    draws from (cg_players.c). The game rebuilds that mask from playerState
-    every frame, so it's re-applied after each game frame; it's display-only,
-    as pmove and the rest of the game read playerState, never touched here.
-    Every drink also gives a glow the same way while it's working.
+    low gravity + spin). Spice also greys out your view: MBII's cgame draws
+    its Force Rage "recovery" tint while fd.forceRageRecoveryTime is ahead
+    of the clock (it also slows you to 75% while it lasts, bg_pmove.c)
+  - most drinks play one of MBII's own effects while they last - spice
+    smoke, a confusion swirl, bubbles, frost, dust, flames, sparks
+    (G_EffectIndex / G_PlayEffectID, found by name like everything else).
+    A drinker's first-person camera sits at their eyes - inside anything at
+    their head, above anything at their waist - so head effects play just in
+    front of the face for everyone, and body/feet effects play on the body
+    for everyone else (SVF_NOTSINGLECLIENT) plus a copy in front of the
+    drinker's view for them alone (SVF_SINGLECLIENT). Ones with a sound only
+    play every few seconds
+  - Spotchka is the one look that only others can see: MBII's cloak
+    shimmer, switched on by setting its bit in the entityState_t powerups
+    mask cgame draws from (cg_players.c) after each game frame. It's
+    display-only; pmove and the game read playerState, never touched here.
+    (Other powerup looks aren't used: players never see their own - the
+    engine sends MBII's playerState powerups field as a 1-bit value.)
 
-Order a few in quick succession (3 within 3 minutes) and the bar starts
-announcing it - tipsy, then wasted, then "needs to lay off the booze" -
-picked at random from the lines below; the 8th knocks you out cold for a
-few seconds (MBII's own G_Knockdown), which clears the tab. Every order
-burps (plus a Jawa line for Jawa Juice, a cough for spice and death
-sticks), through MBII's G_SoundOnEnt. A third Spice within 3 minutes is an
-overdose: announced, then MBII's own /kill (its usual 5 second countdown),
-and everyone is told when they drop.
+Drink too much, too fast (within 3 minutes): the 8th order knocks you out
+cold for a few seconds (MBII's own G_Knockdown); the 11th is alcohol
+poisoning and the 5th Spice an overdose - MBII's own /kill (its usual 5
+second countdown), and everyone is told what killed you when you drop.
+Every order burps (plus a Jawa line for Jawa Juice, a cough for spice and
+death sticks), through MBII's G_SoundOnEnt.
 
 Effects only ever last for the life they were bought in: a new life
 (persistant[PERS_SPAWN_COUNT], which MBII bumps on every spawn - same index
@@ -113,24 +115,58 @@ static void Bar_OrderSounds(client_t* cl, const char* id)
 	}
 }
 
+// Plays effect id at org; svFlags limits who gets it (SVF_SINGLECLIENT /
+// SVF_NOTSINGLECLIENT, relative to client), 0 for everyone.
+static void Bar_PlayFx(int id, vec3_t org, int client, int svFlags)
+{
+	vec3_t ang = { -90.0f, 0.0f, 0.0f }; // pointing up
+	void* old = GVM_BeginNative();
+	sharedEntity_t* te = (sharedEntity_t*)gBarPlayEffectID(id, org, ang);
+	GVM_EndNative(old);
+	if (te && svFlags) {
+		te->r.svFlags |= svFlags;
+		te->r.singleClient = client;
+	}
+}
+
 static void Bar_Puff(client_t* cl, const char* fx, int where)
 {
 	if (!Bar_ResolveFx()) {
 		return;
 	}
 	const playerState_t* ps = cl->gentity->playerState;
-	vec3_t org, ang = { -90.0f, 0.0f, 0.0f }; // pointing up
-	VectorCopy(ps->origin, org);
-	if (where == BAR_FX_HEAD) {
-		org[2] += ps->viewheight;
-	} else if (where == BAR_FX_FEET) {
-		org[2] -= 20.0f;
-	}
+	const int client = cl - svs.clients;
+	vec3_t eye, forward, org;
+
 	// Registered per map (configstrings reset on a new map); a no-op lookup after the first.
 	const int id = GVM_CallEffectIndex(gBarEffectIndex, fx);
-	if (id > 0) {
-		GVM_CallPlayEffectID(gBarPlayEffectID, id, org, ang);
+	if (id <= 0) {
+		return;
 	}
+
+	VectorCopy(ps->origin, eye);
+	eye[2] += ps->viewheight;
+	AngleVectors(ps->viewangles, forward, NULL, NULL);
+
+	if (where == BAR_FX_HEAD) {
+		// Just in front of the face, for everyone: the drinker sees it, and
+		// to everyone else smoke looks exhaled.
+		VectorMA(eye, 16.0f, forward, org);
+		Bar_PlayFx(id, org, client, 0);
+		return;
+	}
+
+	// On the body (or at the feet) for everyone else...
+	VectorCopy(ps->origin, org);
+	if (where == BAR_FX_FEET) {
+		org[2] -= 20.0f;
+	}
+	Bar_PlayFx(id, org, client, SVF_NOTSINGLECLIENT);
+
+	// ...and a copy in front of the drinker's view for them alone.
+	VectorMA(eye, 48.0f, forward, org);
+	org[2] -= (where == BAR_FX_FEET) ? 24.0f : 10.0f;
+	Bar_PlayFx(id, org, client, SVF_SINGLECLIENT);
 }
 
 #define BAR_MB2_PW_COUNT   32
@@ -138,15 +174,7 @@ static void Bar_Puff(client_t* cl, const char* fx, int where)
 // MBII's powerup numbers (bg_public.h), which differ from base JKA's: these
 // are what MBII's cgame checks in entityState_t.powerups to draw each one.
 #define BAR_LOOK_NONE      -1
-#define BAR_PW_FLAMES      1        // PW_QUAD, "hijacked for flameburning effects"
 #define BAR_PW_CLOAKED     11       // cloak shimmer
-#define BAR_PW_ENLIGHT     12       // white-blue shell (Force enlightenment)
-#define BAR_PW_ENDARK      13       // red shell (Force endarkenment)
-#define BAR_PW_BOON        14       // gold shell (Force boon)
-#define BAR_PW_YSALAMIRI   15       // green shell
-#define BAR_PW_ELECTRIFY   19       // electric crackle
-#define BAR_PW_FREEZE      20       // Hoth freeze: slowed-down animation
-#define BAR_PW_GALAK       21       // shimmering blue shield
 
 #define BAR_MOON_GRAVITY_CANCEL  0.65f   // share of gravity Moon Milk cancels in the air
 #define BAR_RUSH_MAX_SPEED       900.0f  // Sugar Rush ground speed cap (normal run is ~250)
@@ -185,23 +213,23 @@ typedef struct {
 
 // Order is the menu numbering.
 static const barDrink_t kBarDrinks[] = {
-	{ "jawa_juice",        "Jawa Juice",        "shrinks you to Jawa size for 2 minutes",       10, BAR_SCALE,   50,  120, BAR_LOOK_NONE,    BAR_PW_BOON, BAR_LOOK, NULL, 0, BAR_FX_HEAD },
-	{ "hutt_brew",         "Hutt Brew",         "makes you huge for 2 minutes",                 15, BAR_SCALE,   175, 120, BAR_LOOK_NONE,    BAR_PW_YSALAMIRI, BAR_LOOK, NULL, 0, BAR_FX_HEAD },
-	{ "corellian_whiskey", "Corellian Whiskey", "gets you properly drunk for 90 seconds",       12, BAR_DRUNK,   0,   90,  BAR_LOOK_NONE,    BAR_PW_ENDARK, BAR_LOOK, "effects/Force/confusion_red", 1000, BAR_FX_HEAD },
-	{ "tatooine_twister",  "Tatooine Twister",  "your head spins for 20 seconds",               10, BAR_SPIN,    0,   20,  BAR_LOOK_NONE,    BAR_PW_GALAK, BAR_LOOK, "effects/Tatooine/dustcloud", 500, BAR_FX_FEET },
-	{ "bubble_brew",       "Bubble Brew",       "hiccups - you hop about for a minute",         10, BAR_HICCUP,  0,   60,  BAR_LOOK_NONE,    BAR_PW_ENLIGHT, BAR_LOOK, "effects/Saber/water_boilbubble_nosnd", 500, BAR_FX_HEAD },
-	{ "moon_milk",         "Moon Milk",         "low gravity for a minute",                     12, BAR_MOON,    0,   60,  BAR_LOOK_NONE,    BAR_PW_ENLIGHT, BAR_LOOK, NULL, 0, BAR_FX_HEAD },
-	{ "sugar_rush",        "Sugar Rush",        "super speed for 30 seconds",                   15, BAR_RUSH,    0,   30,  BAR_PW_ELECTRIFY, BAR_PW_BOON, BAR_LOOK, "effects/Tatooine/dustcloud", 500, BAR_FX_FEET },
-	{ "bantha_sludge",     "Bantha Sludge",     "you can barely move for a minute",             10, BAR_SLOW,    0,   60,  BAR_LOOK_NONE,    BAR_PW_YSALAMIRI, BAR_LOOK, "effects/Flamethrower/poisoned", 3000, BAR_FX_BODY },
-	{ "backwards_brandy",  "Backwards Brandy",  "your controls are reversed for a minute",      12, BAR_REVERSE, 0,   60,  BAR_LOOK_NONE,    BAR_PW_ENDARK, BAR_LOOK, "effects/Force/confusion_red", 1000, BAR_FX_HEAD },
-	{ "runaway_rum",       "Runaway Rum",       "you can't stop running for 30 seconds",        12, BAR_RUNAWAY, 0,   30,  BAR_LOOK_NONE,    BAR_PW_GALAK, BAR_LOOK, "effects/Tatooine/dustcloud", 500, BAR_FX_FEET },
-	{ "low_ceiling_lager", "Low-Ceiling Lager", "stuck crouching for a minute",                 10, BAR_CROUCH,  0,   60,  BAR_LOOK_NONE,    BAR_PW_BOON, BAR_LOOK, NULL, 0, BAR_FX_HEAD },
+	{ "jawa_juice",        "Jawa Juice",        "shrinks you to Jawa size for 2 minutes",       10, BAR_SCALE,   50,  120, BAR_LOOK_NONE,    BAR_LOOK_NONE, BAR_LOOK, NULL, 0, BAR_FX_HEAD },
+	{ "hutt_brew",         "Hutt Brew",         "makes you huge for 2 minutes",                 15, BAR_SCALE,   175, 120, BAR_LOOK_NONE,    BAR_LOOK_NONE, BAR_LOOK, NULL, 0, BAR_FX_HEAD },
+	{ "corellian_whiskey", "Corellian Whiskey", "gets you properly drunk for 90 seconds",       12, BAR_DRUNK,   0,   90,  BAR_LOOK_NONE,    BAR_LOOK_NONE, BAR_LOOK, "effects/Force/confusion_red", 1000, BAR_FX_HEAD },
+	{ "tatooine_twister",  "Tatooine Twister",  "your head spins for 20 seconds",               10, BAR_SPIN,    0,   20,  BAR_LOOK_NONE,    BAR_LOOK_NONE, BAR_LOOK, "effects/Tatooine/dustcloud", 500, BAR_FX_FEET },
+	{ "bubble_brew",       "Bubble Brew",       "hiccups - you hop about for a minute",         10, BAR_HICCUP,  0,   60,  BAR_LOOK_NONE,    BAR_LOOK_NONE, BAR_LOOK, "effects/Saber/water_boilbubble_nosnd", 500, BAR_FX_HEAD },
+	{ "moon_milk",         "Moon Milk",         "low gravity for a minute",                     12, BAR_MOON,    0,   60,  BAR_LOOK_NONE,    BAR_LOOK_NONE, BAR_LOOK, NULL, 0, BAR_FX_HEAD },
+	{ "sugar_rush",        "Sugar Rush",        "super speed for 30 seconds",                   15, BAR_RUSH,    0,   30,  BAR_LOOK_NONE, BAR_LOOK_NONE, BAR_LOOK, "effects/Tatooine/dustcloud", 500, BAR_FX_FEET },
+	{ "bantha_sludge",     "Bantha Sludge",     "you can barely move for a minute",             10, BAR_SLOW,    0,   60,  BAR_LOOK_NONE,    BAR_LOOK_NONE, BAR_LOOK, "effects/Flamethrower/poisoned", 3000, BAR_FX_BODY },
+	{ "backwards_brandy",  "Backwards Brandy",  "your controls are reversed for a minute",      12, BAR_REVERSE, 0,   60,  BAR_LOOK_NONE,    BAR_LOOK_NONE, BAR_LOOK, "effects/Force/confusion_red", 1000, BAR_FX_HEAD },
+	{ "runaway_rum",       "Runaway Rum",       "you can't stop running for 30 seconds",        12, BAR_RUNAWAY, 0,   30,  BAR_LOOK_NONE,    BAR_LOOK_NONE, BAR_LOOK, "effects/Tatooine/dustcloud", 500, BAR_FX_FEET },
+	{ "low_ceiling_lager", "Low-Ceiling Lager", "stuck crouching for a minute",                 10, BAR_CROUCH,  0,   60,  BAR_LOOK_NONE,    BAR_LOOK_NONE, BAR_LOOK, NULL, 0, BAR_FX_HEAD },
 	{ "spotchka",          "Spotchka",          "you shimmer nearly invisible for 45 seconds",  20, BAR_LOOK,    0,   45,  BAR_PW_CLOAKED,   BAR_LOOK_NONE, BAR_LOOK, NULL, 0, BAR_FX_HEAD },
-	{ "hoth_chiller",      "Hoth Chiller",      "frozen in slow motion for a minute",           12, BAR_LOOK,    0,   60,  BAR_PW_FREEZE,    BAR_LOOK_NONE, BAR_LOOK, "effects/Flamethrower/ice", 1000, BAR_FX_BODY },
-	{ "mustafar_magma",    "Mustafar Magma",    "you're on fire (just for show) for a minute",  12, BAR_LOOK,    0,   60,  BAR_PW_FLAMES,    BAR_LOOK_NONE, BAR_LOOK, "effects/Emitter/flamestiny", 2000, BAR_FX_BODY },
-	{ "ion_fizz",          "Ion Fizz",          "you crackle with electricity for a minute",    12, BAR_LOOK,    0,   60,  BAR_PW_ELECTRIFY, BAR_LOOK_NONE, BAR_LOOK, "effects/Swords/shock_person", 3000, BAR_FX_BODY },
-	{ "death_stick",       "Death Stick",       "you want to go home and rethink your life",    20, BAR_RUSH,    0,   30,  BAR_PW_ELECTRIFY, BAR_PW_ENDARK,    BAR_HICCUP, "effects/spice/pipe_smoke", 500, BAR_FX_HEAD },
-	{ "spice",             "Spice",             "floaty and spinny for 45 seconds",  20, BAR_MOON,    0,   45,  BAR_PW_FREEZE,    BAR_PW_ENLIGHT,   BAR_SPIN, "effects/spice/pipe_smoke", 500, BAR_FX_HEAD },
+	{ "hoth_chiller",      "Hoth Chiller",      "frost forms all over you for a minute",           12, BAR_LOOK,    0,   60,  BAR_LOOK_NONE,    BAR_LOOK_NONE, BAR_LOOK, "effects/Flamethrower/ice", 1000, BAR_FX_BODY },
+	{ "mustafar_magma",    "Mustafar Magma",    "you're on fire (just for show) for a minute",  12, BAR_LOOK,    0,   60,  BAR_LOOK_NONE,    BAR_LOOK_NONE, BAR_LOOK, "effects/Emitter/flamestiny", 2000, BAR_FX_BODY },
+	{ "ion_fizz",          "Ion Fizz",          "you crackle with electricity for a minute",    12, BAR_LOOK,    0,   60,  BAR_LOOK_NONE, BAR_LOOK_NONE, BAR_LOOK, "effects/Swords/shock_person", 3000, BAR_FX_BODY },
+	{ "death_stick",       "Death Stick",       "you want to go home and rethink your life",    20, BAR_RUSH,    0,   30,  BAR_LOOK_NONE, BAR_LOOK_NONE,    BAR_HICCUP, "effects/spice/pipe_smoke", 500, BAR_FX_HEAD },
+	{ "spice",             "Spice",             "floaty, spinny and hazy for 45 seconds", 20, BAR_MOON,    0,   45,  BAR_LOOK_NONE,    BAR_LOOK_NONE,   BAR_SPIN, "effects/spice/pipe_smoke", 500, BAR_FX_HEAD },
 };
 
 static cvar_t* gBarCostCvars[ARRAY_LEN(kBarDrinks)];
@@ -213,7 +241,6 @@ typedef struct {
 	int scaleSet;
 	int swayYaw;            // drunk: delta_angles offset currently applied, in SHORT units
 	int swayPitch;
-	int nextStumble;
 	int spinLastTime;
 	int nextHiccup;
 	int lastFrameTime;
@@ -221,52 +248,30 @@ typedef struct {
 	const barDrink_t* fxDrink; // playing its effect until fxUntil
 	int fxUntil;
 	int nextPuff;
+	int hazeUntil;          // Spice: grey view until then
 } barState_t;
 
 static barState_t gBarState[MAX_CLIENTS];
 
 // The tab: recent orders per player, across lives (the drinking doesn't stop
-// because you died), cleared when the slot empties. Drives the "X is wasted"
-// announcements and the spice overdose.
+// because you died), cleared when the slot empties. Drives passing out,
+// alcohol poisoning and the spice overdose.
 #define BAR_TAB_WINDOW_MS     180000
 #define BAR_TAB_SIZE          16
-#define BAR_SPICE_OVERDOSE    3       // spice orders within the window that kill you
+#define BAR_SPICE_OVERDOSE    5       // spice orders within the window that kill you
 #define BAR_PASSOUT_ORDERS    8       // orders within the window that knock you out
+#define BAR_POISONING_ORDERS  11      // orders within the window that kill you
 #define BAR_PASSOUT_MS        4000    // extra time on the floor, on top of MBII's own
 #define BAR_OVERDOSE_WAIT_MS  15000   // longer than MBII's 5s /kill countdown
 typedef struct {
 	int orderTimes[BAR_TAB_SIZE];
 	int spiceTimes[BAR_TAB_SIZE];
-	int overdoseSpawnCount;             // the life that's overdosing
-	int overdoseUntil;                  // 0 = not overdosing
+	int overdoseSpawnCount;             // the life that's dying
+	int overdoseUntil;                  // 0 = not dying
+	const char* overdoseCause;          // "alcohol poisoning", "a spice overdose"
 } barTab_t;
 static barTab_t gBarTab[MAX_CLIENTS];
 
-static const char* const kTipsyLines[] = {
-	"%s ^7is getting a little tipsy.",
-	"%s ^7is feeling it now.",
-	"%s ^7has started telling everyone they love them.",
-	"%s ^7just ordered another. Someone keep an eye on them.",
-	"%s ^7is laughing at a joke nobody told.",
-};
-static const char* const kWastedLines[] = {
-	"%s ^7is absolutely wasted.",
-	"%s ^7is trying to pick a fight with the jukebox.",
-	"%s ^7has lost their blaster. Again.",
-	"The bartender is starting to worry about %s^7.",
-	"%s ^7just proposed to a Gamorrean.",
-	"%s ^7thinks they can use the Force now.",
-	"%s ^7is dancing on the bar.",
-};
-static const char* const kLayOffLines[] = {
-	"%s ^7needs to lay off the booze.",
-	"Someone take %s ^7home.",
-	"%s^7's liver has filed a complaint with the Senate.",
-	"%s ^7is one drink away from joining the Hutts.",
-	"Wuher has refused to serve %s ^7any more... after this one.",
-	"%s ^7has been cut off. (Not really. Keep ordering.)",
-	"%s ^7can no longer find the door. Or the floor.",
-};
 static const char* const kPassOutLines[] = {
 	"%s ^7has passed out.",
 	"%s ^7is taking a little nap on the floor.",
@@ -274,17 +279,6 @@ static const char* const kPassOutLines[] = {
 	"%s ^7face-planted into the bar.",
 	"Lights out for %s^7.",
 };
-static const char* const kSpiceWarnLines[] = {
-	"%s ^7is getting a bit too friendly with the spice...",
-	"%s ^7should probably slow down on the spice.",
-};
-static const char* const kOverdoseLines[] = {
-	"%s ^7took way too much spice.",
-	"%s ^7has seen the far side of the Kessel Run.",
-	"%s ^7overdosed on spice. Don't do spice, kids.",
-	"%s ^7went to the spice mines and didn't come back.",
-};
-
 #define BAR_RANDOM_LINE(lines) (lines[Q_irand(0, ARRAY_LEN(lines) - 1)])
 
 // Records an order and returns how many are on the tab within the window,
@@ -332,6 +326,10 @@ static qboolean Bar_IsAlive(client_t* cl)
 	}
 	const playerState_t* ps = cl->gentity->playerState;
 	const int team = ps->persistant[PERS_TEAM];
+	// A spectator following someone carries a copy of their playerState.
+	if (ps->clientNum != cl - svs.clients) {
+		return qfalse;
+	}
 	return ((team == TEAM_RED || team == TEAM_BLUE) && ps->stats[STAT_HEALTH] > 0) ? qtrue : qfalse;
 }
 
@@ -364,11 +362,6 @@ static void Bar_StartEffect(client_t* cl, barState_t* st, const barDrink_t* d, b
 			}
 			ps->iModelScale = d->value;
 			st->scaleSet = d->value;
-			break;
-		case BAR_DRUNK:
-			if (fresh) {
-				st->nextStumble = svs.time + 1000;
-			}
 			break;
 		case BAR_HICCUP:
 			if (fresh) {
@@ -404,6 +397,9 @@ static void Bar_Apply(client_t* cl, int drink)
 		st->fxUntil = until;
 		st->nextPuff = svs.time;
 	}
+	if (!Q_stricmp(d->id, "spice")) {
+		st->hazeUntil = until;
+	}
 }
 
 static void Bar_ShowMenu(client_t* cl)
@@ -424,6 +420,19 @@ static void Bar_ShowMenu(client_t* cl)
 
 	SV_EconomyMenuAddLine(cl, "^7Type ^5!bar <number> ^7to order, e.g. ^5!bar 1");
 	SV_EconomyMenuPump(cl);
+}
+
+// Drunk (or spiced) to death: MBII's own /kill - a 5 second countdown, then
+// they drop - and Bar_OverdoseFrame tells everyone why once they do.
+static void Bar_Kill(client_t* cl, barTab_t* tab, const char* cause)
+{
+	memset(tab->orderTimes, 0, sizeof(tab->orderTimes));
+	memset(tab->spiceTimes, 0, sizeof(tab->spiceTimes));
+	tab->overdoseSpawnCount = cl->gentity->playerState->persistant[PERS_SPAWN_COUNT];
+	tab->overdoseUntil = svs.time + BAR_OVERDOSE_WAIT_MS;
+	tab->overdoseCause = cause;
+	Cmd_TokenizeString("kill");
+	GVM_ClientCommand(cl - svs.clients);
 }
 
 qboolean SV_BarCommand(client_t* cl, const char* args)
@@ -459,42 +468,27 @@ qboolean SV_BarCommand(client_t* cl, const char* args)
 	cl->economyCredits -= Bar_Cost(drink);
 	SV_EconomyPersistCredits(cl);
 	Bar_Apply(cl, drink);
-	SV_SendServerCommand(NULL, "chat \"^5[Bar] ^7%s ^7orders a ^3%s^7!\"\n", cl->name, kBarDrinks[drink].name);
+	SV_SendServerCommand(NULL, "chat \"^5[Bar] ^7%s ^7orders %s^3%s^7!\"\n", cl->name,
+		!Q_stricmp(kBarDrinks[drink].id, "spice") ? "" : "a ", kBarDrinks[drink].name);
 	SV_EconomyPrint(cl, va("%s: %s. New balance: %d", kBarDrinks[drink].name, kBarDrinks[drink].blurb, cl->economyCredits));
-
-	barTab_t* tab = &gBarTab[cl - svs.clients];
-	if (!Q_stricmp(kBarDrinks[drink].id, "spice")) {
-		const int spice = Bar_TabAdd(tab->spiceTimes);
-		if (spice >= BAR_SPICE_OVERDOSE) {
-			Bar_Announce(cl, BAR_RANDOM_LINE(kOverdoseLines));
-			memset(tab->spiceTimes, 0, sizeof(tab->spiceTimes));
-			tab->overdoseSpawnCount = cl->gentity->playerState->persistant[PERS_SPAWN_COUNT];
-			tab->overdoseUntil = svs.time + BAR_OVERDOSE_WAIT_MS;
-			// MBII's own /kill: a 5 second countdown, then they drop.
-			Cmd_TokenizeString("kill");
-			GVM_ClientCommand(cl - svs.clients);
-		} else if (spice == BAR_SPICE_OVERDOSE - 1) {
-			Bar_Announce(cl, BAR_RANDOM_LINE(kSpiceWarnLines));
-		}
-	}
 
 	Bar_OrderSounds(cl, kBarDrinks[drink].id);
 
+	barTab_t* tab = &gBarTab[cl - svs.clients];
 	const int orders = Bar_TabAdd(tab->orderTimes);
-	if (orders >= BAR_PASSOUT_ORDERS && gBarKnockdown && Bar_IsAlive(cl)) {
+	const int spice = !Q_stricmp(kBarDrinks[drink].id, "spice") ? Bar_TabAdd(tab->spiceTimes) : 0;
+
+	if (spice >= BAR_SPICE_OVERDOSE) {
+		Bar_Kill(cl, tab, "a spice overdose");
+	} else if (orders >= BAR_POISONING_ORDERS) {
+		Bar_Kill(cl, tab, "alcohol poisoning");
+	} else if (orders == BAR_PASSOUT_ORDERS && gBarKnockdown && Bar_IsAlive(cl)) {
 		// MBII's own knockdown: flat on the floor for a few seconds.
 		void* old = GVM_BeginNative();
 		gBarKnockdown(cl->gentity, cl - svs.clients, BAR_PASSOUT_MS, 0, qfalse);
 		GVM_EndNative(old);
 		Bar_Sound(cl, "sound/dreamtime/grogu_asleep.wav");
 		Bar_Announce(cl, BAR_RANDOM_LINE(kPassOutLines));
-		memset(tab->orderTimes, 0, sizeof(tab->orderTimes)); // they've slept it off
-	} else if (orders >= 6) {
-		Bar_Announce(cl, BAR_RANDOM_LINE(kLayOffLines));
-	} else if (orders >= 4) {
-		Bar_Announce(cl, BAR_RANDOM_LINE(kWastedLines));
-	} else if (orders == 3) {
-		Bar_Announce(cl, BAR_RANDOM_LINE(kTipsyLines));
 	}
 	return qtrue;
 }
@@ -546,21 +540,12 @@ static void Bar_DrunkFrame(client_t* cl, barState_t* st)
 
 	// Two slow, out-of-step waves so it wanders rather than ticks.
 	const float t = svs.time / 1000.0f;
-	const int wantYaw = ANGLE2SHORT(14.0f * sinf(t * 1.6f) + 6.0f * sinf(t * 2.9f));
-	const int wantPitch = ANGLE2SHORT(7.0f * sinf(t * 1.2f) + 3.0f * sinf(t * 2.3f));
+	const int wantYaw = ANGLE2SHORT(24.0f * sinf(t * 1.6f) + 10.0f * sinf(t * 2.9f));
+	const int wantPitch = ANGLE2SHORT(12.0f * sinf(t * 1.2f) + 5.0f * sinf(t * 2.3f));
 	ps->delta_angles[YAW] += wantYaw - st->swayYaw;
 	ps->delta_angles[PITCH] += wantPitch - st->swayPitch;
 	st->swayYaw = wantYaw;
 	st->swayPitch = wantPitch;
-
-	if (svs.time >= st->nextStumble) {
-		if (ps->groundEntityNum != ENTITYNUM_NONE) {
-			const float a = Q_irand(0, 359) * (M_PI / 180.0f);
-			ps->velocity[0] += cosf(a) * 240.0f;
-			ps->velocity[1] += sinf(a) * 240.0f;
-		}
-		st->nextStumble = svs.time + Q_irand(900, 2200);
-	}
 }
 
 static void Bar_MovementFrame(client_t* cl, barState_t* st, float dt)
@@ -636,10 +621,10 @@ static qboolean Bar_AnythingActive(const barState_t* st)
 			return qtrue;
 		}
 	}
-	return (st->fxUntil > svs.time) ? qtrue : qfalse;
+	return (st->fxUntil > svs.time || st->hazeUntil > svs.time) ? qtrue : qfalse;
 }
 
-// Tells everyone once the overdose actually kills them.
+// Tells everyone what killed them once it actually does.
 static void Bar_OverdoseFrame(client_t* cl, barTab_t* tab)
 {
 	if (!tab->overdoseUntil) {
@@ -654,8 +639,8 @@ static void Bar_OverdoseFrame(client_t* cl, barTab_t* tab)
 		return;
 	}
 	tab->overdoseUntil = 0;
-	SV_SendServerCommand(NULL, "chat \"^5[Bar] ^7%s ^1died from a spice overdose.\"\n", cl->name);
-	SV_SendServerCommand(NULL, "cp \"%s\n^1died from a spice overdose\"\n", cl->name);
+	SV_SendServerCommand(NULL, "chat \"^5[Bar] ^7%s ^1died from %s.\"\n", cl->name, tab->overdoseCause);
+	SV_SendServerCommand(NULL, "cp \"%s\n^1died from %s\"\n", cl->name, tab->overdoseCause);
 }
 
 void SV_BarFrame(void)
@@ -705,6 +690,11 @@ void SV_BarFrame(void)
 			if (st->visualUntil[b] > svs.time) {
 				cl->gentity->s.powerups |= (1 << b);
 			}
+		}
+
+		// Kept a moment ahead of the clock; it lapses by itself when Spice ends.
+		if (st->hazeUntil > svs.time) {
+			ps->fd.forceRageRecoveryTime = sv.time + 250;
 		}
 
 		if (st->fxDrink && st->fxUntil > svs.time && svs.time >= st->nextPuff) {
