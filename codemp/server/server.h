@@ -171,6 +171,12 @@ typedef struct {
 } demoInfo_t;
 
 
+// Paced multi-line menu delivery for the economy's "!buy"/"!bar" listings
+// (sv_client.cpp). 28 lines comfortably covers the largest shop category
+// (rifles, 18 items) plus a header and footer line.
+#define ECONOMY_MENU_LINES_MAX		28
+#define ECONOMY_MENU_LINE_SIZE		160
+
 typedef struct client_s {
 	clientState_t	state;
 	char			userinfo[MAX_INFO_STRING];		// name, etc
@@ -279,7 +285,7 @@ typedef struct client_s {
 	// arrive one at a time on a short delay instead of all at once, so a long
 	// listing doesn't scroll past faster than it can be read. See
 	// ECONOMY_MENU_LINES_MAX / ECONOMY_MENU_LINE_SIZE in sv_client.cpp.
-	char			economyMenuLines[28][160];
+	char			economyMenuLines[ECONOMY_MENU_LINES_MAX][ECONOMY_MENU_LINE_SIZE];
 	int				economyMenuLineCount;
 	int				economyMenuNextLine;
 	int				economyMenuNextSendTime;
@@ -388,6 +394,7 @@ extern	cvar_t* g_chaosCooldown;
 extern	cvar_t* g_creditSystemEnable;
 extern	cvar_t* g_economyShopEnable;
 extern	cvar_t* g_economyBountyEnable;
+extern	cvar_t* g_economyBarEnable;
 extern	cvar_t* g_spinSpawnerHackOffset;
 extern	cvar_t* g_spinSpawnerHackSkillIndex;
 extern	cvar_t* g_spinSpawnerHackSkillValue;
@@ -561,6 +568,17 @@ void SV_GunGameClientBegin(client_t* cl);
 void SV_GunGameClientDisconnect(int clientNum);
 void SV_GunGameClampWeaponSelect(client_t* cl, usercmd_t* cmd);
 void SV_EconomyShopInitCvars( void );
+void SV_EconomyPrint( client_t *cl, const char *text );
+void SV_EconomyMenuBegin( client_t *cl );
+void SV_EconomyMenuAddLine( client_t *cl, const char *line );
+void SV_EconomyMenuPump( client_t *cl );
+
+//
+// bar.cpp
+//
+void SV_BarInitCvars(void);
+qboolean SV_BarCommand(client_t* cl, const char* args);
+void SV_BarFrame(void);
 
 //
 // killstreak.cpp

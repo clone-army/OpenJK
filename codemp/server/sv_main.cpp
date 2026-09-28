@@ -74,6 +74,7 @@ cvar_t* g_chaosCooldown;
 cvar_t* g_creditSystemEnable;
 cvar_t* g_economyShopEnable;
 cvar_t* g_economyBountyEnable;
+cvar_t* g_economyBarEnable;
 cvar_t* g_spinSpawnerHackOffset;
 cvar_t* g_spinSpawnerHackSkillIndex;
 cvar_t* g_spinSpawnerHackSkillValue;
@@ -1270,6 +1271,9 @@ void SV_Frame( int msec ) {
 
 	// per-frame credit/bounty award (must run once per frame)
 	SV_EconomyFrame();
+
+	// bar drinks: timed sizes, drunk sway and glows
+	SV_BarFrame();
 
 	// gun game: kill-detection and weapon enforcement
 	SV_GunGameFrame();

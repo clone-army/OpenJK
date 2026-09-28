@@ -1484,8 +1484,6 @@ static int SV_EconomyFindItemByName( const char *name ) {
 // AddLine/Pump below. Must match client_t::economyMenuLines in server.h.
 // 28 lines comfortably covers the largest category (rifles, 18 items) plus
 // a header and footer line.
-#define ECONOMY_MENU_LINES_MAX		28
-#define ECONOMY_MENU_LINE_SIZE		160
 #define ECONOMY_MENU_LINE_DELAY_MS	700
 
 typedef struct economyAccount_s {
@@ -1744,7 +1742,7 @@ static qboolean SV_EconomyBountyEnabled( void ) {
 	return (g_economyBountyEnable && g_economyBountyEnable->integer == 1) ? qtrue : qfalse;
 }
 
-static void SV_EconomyPrint( client_t *cl, const char *text ) {
+void SV_EconomyPrint( client_t *cl, const char *text ) {
 	SV_SendServerCommand( cl, "chat \"^2[Economy]^7 %s\"\n", text );
 }
 
@@ -1840,13 +1838,13 @@ static qboolean SV_GunrayClassBlockCheck( client_t *cl ) {
 // This queues each line on the client and SV_EconomyFrame below drips them
 // out one per ECONOMY_MENU_LINE_DELAY_MS instead.
 
-static void SV_EconomyMenuBegin( client_t *cl ) {
+void SV_EconomyMenuBegin( client_t *cl ) {
 	cl->economyMenuLineCount = 0;
 	cl->economyMenuNextLine = 0;
 	cl->economyMenuNextSendTime = 0;	// 0 = send the first line on the next pump, whenever that is
 }
 
-static void SV_EconomyMenuAddLine( client_t *cl, const char *line ) {
+void SV_EconomyMenuAddLine( client_t *cl, const char *line ) {
 	if ( cl->economyMenuLineCount >= ECONOMY_MENU_LINES_MAX ) {
 		return;
 	}
@@ -1857,7 +1855,7 @@ static void SV_EconomyMenuAddLine( client_t *cl, const char *line ) {
 // Sends the next queued line, if any and if enough time has passed since the
 // last one. Safe to call every frame for every client - it's a no-op unless
 // there's something due.
-static void SV_EconomyMenuPump( client_t *cl ) {
+void SV_EconomyMenuPump( client_t *cl ) {
 	if ( cl->economyMenuNextLine >= cl->economyMenuLineCount ) {
 		return;
 	}
@@ -1982,6 +1980,7 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 	if ( !SV_EconomyEnabled() &&
 		( !Q_stricmp( commandName, "balance" ) ||
 		  !Q_stricmp( commandName, "buy" ) ||
+		  !Q_stricmp( commandName, "bar" ) ||
 		  !Q_stricmp( commandName, "bounty" ) ||
 		  !Q_stricmp( commandName, "bountry" ) ||
 		  !Q_stricmp( commandName, "register" ) ||
@@ -1999,6 +1998,10 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 			cl->economyCredits, cl->economyBounty );
 		SV_SendServerCommand( cl, "chat \"%s\"\n", balBuf );
 		return qtrue;
+	}
+
+	if ( !Q_stricmp( commandName, "bar" ) ) {
+		return SV_BarCommand( cl, chatCursor );
 	}
 
 	if ( !Q_stricmp( commandName, "buy" ) ) {
@@ -2348,6 +2351,10 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 
 			if ( SV_EconomyShopEnabled() ) {
 				SV_EconomyMenuAddLine( cl, "^2!buy ^7- list shop categories, ^5!buy <category> ^7to browse, ^5!buy <name> ^7to purchase." );
+			}
+
+			if ( g_economyBarEnable && g_economyBarEnable->integer ) {
+				SV_EconomyMenuAddLine( cl, "^2!bar ^7- the drinks menu. ^5!bar <number> ^7to order, ^5!bar round <number> ^7for everyone." );
 			}
 
 			if ( SV_EconomyBountyEnabled() ) {
