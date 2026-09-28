@@ -2,8 +2,15 @@
 ===========================================================================
 jukebox.cpp — the Cantina jukebox, part of the economy (!jukebox)
 
-"!jukebox" lists the tracks and "!jukebox <number>" pays to put one on for
-the whole server; every pick is announced in chat. Switched on with
+  !jukebox                   the featured tracks
+  !jukebox <words>           search every track by name and category
+  !jukebox search <words>    the same, spelled out
+  !jukebox <number>          play that track for the whole server
+  !jukebox random            play a random track
+
+Every track MBII ships in its official pk3s is in the catalogue
+(jukebox_tracks.h), each with a friendly name and a category, so nobody
+downloads anything. Every pick is announced in chat. Switched on with
 g_economyJukeboxEnable (on top of the g_creditSystemEnable master switch,
 like !buy and !bar); g_jukeboxCost is the price of a track and
 g_jukeboxCooldown how long one plays before anyone can change it.
@@ -11,9 +18,7 @@ g_jukeboxCooldown how long one plays before anyone can change it.
 The music is the stock CS_MUSIC configstring (2 in both MBII and the
 engine): cgame restarts the background track whenever it changes
 (CG_StartMusic, cg_main.c), exactly as it does for a map's own worldspawn
-"music" key. Every track is one MBII already ships in its pk3s, so nobody
-downloads anything. G_InitGame puts the map's own music back on the next
-round.
+"music" key. G_InitGame puts the map's own music back on the next round.
 ===========================================================================
 */
 
@@ -21,77 +26,94 @@ round.
 
 typedef struct {
 	const char* name;
-	const char* path;   // as a map's "music" key: no extension
+	const char* path;       // as a map's "music" key: no extension
+	const char* category;
 } jukeboxTrack_t;
 
-// Order is the menu numbering.
-static const jukeboxTrack_t kJukeboxTracks[] = {
-	{ "Cantina Band",              "music/mp/Cantina" },
-	{ "Cantina Band (house mix)",  "music/cantina2" },
-	{ "Nar Shaddaa Cantina",       "music/ns/nsmb2_cantina" },
-	{ "Nightclub",                 "music/nightclub" },
-	{ "Club Mix",                  "music/desertbreak/club1" },
-	{ "Jabba's Sail Barge",        "music/mp/SailBarge" },
-	{ "Duel of the Fates",         "music/mb2_dotf/dotf" },
-	{ "Battle of the Heroes",      "music/mustafarduel/mustafarduel" },
-	{ "KotOR Mix",                 "Music/KotorMix" },
-	{ "LEGO Star Wars",            "Music/legosw" },
-	{ "Benny Hill",                "music/mp/BennyHill" },
-	{ "Hammer Time",               "music/hammertime" },
-	{ "Crazy Train",               "music/crazytrain/crazytrain" },
-	{ "Strings of Life",           "music/tlp/strings-of-life2" },
-	{ "The Ultimate Showdown",     "Music/ultimate_showdown" },
-	{ "Pokemon Town",              "Music/pokemon/ptown" },
-	{ "Teenage Mutant Ninja Turtles", "Music/tmnt" },
-	{ "Halo",                      "Music/halo_for" },
-	{ "Portal",                    "music/portal" },
-	{ "Mortal Kombat",             "Music/mk" },
-	{ "Lord of the Rings",         "Music/lotr_hd" },
-};
+#include "jukebox_tracks.h"
+
+#define JUKEBOX_TRACK_COUNT   ((int)ARRAY_LEN(kJukeboxTracks))
+#define JUKEBOX_SEARCH_MAX    20
 
 static int gJukeboxNextChange = 0;
 
-qboolean SV_JukeboxCommand(client_t* cl, const char* args)
+static int Jukebox_Cost(void)
 {
-	char first[32];
-	char line[ECONOMY_MENU_LINE_SIZE];
+	return g_jukeboxCost ? Q_max(0, g_jukeboxCost->integer) : 0;
+}
 
-	if (!g_economyJukeboxEnable || !g_economyJukeboxEnable->integer) {
-		SV_EconomyPrint(cl, "There's no jukebox on this server.");
-		return qtrue;
-	}
+static const char* Jukebox_Line(int i)
+{
+	return va("^3%d^7. ^5%s ^7(%s)", i + 1, kJukeboxTracks[i].name, kJukeboxTracks[i].category);
+}
 
-	const int cost = g_jukeboxCost ? Q_max(0, g_jukeboxCost->integer) : 0;
-
-	if (sscanf(args, "%31s", first) != 1) {
-		SV_EconomyMenuBegin(cl);
-		Com_sprintf(line, sizeof(line), "^3=== JUKEBOX === ^7Any track: ^2%d ^7cr  Balance: ^2%d", cost, cl->economyCredits);
-		SV_EconomyMenuAddLine(cl, line);
-		for (int i = 0; i < (int)ARRAY_LEN(kJukeboxTracks); i++) {
-			Com_sprintf(line, sizeof(line), "^3%d^7. ^5%s", i + 1, kJukeboxTracks[i].name);
-			SV_EconomyMenuAddLine(cl, line);
+// Every word has to appear in the name or the category.
+static qboolean Jukebox_Matches(const jukeboxTrack_t* t, const char* words)
+{
+	char buf[MAX_STRING_CHARS];
+	Q_strncpyz(buf, words, sizeof(buf));
+	for (char* w = strtok(buf, " "); w; w = strtok(NULL, " ")) {
+		if (!Q_stristr(t->name, w) && !Q_stristr(t->category, w)) {
+			return qfalse;
 		}
-		SV_EconomyMenuAddLine(cl, "^7Type ^5!jukebox <number> ^7to play it for everyone, e.g. ^5!jukebox 1");
-		SV_EconomyMenuPump(cl);
-		return qtrue;
 	}
+	return qtrue;
+}
 
-	const int n = atoi(first);
-	if (n < 1 || n > (int)ARRAY_LEN(kJukeboxTracks)) {
-		SV_EconomyPrint(cl, "That's not on the jukebox. Type !jukebox to see the tracks.");
-		return qtrue;
+static void Jukebox_ShowFeatured(client_t* cl)
+{
+	SV_EconomyMenuBegin(cl);
+	SV_EconomyMenuAddLine(cl, va("^3=== JUKEBOX === ^7Any track: ^2%d ^7cr  Balance: ^2%d", Jukebox_Cost(), cl->economyCredits));
+	for (int i = 0; i < JUKEBOX_FEATURED; i++) {
+		SV_EconomyMenuAddLine(cl, Jukebox_Line(i));
 	}
+	SV_EconomyMenuAddLine(cl, va("^7^5!jukebox <number> ^7to play, ^5!jukebox <words> ^7to search all %d tracks, ^5!jukebox random",
+		JUKEBOX_TRACK_COUNT));
+	SV_EconomyMenuPump(cl);
+}
+
+static void Jukebox_Search(client_t* cl, const char* words)
+{
+	int found = 0, shown = 0;
+
+	SV_EconomyMenuBegin(cl);
+	SV_EconomyMenuAddLine(cl, va("^3=== JUKEBOX: \"%s\" ===", words));
+	for (int i = 0; i < JUKEBOX_TRACK_COUNT; i++) {
+		if (!Jukebox_Matches(&kJukeboxTracks[i], words)) {
+			continue;
+		}
+		found++;
+		if (shown < JUKEBOX_SEARCH_MAX) {
+			SV_EconomyMenuAddLine(cl, Jukebox_Line(i));
+			shown++;
+		}
+	}
+	if (!found) {
+		SV_EconomyMenuAddLine(cl, "^7Nothing matched. Try a shorter word, or a category: ^5star wars^7, ^5duels^7, ^5kotor^7, ^5games^7, ^5party^7, ^5maps");
+	} else if (found > shown) {
+		SV_EconomyMenuAddLine(cl, va("^7...and %d more - add another word to narrow it down.", found - shown));
+	}
+	if (found) {
+		SV_EconomyMenuAddLine(cl, va("^5!jukebox <number> ^7to play one (^2%d ^7cr).", Jukebox_Cost()));
+	}
+	SV_EconomyMenuPump(cl);
+}
+
+static void Jukebox_Play(client_t* cl, int index)
+{
+	const int cost = Jukebox_Cost();
+
 	if (svs.time < gJukeboxNextChange) {
 		SV_EconomyPrint(cl, va("Let this one play - the jukebox is free again in %d seconds.",
 			(gJukeboxNextChange - svs.time + 999) / 1000));
-		return qtrue;
+		return;
 	}
 	if (cl->economyCredits < cost) {
 		SV_EconomyPrint(cl, va("Not enough credits. Need %d, have %d.", cost, cl->economyCredits));
-		return qtrue;
+		return;
 	}
 
-	const jukeboxTrack_t* t = &kJukeboxTracks[n - 1];
+	const jukeboxTrack_t* t = &kJukeboxTracks[index];
 	cl->economyCredits -= cost;
 	SV_EconomyPersistCredits(cl);
 	SV_SetConfigstring(CS_MUSIC, t->path);
@@ -99,5 +121,57 @@ qboolean SV_JukeboxCommand(client_t* cl, const char* args)
 
 	SV_SendServerCommand(NULL, "chat \"^5[Jukebox] ^7%s ^7put on ^3%s^7.\"\n", cl->name, t->name);
 	SV_EconomyPrint(cl, va("Now playing: %s. New balance: %d", t->name, cl->economyCredits));
+}
+
+qboolean SV_JukeboxCommand(client_t* cl, const char* args)
+{
+	if (!g_economyJukeboxEnable || !g_economyJukeboxEnable->integer) {
+		SV_EconomyPrint(cl, "There's no jukebox on this server.");
+		return qtrue;
+	}
+
+	while (*args == ' ') {
+		args++;
+	}
+	if (!*args) {
+		Jukebox_ShowFeatured(cl);
+		return qtrue;
+	}
+
+	if (!Q_stricmp(args, "random")) {
+		Jukebox_Play(cl, Q_irand(0, JUKEBOX_TRACK_COUNT - 1));
+		return qtrue;
+	}
+
+	if (!Q_stricmpn(args, "search", 6) && (args[6] == ' ' || !args[6])) {
+		args += 6;
+		while (*args == ' ') {
+			args++;
+		}
+		if (!*args) {
+			SV_EconomyPrint(cl, "Search for what? e.g. ^5!jukebox search cloud city");
+			return qtrue;
+		}
+		Jukebox_Search(cl, args);
+		return qtrue;
+	}
+
+	// A plain number plays that track; anything else is a search.
+	const char* p = args;
+	while (*p >= '0' && *p <= '9') {
+		p++;
+	}
+	if (p != args && !*p) {
+		const int n = atoi(args);
+		if (n < 1 || n > JUKEBOX_TRACK_COUNT) {
+			SV_EconomyPrint(cl, va("There are %d tracks - pick 1 to %d, or search with ^5!jukebox <words>^7.",
+				JUKEBOX_TRACK_COUNT, JUKEBOX_TRACK_COUNT));
+			return qtrue;
+		}
+		Jukebox_Play(cl, n - 1);
+		return qtrue;
+	}
+
+	Jukebox_Search(cl, args);
 	return qtrue;
 }
