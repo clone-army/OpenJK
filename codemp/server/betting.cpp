@@ -3,11 +3,10 @@
 betting.cpp — betting on duels, part of the economy (!bet)
 
   !bets start                a fighter opens their duel to bets: both of them
-                             are frozen while bets come in
-  !bet                       each fighter in each duel as a numbered option:
-                             "1. Ricks vs Cody (Ricks to win) - 150 cr backing"
-  !bet <number> <credits>    back that option
-  !bet <fighter> <credits>   or back a fighter by (part of) their name
+                             are frozen while bets come in. One fight at a
+                             time takes bets, until it's decided
+  !bet                       the fight taking bets, and what's backing whom
+  !bet <fighter> <credits>   back a fighter (fuzzy name match, any case)
 
 Duels are tracked straight from the players' own playerState -
 duelInProgress and duelIndex, stock fields, the same ones social.cpp's
@@ -261,34 +260,32 @@ void SV_BetFrame(void)
 
 static void Bet_List(client_t* cl)
 {
-	int shown = 0;
-
-	SV_EconomyMenuBegin(cl);
-	SV_EconomyMenuAddLine(cl, "^6=== DUELS === ^7The winning side splits the whole pot.");
+	const betDuel_t* duel = NULL;
 	for (int d = 0; d < BET_MAX_DUELS; d++) {
-		const betDuel_t* duel = &gBetDuels[d];
-		if (!duel->active) {
-			continue;
+		if (gBetDuels[d].active && gBetDuels[d].betsOpened) {
+			duel = &gBetDuels[d];
+			break;
 		}
-		const int left = duel->betsUntil - svs.time;
-		const char* status = left > 0 ? va("^2open %ds", (left + 999) / 1000) : duel->betsOpened ? "^1closed" : "^7not taking bets";
-		for (int s = 0; s < 2; s++) {
-			SV_EconomyMenuAddLine(cl, va("^3%d^7. %s ^7vs %s ^7(^3%s ^7to win) - ^2%d ^7cr backing - %s",
-				d * 2 + s + 1, duel->handle[0], duel->handle[1], duel->handle[s], Bet_Backing(duel->id, s), status));
-		}
-		shown++;
 	}
-	if (!shown) {
-		SV_EconomyMenuAddLine(cl, "^7No duels going on right now.");
+	if (!duel) {
+		Bet_Print(cl, "No fight is taking bets right now. Duelling? ^5!bets start ^7in the first 10 seconds.");
+		return;
+	}
+
+	const int left = duel->betsUntil - svs.time;
+	SV_EconomyMenuBegin(cl);
+	SV_EconomyMenuAddLine(cl, va("^6=== %s ^7vs %s ^6=== %s", duel->handle[0], duel->handle[1],
+		left > 0 ? va("^2bets open %ds", (left + 999) / 1000) : "^1bets closed - fighting"));
+	for (int s = 0; s < 2; s++) {
+		SV_EconomyMenuAddLine(cl, va("^3%s ^7to win - ^2%d ^7cr backing", duel->handle[s], Bet_Backing(duel->id, s)));
 	}
 	for (int i = 0; i < BET_MAX_BETS; i++) {
-		const bet_t* b = &gBets[i];
-		const betDuel_t* duel = b->active ? Bet_DuelById(b->duelId) : NULL;
-		if (duel && !Q_stricmp(b->account, cl->economyHandle)) {
-			SV_EconomyMenuAddLine(cl, va("^7Your bet: ^2%d ^7on %s", b->amount, duel->handle[b->side]));
+		const bet_t* bt = &gBets[i];
+		if (bt->active && bt->duelId == duel->id && !Q_stricmp(bt->account, cl->economyHandle)) {
+			SV_EconomyMenuAddLine(cl, va("^7Your bet: ^2%d ^7on %s", bt->amount, duel->handle[bt->side]));
 		}
 	}
-	SV_EconomyMenuAddLine(cl, "^5!bet <number> <credits> ^7to back someone, e.g. ^5!bet 1 50");
+	SV_EconomyMenuAddLine(cl, "^7The winning side splits the whole pot. ^5!bet <fighter> <credits>^7, e.g. ^5!bet ricks 50");
 	SV_EconomyMenuPump(cl);
 }
 
@@ -312,6 +309,13 @@ static void Bet_OpenDuel(client_t* cl)
 		Bet_Print(cl, "This duel has already been opened to bets.");
 		return;
 	}
+	for (int d = 0; d < BET_MAX_DUELS; d++) {
+		if (gBetDuels[d].active && gBetDuels[d].betsOpened) {
+			Bet_Print(cl, va("A fight with bets is already running (%s ^7vs %s^7) - wait for it to finish.",
+				gBetDuels[d].handle[0], gBetDuels[d].handle[1]));
+			return;
+		}
+	}
 	if (svs.time - duel->started > BET_OPEN_MS) {
 		Bet_Print(cl, va("Too late - bets have to be opened in the first %d seconds of a duel.", BET_OPEN_MS / 1000));
 		return;
@@ -330,9 +334,8 @@ static void Bet_OpenDuel(client_t* cl)
 
 	duel->betsOpened = qtrue;
 	duel->betsUntil = svs.time + Bet_WindowMs();
-	const int opt = (int)(duel - gBetDuels) * 2 + 1;
-	SV_SendServerCommand(NULL, "chat \"^6[Bet] ^7%s ^7vs %s ^7is taking bets for %ds! ^5!bet %d <credits> ^7backs %s^7, ^5!bet %d <credits> ^7backs %s^7.\"\n",
-		duel->handle[0], duel->handle[1], Bet_WindowMs() / 1000, opt, duel->handle[0], opt + 1, duel->handle[1]);
+	SV_SendServerCommand(NULL, "chat \"^6[Bet] ^7%s ^7vs %s ^7is taking bets for %ds! ^5!bet <fighter> <credits>^7, e.g. ^5!bet %s 50\"\n",
+		duel->handle[0], duel->handle[1], Bet_WindowMs() / 1000, duel->handle[0]);
 	for (int s = 0; s < 2; s++) {
 		SV_SendServerCommand(&svs.clients[duel->fighter[s]], "cp \"^6Bets are open\n^7you're frozen for %d seconds\"\n", Bet_WindowMs() / 1000);
 	}
@@ -375,49 +378,30 @@ qboolean SV_BetCommand(client_t* cl, const char* args)
 		return qtrue;
 	}
 
-	// An option number from the list, or part of a fighter's name.
+	// The fight taking bets, and the fighter that best matches the name.
 	betDuel_t* duel = NULL;
-	int side = -1, matches = 0;
-	qboolean byNumber = qfalse;
-	const char* p = who;
-	while (*p >= '0' && *p <= '9') {
-		p++;
-	}
-	if (p != who && !*p) {
-		const int opt = atoi(who) - 1;
-		if (opt < 0 || opt / 2 >= BET_MAX_DUELS || !gBetDuels[opt / 2].active) {
-			Bet_Print(cl, "That's not on the list. Type ^5!bet ^7to see the duels.");
-			return qtrue;
-		}
-		duel = &gBetDuels[opt / 2];
-		side = opt % 2;
-		matches = 1;
-		byNumber = qtrue;
-	}
-	for (int d = 0; d < BET_MAX_DUELS && !byNumber; d++) {
-		betDuel_t* dl = &gBetDuels[d];
-		if (!dl->active) {
-			continue;
-		}
-		for (int s = 0; s < 2; s++) {
-			char clean[MAX_NAME_LENGTH];
-			Q_strncpyz(clean, dl->handle[s], sizeof(clean));
-			Q_CleanStr(clean);
-			if (Q_stristr(clean, who)) {
-				duel = dl;
-				side = s;
-				matches++;
-			}
+	for (int d = 0; d < BET_MAX_DUELS; d++) {
+		if (gBetDuels[d].active && gBetDuels[d].betsOpened) {
+			duel = &gBetDuels[d];
+			break;
 		}
 	}
-	if (!matches) {
-		Bet_Print(cl, va("Nobody duelling right now matches \"%s\". Type ^5!bet ^7to see the duels.", who));
+	if (!duel) {
+		Bet_Print(cl, "No fight is taking bets right now.");
 		return qtrue;
 	}
-	if (matches > 1) {
-		Bet_Print(cl, va("\"%s\" matches more than one fighter - type more of the name.", who));
+	const int score0 = SV_FuzzyNameScore(duel->handle[0], who);
+	const int score1 = SV_FuzzyNameScore(duel->handle[1], who);
+	if (!score0 && !score1) {
+		Bet_Print(cl, va("\"%s\" doesn't match %s ^7or %s^7.", who, duel->handle[0], duel->handle[1]));
 		return qtrue;
 	}
+	if (score0 == score1) {
+		Bet_Print(cl, va("\"%s\" matches both fighters - type more of the name.", who));
+		return qtrue;
+	}
+	const int side = (score0 > score1) ? 0 : 1;
+
 	if (duel->fighter[0] == me || duel->fighter[1] == me) {
 		Bet_Print(cl, "You can't bet on your own duel.");
 		return qtrue;

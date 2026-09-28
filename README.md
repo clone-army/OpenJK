@@ -152,6 +152,8 @@ searches names and categories (e.g. `!jukebox cloud city`, `!jukebox duels`) and
 numbers, `!jukebox <number>` plays any track for everyone and `!jukebox random` plays a random one. Picks are announced
 in chat; the map's own music comes back next round. See `codemp/server/jukebox.cpp`.
 
+Player names in `!bet`, `!gift`, `!bounty`, `!pazaak` and `!chance` are matched fuzzily: case, colours and clan-tag punctuation don't matter, part of the name is enough, and even the letters in order will do (`cdy` for Cody). The closest match wins; a tie lists the players and asks for more of the name.
+
 ### Pazaak
 
 `!pazaak <player> <credits>` challenges someone to KOTOR's card game; they `!pazaak accept` or `!pazaak decline` within 60 seconds. Both stakes are taken on accept and the winner gets the pot. The server deals from a 1-10 deck and each player gets four side cards (+1..+6 or -1..-6). On your turn you're dealt a card, may `!pz play <n>` one side card, then `!pz end` or `!pz stand` - or `!pz auto` to let the server play the turn for you. `!pazaak` and `!pz` are interchangeable. Over 20 is a bust; closest to 20 wins the set, first to two sets wins. Turns time out after 30 seconds (you stand); leaving or `!pz forfeit` loses. See `codemp/server/pazaak.cpp`.
@@ -160,9 +162,8 @@ in chat; the map's own music comes back next round. See `codemp/server/jukebox.c
 
 A duel only takes bets if one of its fighters types `!bets start` in its first 10 seconds, while both are still at full
 health. That announces it to the server and freezes both fighters for `g_betWindowSeconds` while bets come in; then
-"FIGHT!". `!bet` lists each fighter in each duel as a numbered option (`1. Ricks vs Cody (Ricks to win) - 150 cr
-backing`); `!bet <number> <credits>` backs that option (or `!bet <fighter> <credits>`, by part of the name), up to
-`g_betMax` a duel, on one side only, and never on your own duel. Every stake goes
+"FIGHT!". One fight takes bets at a time, until it's decided. `!bet` shows that fight and what's backing each
+fighter; `!bet <fighter> <credits>` backs one, up to `g_betMax`, on one side only, and never on your own duel. Every stake goes
 into the duel's pot and the winning side splits the whole pot by stake, so no credits are created; a duel with no clear
 winner (a fighter leaving) or nobody on the winning side refunds everyone. See `codemp/server/betting.cpp`.
 
