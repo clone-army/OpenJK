@@ -7,7 +7,10 @@ exported G_SetAnim, with the animation looked up by name in MBII's exported
 animTable - so MBII's own animation numbering (which isn't the engine's)
 never matters. The "hold" emotes (sit, slump, hands up, cower, play dead)
 are re-applied as they run out, and last until the player moves, jumps or
-attacks; the others play once. Available on servers running g_socialMode.
+attacks; the others play once. !dance chains MBII's showier animations -
+taunts, a spin, victory flourishes - in a shuffled order, looping until
+the player moves; any a model hasn't got are skipped. Available on servers
+running g_socialMode.
 ===========================================================================
 */
 
@@ -21,6 +24,8 @@ attacks; the others play once. Available on servers running g_socialMode.
 #define EMOTE_ANIM_FLAGS      3       // SETANIM_FLAG_OVERRIDE | SETANIM_FLAG_HOLD
 #define EMOTE_REAPPLY_MS      300     // re-apply a hold emote this close to running out
 #define EMOTE_MAX_MS          600000
+#define EMOTE_MOVE_MIN_MS     1200    // a dance move plays at least this long, even if the model lacks it
+#define EMOTE_DANCE_MOVES     8
 
 typedef struct {
 	const char* cmd;
@@ -28,17 +33,24 @@ typedef struct {
 	int         parts;
 	qboolean    hold;       // keep going until they move
 	const char* desc;
+	qboolean    dance;      // chain kDanceMoves instead of .anim
 } emote_t;
 
+static const char* const kDanceMoves[EMOTE_DANCE_MOVES] = {
+	"BOTH_TUSKENTAUNT1", "BOTH_GUNGAN_TAUNT", "BOTH_ALORA_TAUNT", "BOTH_SPIN1",
+	"BOTH_VICTORY_FAST", "BOTH_VICTORY_MEDIUM", "BOTH_ENGAGETAUNT", "BOTH_HAN_TAUNT",
+};
+
 static const emote_t kEmotes[] = {
-	{ "sit",       "BOTH_SIT1",             EMOTE_SETANIM_BOTH,  qtrue,  "sit down" },
-	{ "slump",     "BOTH_SIT3",             EMOTE_SETANIM_BOTH,  qtrue,  "slump, elbows on knees" },
-	{ "handsup",   "TORSO_SURRENDER_START", EMOTE_SETANIM_TORSO, qtrue,  "hands up" },
-	{ "cower",     "BOTH_COWER1",           EMOTE_SETANIM_BOTH,  qtrue,  "cower" },
-	{ "playdead",  "BOTH_DEAD1",            EMOTE_SETANIM_BOTH,  qtrue,  "play dead" },
-	{ "nod",       "BOTH_HEADNOD",          EMOTE_SETANIM_BOTH,  qfalse, "nod" },
-	{ "shakehead", "BOTH_HEADSHAKE",        EMOTE_SETANIM_BOTH,  qfalse, "shake your head" },
-	{ "talk",      "BOTH_TALK1",            EMOTE_SETANIM_BOTH,  qfalse, "gesture while talking" },
+	{ "sit",       "BOTH_SIT1",             EMOTE_SETANIM_BOTH,  qtrue,  "sit down", qfalse },
+	{ "slump",     "BOTH_SIT3",             EMOTE_SETANIM_BOTH,  qtrue,  "slump, elbows on knees", qfalse },
+	{ "handsup",   "TORSO_SURRENDER_START", EMOTE_SETANIM_TORSO, qtrue,  "hands up", qfalse },
+	{ "cower",     "BOTH_COWER1",           EMOTE_SETANIM_BOTH,  qtrue,  "cower", qfalse },
+	{ "playdead",  "BOTH_DEAD1",            EMOTE_SETANIM_BOTH,  qtrue,  "play dead", qfalse },
+	{ "nod",       "BOTH_HEADNOD",          EMOTE_SETANIM_BOTH,  qfalse, "nod", qfalse },
+	{ "shakehead", "BOTH_HEADSHAKE",        EMOTE_SETANIM_BOTH,  qfalse, "shake your head", qfalse },
+	{ "talk",      "BOTH_TALK1",            EMOTE_SETANIM_BOTH,  qfalse, "gesture while talking", qfalse },
+	{ "dance",     NULL,                    EMOTE_SETANIM_BOTH,  qtrue,  "dance", qtrue },
 };
 
 typedef struct {
@@ -46,6 +58,9 @@ typedef struct {
 	int anim;
 	int spawnCount;
 	int until;
+	int danceOrder[EMOTE_DANCE_MOVES]; // shuffled indexes into kDanceMoves
+	int danceStep;
+	int moveStarted;
 } emoteState_t;
 
 static emoteState_t gEmoteState[MAX_CLIENTS];
@@ -95,6 +110,33 @@ static qboolean Emote_CanPlay(client_t* cl)
 		ps->groundEntityNum != ENTITYNUM_NONE) ? qtrue : qfalse;
 }
 
+// Next dance move the model actually has; -1 if it has none of them.
+static int Emote_NextDanceAnim(emoteState_t* st)
+{
+	for (int tries = 0; tries < EMOTE_DANCE_MOVES; tries++) {
+		st->danceStep = (st->danceStep + 1) % EMOTE_DANCE_MOVES;
+		const int anim = Emote_AnimByName(kDanceMoves[st->danceOrder[st->danceStep]]);
+		if (anim >= 0) {
+			return anim;
+		}
+	}
+	return -1;
+}
+
+static void Emote_ShuffleDance(emoteState_t* st)
+{
+	for (int i = 0; i < EMOTE_DANCE_MOVES; i++) {
+		st->danceOrder[i] = i;
+	}
+	for (int i = EMOTE_DANCE_MOVES - 1; i > 0; i--) {
+		const int j = Q_irand(0, i);
+		const int t = st->danceOrder[i];
+		st->danceOrder[i] = st->danceOrder[j];
+		st->danceOrder[j] = t;
+	}
+	st->danceStep = -1;
+}
+
 // Handles "!<emote>" and "!emotes" in chat; qfalse for anything else.
 qboolean SV_EmoteCommand(client_t* cl, const char* command)
 {
@@ -129,17 +171,24 @@ qboolean SV_EmoteCommand(client_t* cl, const char* command)
 		SV_SendServerCommand(cl, "chat \"^5[Emote]^7 You need to be alive and standing on something.\"\n");
 		return qtrue;
 	}
-	const int anim = Emote_AnimByName(e->anim);
+	emoteState_t* st = &gEmoteState[cl - svs.clients];
+	int anim;
+	if (e->dance) {
+		Emote_ShuffleDance(st);
+		anim = Emote_NextDanceAnim(st);
+	} else {
+		anim = Emote_AnimByName(e->anim);
+	}
 	if (anim < 0) {
 		SV_SendServerCommand(cl, "chat \"^5[Emote]^7 That emote isn't available on this server.\"\n");
 		return qtrue;
 	}
 
-	emoteState_t* st = &gEmoteState[cl - svs.clients];
 	st->emote = e;
 	st->anim = anim;
 	st->spawnCount = cl->gentity->playerState->persistant[PERS_SPAWN_COUNT];
 	st->until = e->hold ? svs.time + EMOTE_MAX_MS : 0;
+	st->moveStarted = svs.time;
 	Emote_Play(cl, st);
 	if (!e->hold) {
 		st->emote = NULL; // one-shot: nothing to keep up
@@ -176,8 +225,22 @@ void SV_EmotesFrame(void)
 		}
 
 		const int left = (st->emote->parts == EMOTE_SETANIM_TORSO) ? ps->torsoTimer : Q_min(ps->torsoTimer, ps->legsTimer);
-		if (left < EMOTE_REAPPLY_MS) {
-			Emote_Play(cl, st);
+		if (left >= EMOTE_REAPPLY_MS) {
+			continue;
 		}
+		if (st->emote->dance) {
+			// On to the next move once this one's had its moment.
+			if (svs.time - st->moveStarted < EMOTE_MOVE_MIN_MS) {
+				continue;
+			}
+			const int next = Emote_NextDanceAnim(st);
+			if (next < 0) {
+				st->emote = NULL;
+				continue;
+			}
+			st->anim = next;
+			st->moveStarted = svs.time;
+		}
+		Emote_Play(cl, st);
 	}
 }
