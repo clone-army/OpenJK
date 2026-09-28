@@ -599,6 +599,12 @@ void SV_BarClientThink(client_t* cl, usercmd_t* cmd);
 qboolean SV_JukeboxCommand(client_t* cl, const char* args);
 
 //
+// emotes.cpp
+//
+qboolean SV_EmoteCommand(client_t* cl, const char* command);
+void SV_EmotesFrame(void);
+
+//
 // pazaak.cpp
 //
 qboolean SV_PazaakCommand(client_t* cl, const char* args);

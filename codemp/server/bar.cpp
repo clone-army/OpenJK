@@ -44,7 +44,10 @@ playerState_t / entityState_t / usercmd_t fields:
 
 Order a few in quick succession (3 within 3 minutes) and the bar starts
 announcing it - tipsy, then wasted, then "needs to lay off the booze" -
-picked at random from the lines below. A third Spice within 3 minutes is an
+picked at random from the lines below; the 8th knocks you out cold for a
+few seconds (MBII's own G_Knockdown), which clears the tab. Every order
+burps (plus a Jawa line for Jawa Juice, a cough for spice and death
+sticks), through MBII's G_SoundOnEnt. A third Spice within 3 minutes is an
 overdose: announced, then MBII's own /kill (its usual 5 second countdown),
 and everyone is told when they drop.
 
@@ -70,6 +73,8 @@ effect is dropped without touching anything.
 static void* gBarFxDll = NULL;
 static int (*gBarEffectIndex)(const char* name) = NULL;
 static void* (*gBarPlayEffectID)(int fxID, float* org, float* ang) = NULL;
+static void (*gBarSoundOnEnt)(void* ent, int channel, const char* path) = NULL;
+static void (*gBarKnockdown)(void* victim, int attacker, int addTime, int downVelocity, qboolean quickGetup) = NULL;
 
 static qboolean Bar_ResolveFx(void)
 {
@@ -78,8 +83,31 @@ static qboolean Bar_ResolveFx(void)
 		gBarFxDll = dll;
 		gBarEffectIndex = dll ? (int (*)(const char*))Sys_LoadFunction(dll, "G_EffectIndex") : NULL;
 		gBarPlayEffectID = dll ? (void* (*)(int, float*, float*))Sys_LoadFunction(dll, "G_PlayEffectID") : NULL;
+		gBarSoundOnEnt = dll ? (void (*)(void*, int, const char*))Sys_LoadFunction(dll, "G_SoundOnEnt") : NULL;
+		gBarKnockdown = dll ? (void (*)(void*, int, int, int, qboolean))Sys_LoadFunction(dll, "G_Knockdown") : NULL;
 	}
 	return (gBarEffectIndex && gBarPlayEffectID) ? qtrue : qfalse;
+}
+
+// A sound on the player, heard by everyone nearby (MBII's G_SoundOnEnt).
+static void Bar_Sound(client_t* cl, const char* path)
+{
+	if (!Bar_ResolveFx() || !gBarSoundOnEnt) {
+		return;
+	}
+	void* old = GVM_BeginNative();
+	gBarSoundOnEnt(cl->gentity, CHAN_AUTO, path);
+	GVM_EndNative(old);
+}
+
+static void Bar_OrderSounds(client_t* cl, const char* id)
+{
+	Bar_Sound(cl, va("sound/chars/chefporkins/misc/burp%d.wav", Q_irand(1, 7)));
+	if (!Q_stricmp(id, "jawa_juice")) {
+		Bar_Sound(cl, va("Sound/Chars/r_jawa_bane/misc/gloat%d.mp3", Q_irand(1, 3)));
+	} else if (!Q_stricmp(id, "death_stick") || !Q_stricmp(id, "spice")) {
+		Bar_Sound(cl, "sound/chars/grievous/misc/cough.mp3");
+	}
 }
 
 static void Bar_Puff(client_t* cl, const char* fx, int where)
@@ -200,6 +228,8 @@ static barState_t gBarState[MAX_CLIENTS];
 #define BAR_TAB_WINDOW_MS     180000
 #define BAR_TAB_SIZE          16
 #define BAR_SPICE_OVERDOSE    3       // spice orders within the window that kill you
+#define BAR_PASSOUT_ORDERS    8       // orders within the window that knock you out
+#define BAR_PASSOUT_MS        4000    // extra time on the floor, on top of MBII's own
 #define BAR_OVERDOSE_WAIT_MS  15000   // longer than MBII's 5s /kill countdown
 typedef struct {
 	int orderTimes[BAR_TAB_SIZE];
@@ -233,6 +263,13 @@ static const char* const kLayOffLines[] = {
 	"Wuher has refused to serve %s ^7any more... after this one.",
 	"%s ^7has been cut off. (Not really. Keep ordering.)",
 	"%s ^7can no longer find the door. Or the floor.",
+};
+static const char* const kPassOutLines[] = {
+	"%s ^7has passed out.",
+	"%s ^7is taking a little nap on the floor.",
+	"%s ^7has hit the deck. Someone check they're breathing.",
+	"%s ^7face-planted into the bar.",
+	"Lights out for %s^7.",
 };
 static const char* const kSpiceWarnLines[] = {
 	"%s ^7is getting a bit too friendly with the spice...",
@@ -438,8 +475,18 @@ qboolean SV_BarCommand(client_t* cl, const char* args)
 		}
 	}
 
+	Bar_OrderSounds(cl, kBarDrinks[drink].id);
+
 	const int orders = Bar_TabAdd(tab->orderTimes);
-	if (orders >= 6) {
+	if (orders >= BAR_PASSOUT_ORDERS && gBarKnockdown && Bar_IsAlive(cl)) {
+		// MBII's own knockdown: flat on the floor for a few seconds.
+		void* old = GVM_BeginNative();
+		gBarKnockdown(cl->gentity, cl - svs.clients, BAR_PASSOUT_MS, 0, qfalse);
+		GVM_EndNative(old);
+		Bar_Sound(cl, "sound/dreamtime/grogu_asleep.wav");
+		Bar_Announce(cl, BAR_RANDOM_LINE(kPassOutLines));
+		memset(tab->orderTimes, 0, sizeof(tab->orderTimes)); // they've slept it off
+	} else if (orders >= 6) {
 		Bar_Announce(cl, BAR_RANDOM_LINE(kLayOffLines));
 	} else if (orders >= 4) {
 		Bar_Announce(cl, BAR_RANDOM_LINE(kWastedLines));

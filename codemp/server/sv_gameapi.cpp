@@ -66,6 +66,21 @@ void GVM_CallPlayEffectID( void *(*fn)( int fxID, float *org, float *ang ), int 
 	fn( fxID, org, ang );
 }
 
+// Makes the game VM current around a direct call into one of its exported
+// functions (bar.cpp, emotes.cpp), so any syscalls it makes land in the
+// right place. Pair every GVM_BeginNative with GVM_EndNative.
+void *GVM_BeginNative( void ) {
+	vm_t *old = currentVM;
+	currentVM = gvm;
+	return old;
+}
+
+void GVM_EndNative( void *old ) {
+	if ( old ) {
+		currentVM = (vm_t *)old;
+	}
+}
+
 void GVM_InitGame( int levelTime, int randomSeed, int restart ) {
 	if ( gvm->isLegacy ) {
 		VM_Call( gvm, GAME_INIT, levelTime, randomSeed, restart );

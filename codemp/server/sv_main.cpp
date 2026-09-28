@@ -1287,6 +1287,7 @@ void SV_Frame( int msec ) {
 
 	// pazaak turn timers and walkouts; raffle schedule
 	SV_PazaakFrame();
+	SV_EmotesFrame();
 	SV_RaffleFrame();
 
 	// gun game: kill-detection and weapon enforcement
