@@ -126,6 +126,10 @@ steer - nothing that matters in a fight - and you glow while they're working:
 | 16 | Death Stick | Super speed and twitchy hops, crackling | 30 s |
 | 17 | Spice | Low gravity and a slowly spinning view; looks slow-motion to others | 45 s |
 
+Order a few in quick succession (3 or more within 3 minutes) and the bar starts announcing it: tipsy, then
+wasted, then "needs to lay off the booze", with a random line each time. A third Spice within 3 minutes is an
+overdose: announced, then MBII's usual 5-second `/kill` countdown.
+
 Each price is its own cvar, `g_barCost_<drink>` (the drink's name in lower case with underscores, e.g.
 `g_barCost_jawa_juice`); `0` takes a drink off the menu. Effects only last for the life they were bought in. See the
 header of `codemp/server/bar.cpp` for how each effect works.
