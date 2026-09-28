@@ -84,6 +84,7 @@ cvar_t* g_economyJukeboxEnable;
 cvar_t* g_jukeboxCost;
 cvar_t* g_jukeboxCooldown;
 cvar_t* g_economyPazaakEnable;
+cvar_t* g_economyChanceEnable;
 cvar_t* g_economyRaffleEnable;
 cvar_t* g_raffleIntervalMinutes;
 cvar_t* g_raffleOpenMinutes;

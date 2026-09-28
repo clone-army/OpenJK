@@ -405,6 +405,7 @@ extern	cvar_t* g_economyJukeboxEnable;
 extern	cvar_t* g_jukeboxCost;
 extern	cvar_t* g_jukeboxCooldown;
 extern	cvar_t* g_economyPazaakEnable;
+extern	cvar_t* g_economyChanceEnable;
 extern	cvar_t* g_economyRaffleEnable;
 extern	cvar_t* g_raffleIntervalMinutes;
 extern	cvar_t* g_raffleOpenMinutes;
@@ -614,6 +615,11 @@ void SV_EmotesFrame(void);
 // pazaak.cpp
 //
 qboolean SV_PazaakCommand(client_t* cl, const char* args);
+
+//
+// chance.cpp
+//
+qboolean SV_ChanceCommand(client_t* cl, const char* args);
 void SV_PazaakFrame(void);
 
 //
