@@ -123,6 +123,9 @@ static qboolean Emote_CanPlay(client_t* cl)
 {
 	const playerState_t* ps = cl->gentity->playerState;
 	const int team = ps->persistant[PERS_TEAM];
+	if (ps->clientNum != cl - svs.clients) {
+		return qfalse; // spectating someone: that's their playerState
+	}
 	return ((team == TEAM_RED || team == TEAM_BLUE) && ps->stats[STAT_HEALTH] > 0 &&
 		ps->groundEntityNum != ENTITYNUM_NONE) ? qtrue : qfalse;
 }

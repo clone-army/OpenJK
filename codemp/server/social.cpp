@@ -504,9 +504,14 @@ void SV_SocialClientCommand(client_t* cl)
 // player sits on TEAM_FREE rather than TEAM_SPECTATOR until they've been to
 // spectator once - which is exactly the state RESPAWN_MODE never gives a
 // spawn timer to - so "not spectator" isn't enough. pm_type is the same
-// stock alive test gungame.cpp uses.
-static qboolean Social_IsSpawned(const playerState_t* ps)
+// stock alive test gungame.cpp uses. A spectator following someone carries a
+// copy of *their* playerState - team, pm_type and all - so it only counts if
+// the playerState is the player's own (clientNum).
+static qboolean Social_IsSpawned(const playerState_t* ps, int clientNum)
 {
+	if (ps->clientNum != clientNum) {
+		return qfalse;
+	}
 	const int team = ps->persistant[PERS_TEAM];
 	if (team != TEAM_RED && team != TEAM_BLUE) {
 		return qfalse;
@@ -573,7 +578,7 @@ static void Social_RescueStuckJoiners(void)
 			continue;
 		}
 		playerState_t* ps = cl->gentity->playerState;
-		if (Social_IsSpawned(ps)) {
+		if (Social_IsSpawned(ps, i)) {
 			js->siegeClassCmd[0] = '\0'; // spawned - job done
 			js->lastSpawnedAt = svs.time;
 			js->botSide = 0;
