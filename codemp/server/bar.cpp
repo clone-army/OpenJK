@@ -40,7 +40,8 @@ playerState_t / entityState_t / usercmd_t fields:
 Order a few in quick succession (3 within 3 minutes) and the bar starts
 announcing it - tipsy, then wasted, then "needs to lay off the booze" -
 picked at random from the lines below. A third Spice within 3 minutes is an
-overdose: announced, then MBII's own /kill (its usual 5 second countdown).
+overdose: announced, then MBII's own /kill (its usual 5 second countdown),
+and everyone is told when they drop.
 
 Effects only ever last for the life they were bought in: a new life
 (persistant[PERS_SPAWN_COUNT], which MBII bumps on every spawn - same index
@@ -144,9 +145,12 @@ static barState_t gBarState[MAX_CLIENTS];
 #define BAR_TAB_WINDOW_MS     180000
 #define BAR_TAB_SIZE          16
 #define BAR_SPICE_OVERDOSE    3       // spice orders within the window that kill you
+#define BAR_OVERDOSE_WAIT_MS  15000   // longer than MBII's 5s /kill countdown
 typedef struct {
 	int orderTimes[BAR_TAB_SIZE];
 	int spiceTimes[BAR_TAB_SIZE];
+	int overdoseSpawnCount;             // the life that's overdosing
+	int overdoseUntil;                  // 0 = not overdosing
 } barTab_t;
 static barTab_t gBarTab[MAX_CLIENTS];
 
@@ -364,6 +368,8 @@ qboolean SV_BarCommand(client_t* cl, const char* args)
 		if (spice >= BAR_SPICE_OVERDOSE) {
 			Bar_Announce(cl, BAR_RANDOM_LINE(kOverdoseLines));
 			memset(tab->spiceTimes, 0, sizeof(tab->spiceTimes));
+			tab->overdoseSpawnCount = cl->gentity->playerState->persistant[PERS_SPAWN_COUNT];
+			tab->overdoseUntil = svs.time + BAR_OVERDOSE_WAIT_MS;
 			// MBII's own /kill: a 5 second countdown, then they drop.
 			Cmd_TokenizeString("kill");
 			GVM_ClientCommand(cl - svs.clients);
@@ -523,6 +529,25 @@ static qboolean Bar_AnythingActive(const barState_t* st)
 	return qfalse;
 }
 
+// Tells everyone once the overdose actually kills them.
+static void Bar_OverdoseFrame(client_t* cl, barTab_t* tab)
+{
+	if (!tab->overdoseUntil) {
+		return;
+	}
+	if (svs.time >= tab->overdoseUntil || cl->state != CS_ACTIVE || !cl->gentity || !cl->gentity->playerState) {
+		tab->overdoseUntil = 0; // survived somehow (or left) - say nothing
+		return;
+	}
+	const playerState_t* ps = cl->gentity->playerState;
+	if (ps->stats[STAT_HEALTH] > 0 && ps->persistant[PERS_SPAWN_COUNT] == tab->overdoseSpawnCount) {
+		return;
+	}
+	tab->overdoseUntil = 0;
+	SV_SendServerCommand(NULL, "chat \"^5[Bar] ^7%s ^1died from a spice overdose.\"\n", cl->name);
+	SV_SendServerCommand(NULL, "cp \"%s\n^1died from a spice overdose\"\n", cl->name);
+}
+
 void SV_BarFrame(void)
 {
 	for (int i = 0; i < sv_maxclients->integer; i++) {
@@ -532,6 +557,7 @@ void SV_BarFrame(void)
 		if (cl->state < CS_CONNECTED) {
 			memset(&gBarTab[i], 0, sizeof(gBarTab[i]));
 		}
+		Bar_OverdoseFrame(cl, &gBarTab[i]);
 		if (!Bar_AnythingActive(st)) {
 			continue;
 		}
