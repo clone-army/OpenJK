@@ -1029,6 +1029,14 @@ void SV_Init (void) {
 	g_raffleMinEntrants = Cvar_Get("g_raffleMinEntrants", "5", CVAR_TEMP, "Different players who must enter for a raffle draw to happen (otherwise refunded)");
 	SV_EconomyShopInitCvars();
 	SV_BarInitCvars();
+	g_barTabMinutes = Cvar_Get("g_barTabMinutes", "5", CVAR_TEMP, "Minutes of bar orders that count towards passing out, poisoning and overdoses");
+	g_barTabMinutes->flags &= ~CVAR_ARCHIVE;
+	g_barPassOutDrinks = Cvar_Get("g_barPassOutDrinks", "8", CVAR_TEMP, "Drinks within g_barTabMinutes that knock you out (0 = never)");
+	g_barPassOutDrinks->flags &= ~CVAR_ARCHIVE;
+	g_barPoisoningDrinks = Cvar_Get("g_barPoisoningDrinks", "10", CVAR_TEMP, "Drinks within g_barTabMinutes that kill you with alcohol poisoning (0 = never)");
+	g_barPoisoningDrinks->flags &= ~CVAR_ARCHIVE;
+	g_barSpiceOverdose = Cvar_Get("g_barSpiceOverdose", "3", CVAR_TEMP, "Spice within g_barTabMinutes that kills you with an overdose (0 = never)");
+	g_barSpiceOverdose->flags &= ~CVAR_ARCHIVE;
 
 	// These toggles are per-instance runtime controls and should never persist.
 	// If they were ever set with 'seta' in the past, strip ARCHIVE every startup.

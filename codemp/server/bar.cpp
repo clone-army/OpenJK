@@ -18,7 +18,7 @@ playerState_t / entityState_t / usercmd_t fields:
     and put back the class's own scale, which MBII sets per class on spawn
   - Corellian Whiskey makes you drunk: delta_angles is nudged every frame so
     your view sways hard (the field the game itself uses to turn a player's
-    view on teleport). Every nudge is tracked and undone exactly when it
+    view on teleport), and harder and faster with every extra whiskey. Every nudge is tracked and undone exactly when it
     wears off. Tatooine Twister spins your view the same way
   - Bubble Brew (hiccup hops), Moon Milk (part of gravity cancelled while
     airborne) and Sugar Rush (ground speed boosted) push ps->velocity after
@@ -49,9 +49,10 @@ playerState_t / entityState_t / usercmd_t fields:
     (Other powerup looks aren't used: players never see their own - the
     engine sends MBII's playerState powerups field as a 1-bit value.)
 
-Drink too much, too fast (within 5 minutes): the 8th order knocks you out
-cold for a few seconds (MBII's own G_Knockdown); the 10th is alcohol
-poisoning and the 3rd Spice an overdose - MBII's own /kill (its usual 5
+Drink too much, too fast (within g_barTabMinutes, default 5): the
+g_barPassOutDrinks-th order (8) knocks you out cold for a few seconds
+(MBII's own G_Knockdown); the g_barPoisoningDrinks-th (10) is alcohol
+poisoning and the g_barSpiceOverdose-th Spice (3) an overdose - MBII's own /kill (its usual 5
 second countdown), and everyone is told what killed you when you drop.
 Every order burps (plus a Jawa line for Jawa Juice, a cough for spice and
 death sticks), through MBII's G_SoundOnEnt.
@@ -184,6 +185,7 @@ static void Bar_Puff(client_t* cl, const char* fx, int where)
 #define BAR_MOON_GRAVITY_CANCEL  0.65f   // share of gravity Moon Milk cancels in the air
 #define BAR_RUSH_MAX_SPEED       900.0f  // Sugar Rush ground speed cap (normal run is ~250)
 #define BAR_RUSH_BOOST           1.12f   // per server frame, while moving on the ground
+#define BAR_DRUNK_MAX_LEVEL      6       // Corellian Whiskeys that keep making it worse
 #define BAR_TRIP_MS              800     // Gungan Grog: extra time on the floor per trip
 
 typedef enum {
@@ -248,6 +250,7 @@ typedef struct {
 	int scaleSet;
 	int swayYaw;            // drunk: delta_angles offset currently applied, in SHORT units
 	int swayPitch;
+	int drunkLevel;         // whiskeys deep, 1..BAR_DRUNK_MAX_LEVEL
 	int spinLastTime;
 	int nextHiccup;
 	int nextTrip;
@@ -264,11 +267,13 @@ static barState_t gBarState[MAX_CLIENTS];
 // The tab: recent orders per player, across lives (the drinking doesn't stop
 // because you died), cleared when the slot empties. Drives passing out,
 // alcohol poisoning and the spice overdose.
-#define BAR_TAB_WINDOW_MS     300000
 #define BAR_TAB_SIZE          16
-#define BAR_SPICE_OVERDOSE    3       // spice orders within the window that kill you
-#define BAR_PASSOUT_ORDERS    8       // orders within the window that knock you out
-#define BAR_POISONING_ORDERS  10      // orders within the window that kill you
+// Set per server: g_barTabMinutes (window), g_barPassOutDrinks,
+// g_barPoisoningDrinks and g_barSpiceOverdose; 0 switches that one off.
+#define BAR_TAB_WINDOW_MS     (Q_max(1, g_barTabMinutes ? g_barTabMinutes->integer : 5) * 60000)
+#define BAR_SPICE_OVERDOSE    (g_barSpiceOverdose ? g_barSpiceOverdose->integer : 3)
+#define BAR_PASSOUT_ORDERS    (g_barPassOutDrinks ? g_barPassOutDrinks->integer : 8)
+#define BAR_POISONING_ORDERS  (g_barPoisoningDrinks ? g_barPoisoningDrinks->integer : 10)
 #define BAR_PASSOUT_MS        4000    // extra time on the floor, on top of MBII's own
 #define BAR_OVERDOSE_WAIT_MS  15000   // longer than MBII's 5s /kill countdown
 typedef struct {
@@ -374,6 +379,12 @@ static void Bar_StartEffect(client_t* cl, barState_t* st, const barDrink_t* d, b
 		case BAR_HICCUP:
 			if (fresh) {
 				st->nextHiccup = svs.time + 1500;
+			}
+			break;
+		case BAR_DRUNK:
+			st->drunkLevel = fresh ? 1 : Q_min(st->drunkLevel + 1, BAR_DRUNK_MAX_LEVEL);
+			if (!fresh) {
+				SV_EconomyPrint(cl, va("You're getting drunker... (%d whiskeys deep)", st->drunkLevel));
 			}
 			break;
 		case BAR_CLUMSY:
@@ -491,11 +502,11 @@ qboolean SV_BarCommand(client_t* cl, const char* args)
 	const int orders = Bar_TabAdd(tab->orderTimes);
 	const int spice = !Q_stricmp(kBarDrinks[drink].id, "spice") ? Bar_TabAdd(tab->spiceTimes) : 0;
 
-	if (spice >= BAR_SPICE_OVERDOSE) {
+	if (BAR_SPICE_OVERDOSE > 0 && spice >= BAR_SPICE_OVERDOSE) {
 		Bar_Kill(cl, tab, "a spice overdose");
-	} else if (orders >= BAR_POISONING_ORDERS) {
+	} else if (BAR_POISONING_ORDERS > 0 && orders >= BAR_POISONING_ORDERS) {
 		Bar_Kill(cl, tab, "alcohol poisoning");
-	} else if (orders == BAR_PASSOUT_ORDERS && gBarKnockdown && Bar_IsAlive(cl)) {
+	} else if (BAR_PASSOUT_ORDERS > 0 && orders == BAR_PASSOUT_ORDERS && gBarKnockdown && Bar_IsAlive(cl)) {
 		// MBII's own knockdown: flat on the floor for a few seconds.
 		void* old = GVM_BeginNative();
 		gBarKnockdown(cl->gentity, cl - svs.clients, BAR_PASSOUT_MS, 0, qfalse);
@@ -547,14 +558,18 @@ static void Bar_DrunkFrame(client_t* cl, barState_t* st)
 		ps->delta_angles[PITCH] -= st->swayPitch;
 		st->swayYaw = 0;
 		st->swayPitch = 0;
+		st->drunkLevel = 0;
 		Bar_Expire(cl, st, BAR_DRUNK, "You sober up.");
 		return;
 	}
 
-	// Two slow, out-of-step waves so it wanders rather than ticks.
-	const float t = svs.time / 1000.0f;
-	const int wantYaw = ANGLE2SHORT(24.0f * sinf(t * 1.6f) + 10.0f * sinf(t * 2.9f));
-	const int wantPitch = ANGLE2SHORT(12.0f * sinf(t * 1.2f) + 5.0f * sinf(t * 2.3f));
+	// Two slow, out-of-step waves so it wanders rather than ticks. Every
+	// extra whiskey on top makes it half as big again, and a bit faster.
+	const float level = (float)Q_max(1, st->drunkLevel) - 1.0f;
+	const float size = 1.0f + 0.5f * level;
+	const float t = svs.time / 1000.0f * (1.0f + 0.15f * level);
+	const int wantYaw = ANGLE2SHORT(size * (24.0f * sinf(t * 1.6f) + 10.0f * sinf(t * 2.9f)));
+	const int wantPitch = ANGLE2SHORT(Q_min(size, 2.5f) * (12.0f * sinf(t * 1.2f) + 5.0f * sinf(t * 2.3f)));
 	ps->delta_angles[YAW] += wantYaw - st->swayYaw;
 	ps->delta_angles[PITCH] += wantPitch - st->swayPitch;
 	st->swayYaw = wantYaw;
