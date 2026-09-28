@@ -46,6 +46,7 @@ static const jukeboxTrack_t kJukeboxTracks[] = {
 	{ "Halo",                      "Music/halo_for" },
 	{ "Portal",                    "music/portal" },
 	{ "Mortal Kombat",             "Music/mk" },
+	{ "Lord of the Rings",         "Music/lotr_hd" },
 };
 
 static int gJukeboxNextChange = 0;

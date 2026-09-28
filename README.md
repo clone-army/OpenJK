@@ -143,7 +143,7 @@ header of `codemp/server/bar.cpp` for how each effect works.
 
 ### The jukebox
 
-`!jukebox` lists twenty tracks - Cantina Band, Nightclub, Jabba's Sail Barge, Duel of the Fates, Benny Hill, Crazy Train, Pokemon, TMNT, Halo, Portal, Mortal Kombat and more, all from MBII's own files so nobody downloads anything - and `!jukebox <number>` pays to play one for everyone, announced in chat. The map's own music comes back next round. See `codemp/server/jukebox.cpp`.
+`!jukebox` lists twenty-one tracks - Cantina Band, Nightclub, Jabba's Sail Barge, Duel of the Fates, Benny Hill, Crazy Train, Pokemon, TMNT, Halo, Portal, Mortal Kombat, Lord of the Rings and more, all from MBII's own files so nobody downloads anything - and `!jukebox <number>` pays to play one for everyone, announced in chat. The map's own music comes back next round. See `codemp/server/jukebox.cpp`.
 
 ### Pazaak
 
