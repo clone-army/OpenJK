@@ -6,7 +6,7 @@ adds server-side features on top of MBII without touching MBII itself:
 
 | Feature | Switched on by | Player commands |
 |---|---|---|
-| [Economy](#economy--credit-system): credits, shop, bounties, accounts | `g_creditSystemEnable`, `g_economyShopEnable`, `g_economyBountyEnable` | `!balance` `!buy` `!bounty` `!register` `!login` `!help` |
+| [Economy](#economy--credit-system): credits, shop, bounties, accounts | `g_creditSystemEnable`, `g_economyShopEnable`, `g_economyBountyEnable` | `!balance` `!gift` `!buy` `!bounty` `!register` `!login` `!help` |
 | [Chaos Mode](#chaos-mode): a random prize for everyone every few seconds | `g_chaosEnable`, `g_chaosCooldown` | |
 | [Gun Game](#gun-game): climb a weapon ladder one kill at a time | `g_gungame`, `g_gungameAnnounce` | |
 | [Social Mode](#social-mode): no damage, spawn any time, duels; bots that pick Legends classes | `g_socialMode`, `g_socialRespawnTime`, `g_socialDuels`, `g_socialRoundTime`, `g_socialBots` | |
@@ -90,6 +90,7 @@ players can see the commands but don't earn.
 |---|---|
 | `!help` | Summary of the commands |
 | `!balance` | Your credits, and any bounty on your head |
+| `!gift <player> <credits>` | Give some of your credits to another logged-in player |
 | `!buy` | Shop categories and your balance |
 | `!buy <category>` | Items in a category, e.g. `!buy rifles` |
 | `!buy <item>` | Buy something, e.g. `!buy bryar`, `!buy jetpack` |
