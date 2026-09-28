@@ -1018,6 +1018,9 @@ void SV_Init (void) {
 	g_economyBountyEnable = Cvar_Get("g_economyBountyEnable", "0", CVAR_TEMP, "Enable !bounty / !<n> <credits> (also requires g_creditSystemEnable 1)");
 	g_economyBarEnable = Cvar_Get("g_economyBarEnable", "0", CVAR_TEMP, "Enable the !bar drinks menu (also requires g_creditSystemEnable 1)");
 	g_economyRegisterBonus = Cvar_Get("g_economyRegisterBonus", "100", CVAR_TEMP, "Credits given once when a player !registers a new account");
+	g_economyJukeboxEnable = Cvar_Get("g_economyJukeboxEnable", "0", CVAR_TEMP, "Enable the !jukebox (also requires g_creditSystemEnable 1)");
+	g_jukeboxCost = Cvar_Get("g_jukeboxCost", "10", CVAR_TEMP, "Credits to put a track on the jukebox");
+	g_jukeboxCooldown = Cvar_Get("g_jukeboxCooldown", "60", CVAR_TEMP, "Seconds a jukebox track plays before anyone can change it");
 	SV_EconomyShopInitCvars();
 	SV_BarInitCvars();
 
@@ -1029,6 +1032,9 @@ void SV_Init (void) {
 	g_economyBountyEnable->flags &= ~CVAR_ARCHIVE;
 	g_economyBarEnable->flags &= ~CVAR_ARCHIVE;
 	g_economyRegisterBonus->flags &= ~CVAR_ARCHIVE;
+	g_economyJukeboxEnable->flags &= ~CVAR_ARCHIVE;
+	g_jukeboxCost->flags &= ~CVAR_ARCHIVE;
+	g_jukeboxCooldown->flags &= ~CVAR_ARCHIVE;
 
 	g_spinSpawnerHackOffset = Cvar_Get("g_spinSpawnerHackOffset", "-1", CVAR_TEMP, "Byte offset from gclient base to hasSkill[] (memory-hack for use_spawner)");
 	g_spinSpawnerHackSkillIndex = Cvar_Get("g_spinSpawnerHackSkillIndex", "54", CVAR_TEMP, "EAS skill index used for spawner (default: EAS_HI_SPAWNER)");

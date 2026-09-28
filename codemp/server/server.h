@@ -397,6 +397,9 @@ extern	cvar_t* g_economyShopEnable;
 extern	cvar_t* g_economyBountyEnable;
 extern	cvar_t* g_economyBarEnable;
 extern	cvar_t* g_economyRegisterBonus;
+extern	cvar_t* g_economyJukeboxEnable;
+extern	cvar_t* g_jukeboxCost;
+extern	cvar_t* g_jukeboxCooldown;
 extern	cvar_t* g_spinSpawnerHackOffset;
 extern	cvar_t* g_spinSpawnerHackSkillIndex;
 extern	cvar_t* g_spinSpawnerHackSkillValue;
@@ -582,6 +585,11 @@ void SV_BarInitCvars(void);
 qboolean SV_BarCommand(client_t* cl, const char* args);
 void SV_BarFrame(void);
 void SV_BarClientThink(client_t* cl, usercmd_t* cmd);
+
+//
+// jukebox.cpp
+//
+qboolean SV_JukeboxCommand(client_t* cl, const char* args);
 
 //
 // killstreak.cpp
