@@ -13,7 +13,7 @@ steer - nothing that matters in a fight. Everything goes through stock
 playerState_t / entityState_t / usercmd_t fields:
 
   - Nurse Wine cures everything at once (and clears the tab), with MBII's
-    heal grenade burst; Doctor Vodka applies two random drinks
+    heal grenade burst; Doctor Vodka applies one of everything else
   - Gungan Grog trips you up every few seconds (MBII's own G_Knockdown,
     short, quick getup)
   - size drinks set iModelScale (the same field spin.cpp's size prizes use),
@@ -207,7 +207,7 @@ typedef enum {
 	BAR_CROUCH,
 	BAR_CLUMSY,     // tripping over every few seconds
 	BAR_CURE,       // Nurse Wine: ends everything and clears the tab (at order)
-	BAR_PRESCRIBE,  // Doctor Vodka: two random drinks (at order)
+	BAR_PRESCRIBE,  // Doctor Vodka: one of everything (at order)
 	BAR_LOOK,       // just the visual in .look
 	BAR_NUM_EFFECTS
 } barEffect_t;
@@ -248,7 +248,7 @@ static const barDrink_t kBarDrinks[] = {
 	{ "death_stick",       "Death Stick",       "you want to go home and rethink your life",    20, BAR_RUSH,    0,   30,  BAR_LOOK_NONE, BAR_LOOK_NONE,    BAR_HICCUP, "effects/spice/pipe_smoke", 500, BAR_FX_HEAD },
 	{ "spice",             "Spice",             "floaty, spinny and hazy for 45 seconds", 20, BAR_MOON,    0,   45,  BAR_LOOK_NONE,    BAR_LOOK_NONE,   BAR_SPIN, "effects/spice/pipe_smoke", 500, BAR_FX_HEAD },
 	{ "nurse_wine",        "Nurse Wine",        "cures every drink effect and clears your tab", 15, BAR_CURE,    0,   0,   BAR_LOOK_NONE,    BAR_LOOK_NONE, BAR_LOOK, NULL, 0, BAR_FX_HEAD },
-	{ "doctor_vodka",      "Doctor Vodka",      "the doctor prescribes you two random drinks",  12, BAR_PRESCRIBE, 0, 0,   BAR_LOOK_NONE,    BAR_LOOK_NONE, BAR_LOOK, NULL, 0, BAR_FX_HEAD },
+	{ "doctor_vodka",      "Doctor Vodka",      "one of everything on the menu, all at once",   40, BAR_PRESCRIBE, 0, 0,   BAR_LOOK_NONE,    BAR_LOOK_NONE, BAR_LOOK, NULL, 0, BAR_FX_HEAD },
 };
 
 static cvar_t* gBarCostCvars[ARRAY_LEN(kBarDrinks)];
@@ -492,27 +492,16 @@ static void Bar_Cure(client_t* cl, barTab_t* tab)
 	}
 }
 
-// Doctor Vodka: two different random drinks off the menu - never Spice,
-// Death Sticks, or the nurse and doctor themselves. Returns how many.
-static int Bar_Prescribe(client_t* cl, const char** names)
+// Doctor Vodka: one of every drink on the menu at once - everything but
+// the Nurse Wine (which would cancel it) and itself. Counts as one drink on
+// the tab, and the Spice in it doesn't count towards an overdose.
+static void Bar_Prescribe(client_t* cl)
 {
-	int picked[2] = { -1, -1 }, n = 0;
-
-	for (int tries = 0; tries < 50 && n < 2; tries++) {
-		const int d = Q_irand(0, (int)ARRAY_LEN(kBarDrinks) - 1);
-		const barDrink_t* k = &kBarDrinks[d];
-		if (k->effect == BAR_CURE || k->effect == BAR_PRESCRIBE ||
-			!Q_stricmp(k->id, "spice") || !Q_stricmp(k->id, "death_stick") || d == picked[0]) {
-			continue;
+	for (int d = 0; d < (int)ARRAY_LEN(kBarDrinks); d++) {
+		if (kBarDrinks[d].effect != BAR_CURE && kBarDrinks[d].effect != BAR_PRESCRIBE) {
+			Bar_Apply(cl, d);
 		}
-		picked[n] = d;
-		names[n] = k->name;
-		n++;
 	}
-	for (int i = 0; i < n; i++) {
-		Bar_Apply(cl, picked[i]);
-	}
-	return n;
 }
 
 // Drunk (or spiced) to death: MBII's own /kill - a 5 second countdown, then
@@ -569,10 +558,8 @@ qboolean SV_BarCommand(client_t* cl, const char* args)
 		return qtrue;
 	}
 	if (kBarDrinks[drink].effect == BAR_PRESCRIBE) {
-		const char* rx[2] = { "", "" };
-		const int n = Bar_Prescribe(cl, rx);
-		SV_SendServerCommand(NULL, "chat \"^5[Bar] ^7Doctor's orders for %s^7: ^3%s%s%s^7!\"\n", cl->name,
-			rx[0], n > 1 ? " ^7and ^3" : "", n > 1 ? rx[1] : "");
+		Bar_Prescribe(cl);
+		SV_SendServerCommand(NULL, "chat \"^5[Bar] ^7Doctor's orders for %s^7: ^3one of everything^7! Somebody get the nurse.\"\n", cl->name);
 	} else {
 		Bar_Apply(cl, drink);
 	}
