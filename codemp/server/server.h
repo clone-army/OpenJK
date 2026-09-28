@@ -247,6 +247,7 @@ typedef struct client_s {
 	qboolean		economyScoreInitialized;
 	int				economyLastHealth;
 	qboolean		economyHealthInitialized;
+	int				economyCreditsSynced;	// account's stored balance as of this session's last read/write (see SV_EconomyMergeExternal)
 	char			economyHandle[24];	// non-empty if logged into a persisted !register/!login account this session
 
 	// Set by the spawnvehicle admin command right after teleporting a
