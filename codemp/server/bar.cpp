@@ -149,7 +149,8 @@ static qboolean Bar_IsAlive(client_t* cl)
 		return qfalse;
 	}
 	const playerState_t* ps = cl->gentity->playerState;
-	return (ps->persistant[PERS_TEAM] != TEAM_SPECTATOR && ps->stats[STAT_HEALTH] > 0) ? qtrue : qfalse;
+	const int team = ps->persistant[PERS_TEAM];
+	return ((team == TEAM_RED || team == TEAM_BLUE) && ps->stats[STAT_HEALTH] > 0) ? qtrue : qfalse;
 }
 
 static qboolean Bar_Active(const barState_t* st, barEffect_t e)
