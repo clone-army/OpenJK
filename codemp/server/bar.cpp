@@ -12,6 +12,8 @@ no-damage social server, so drinks are all about how you look, move and
 steer - nothing that matters in a fight. Everything goes through stock
 playerState_t / entityState_t / usercmd_t fields:
 
+  - Gungan Grog trips you up every few seconds (MBII's own G_Knockdown,
+    short, quick getup)
   - size drinks set iModelScale (the same field spin.cpp's size prizes use),
     and put back the class's own scale, which MBII sets per class on spawn
   - Corellian Whiskey makes you drunk: delta_angles is nudged every frame so
@@ -179,6 +181,7 @@ static void Bar_Puff(client_t* cl, const char* fx, int where)
 #define BAR_MOON_GRAVITY_CANCEL  0.65f   // share of gravity Moon Milk cancels in the air
 #define BAR_RUSH_MAX_SPEED       900.0f  // Sugar Rush ground speed cap (normal run is ~250)
 #define BAR_RUSH_BOOST           1.12f   // per server frame, while moving on the ground
+#define BAR_TRIP_MS              800     // Gungan Grog: extra time on the floor per trip
 
 typedef enum {
 	BAR_SCALE,      // value = iModelScale while it lasts
@@ -191,6 +194,7 @@ typedef enum {
 	BAR_REVERSE,
 	BAR_RUNAWAY,
 	BAR_CROUCH,
+	BAR_CLUMSY,     // tripping over every few seconds
 	BAR_LOOK,       // just the visual in .look
 	BAR_NUM_EFFECTS
 } barEffect_t;
@@ -214,7 +218,7 @@ typedef struct {
 // Order is the menu numbering.
 static const barDrink_t kBarDrinks[] = {
 	{ "jawa_juice",        "Jawa Juice",        "shrinks you to Jawa size for 2 minutes",       10, BAR_SCALE,   50,  120, BAR_LOOK_NONE,    BAR_LOOK_NONE, BAR_LOOK, NULL, 0, BAR_FX_HEAD },
-	{ "hutt_brew",         "Hutt Brew",         "makes you huge for 2 minutes",                 15, BAR_SCALE,   175, 120, BAR_LOOK_NONE,    BAR_LOOK_NONE, BAR_LOOK, NULL, 0, BAR_FX_HEAD },
+	{ "gungan_grog",      "Gungan Grog",       "you keep tripping over for a minute",          12, BAR_CLUMSY,  0,   60,  BAR_LOOK_NONE,    BAR_LOOK_NONE, BAR_LOOK, NULL, 0, BAR_FX_HEAD },
 	{ "corellian_whiskey", "Corellian Whiskey", "gets you properly drunk for 90 seconds",       12, BAR_DRUNK,   0,   90,  BAR_LOOK_NONE,    BAR_LOOK_NONE, BAR_LOOK, "effects/Force/confusion_red", 1000, BAR_FX_HEAD },
 	{ "tatooine_twister",  "Tatooine Twister",  "your head spins for 20 seconds",               10, BAR_SPIN,    0,   20,  BAR_LOOK_NONE,    BAR_LOOK_NONE, BAR_LOOK, "effects/Tatooine/dustcloud", 500, BAR_FX_FEET },
 	{ "bubble_brew",       "Bubble Brew",       "hiccups - you hop about for a minute",         10, BAR_HICCUP,  0,   60,  BAR_LOOK_NONE,    BAR_LOOK_NONE, BAR_LOOK, "effects/Saber/water_boilbubble_nosnd", 500, BAR_FX_HEAD },
@@ -243,6 +247,7 @@ typedef struct {
 	int swayPitch;
 	int spinLastTime;
 	int nextHiccup;
+	int nextTrip;
 	int lastFrameTime;
 	int visualUntil[BAR_MB2_PW_COUNT];
 	const barDrink_t* fxDrink; // playing its effect until fxUntil
@@ -366,6 +371,11 @@ static void Bar_StartEffect(client_t* cl, barState_t* st, const barDrink_t* d, b
 		case BAR_HICCUP:
 			if (fresh) {
 				st->nextHiccup = svs.time + 1500;
+			}
+			break;
+		case BAR_CLUMSY:
+			if (fresh) {
+				st->nextTrip = svs.time + Q_irand(3000, 6000);
 			}
 			break;
 		default:
@@ -591,6 +601,20 @@ static void Bar_MovementFrame(client_t* cl, barState_t* st, float dt)
 				ps->velocity[0] *= boost;
 				ps->velocity[1] *= boost;
 			}
+		}
+	}
+
+	if (st->until[BAR_CLUMSY]) {
+		if (!Bar_Active(st, BAR_CLUMSY)) {
+			Bar_Expire(cl, st, BAR_CLUMSY, "You've found your feet again.");
+		} else if (svs.time >= st->nextTrip) {
+			// MBII's own knockdown, short, and they can get straight back up.
+			if (onGround && Bar_ResolveFx() && gBarKnockdown) {
+				void* old = GVM_BeginNative();
+				gBarKnockdown(cl->gentity, cl - svs.clients, BAR_TRIP_MS, 0, qtrue);
+				GVM_EndNative(old);
+			}
+			st->nextTrip = svs.time + Q_irand(8000, 13000);
 		}
 	}
 
