@@ -108,7 +108,7 @@ at a time so they don't scroll off the chat overlay before you can read them.
 
 ### The bar
 
-`!bar` lists the drinks and `!bar <number>` orders one; every order is announced in chat. There's no drinking
+`!bar` lists the drinks and `!bar <number>` orders one (only the buyer is told; the server hears about passing out and deaths). There's no drinking
 animation in the game, and the bar is meant for the no-damage social server, so drinks change how you look, move and
 steer - nothing that matters in a fight - and most play one of MBII's own effects on you (smoke, a confusion swirl,
 bubbles, frost, dust, flames, sparks) that everyone sees, you included:
