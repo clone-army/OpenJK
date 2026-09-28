@@ -153,11 +153,11 @@ in chat; the map's own music comes back next round. See `codemp/server/jukebox.c
 
 ### Pazaak
 
-`!pazaak <player> <credits>` challenges someone to KOTOR's card game; they `!pazaak accept` or `!pazaak decline` within 60 seconds. Both stakes are taken on accept and the winner gets the pot. The server deals from a 1-10 deck and each player gets four side cards (+1..+6 or -1..-6). On your turn you're dealt a card, may `!pz play <n>` one side card, then `!pz end` or `!pz stand`. Over 20 is a bust; closest to 20 wins the set, first to two sets wins. Turns time out after 30 seconds (you stand); leaving or `!pz forfeit` loses. See `codemp/server/pazaak.cpp`.
+`!pazaak <player> <credits>` challenges someone to KOTOR's card game; they `!pazaak accept` or `!pazaak decline` within 60 seconds. Both stakes are taken on accept and the winner gets the pot. The server deals from a 1-10 deck and each player gets four side cards (+1..+6 or -1..-6). On your turn you're dealt a card, may `!pz play <n>` one side card, then `!pz end` or `!pz stand` - or `!pz auto` to let the server play the turn for you. `!pazaak` and `!pz` are interchangeable. Over 20 is a bust; closest to 20 wins the set, first to two sets wins. Turns time out after 30 seconds (you stand); leaving or `!pz forfeit` loses. See `codemp/server/pazaak.cpp`.
 
 ### Chance
 
-`!chance <player> <credits>` challenges someone; they answer `!chance red` or `!chance blue` (or `!chance decline`) within 60 seconds and the challenger gets the other colour. The server rolls red or blue, 50/50, and whoever's colour comes up takes both stakes, announced to everyone. See `codemp/server/chance.cpp`.
+`!chance <player> <credits>` challenges someone; they answer `!chance red`, `!chance blue` or `!chance random` (or `!chance decline`) within 60 seconds and the challenger gets the other colour. The server rolls red or blue, 50/50, and whoever's colour comes up takes both stakes, announced to everyone. See `codemp/server/chance.cpp`.
 
 ### The raffle
 

@@ -10,7 +10,10 @@ KOTOR's card game, played in chat between two logged-in players:
   !pz play <n>                 play side card n (at most one per turn)
   !pz end                      end your turn - you'll be dealt another card
   !pz stand                    keep your total for the rest of the set
+  !pz auto                     let the server play your turn
   !pz forfeit                  give up the match
+
+(!pazaak and !pz are interchangeable for all of them.)
 
 Both stakes are taken when the challenge is accepted and the winner gets
 the pot. The server deals from a 1-10 deck; each player also gets four
@@ -248,7 +251,7 @@ static void Pz_BeginTurn(pazaakGame_t* g)
 		return;
 	}
 	Pz_Print(Pz_Client(g->player[me]), va("Side cards: %s", Pz_HandText(g, me)));
-	Pz_Print(Pz_Client(g->player[me]), "^5!pz play <n>^7, then ^5!pz end ^7(draw again next turn) or ^5!pz stand^7. 30s.");
+	Pz_Print(Pz_Client(g->player[me]), "^5!pz play <n>^7, then ^5!pz end ^7(draw again next turn) or ^5!pz stand^7 - or ^5!pz auto ^7to let it pick. 30s.");
 }
 
 static void Pz_Challenge(client_t* cl, const char* who, const char* amountStr)
@@ -369,6 +372,69 @@ static void Pz_Answer(client_t* cl, qboolean accept)
 	Pz_StartSet(g, Q_irand(0, 1));
 }
 
+// Plays side card n (1-based). qfalse if it can't be played.
+static qboolean Pz_PlayCard(pazaakGame_t* g, int side, int n)
+{
+	if (g->playedThisTurn || n < 1 || n > PZ_HAND_SIZE || !g->hand[side][n - 1]) {
+		return qfalse;
+	}
+	const int v = g->hand[side][n - 1];
+	g->hand[side][n - 1] = 0;
+	g->total[side] += v;
+	g->playedThisTurn = qtrue;
+	Pz_Both(g, va("%s ^7plays %s - total ^3%d^7.", Pz_Name(g, side), Pz_Card(v), g->total[side]));
+	return qtrue;
+}
+
+// The side card that lands the total closest to 20 without going over, as
+// long as it lands above floor; 0 if none does.
+static int Pz_BestCard(const pazaakGame_t* g, int side, int floor)
+{
+	int best = 0, bestTotal = floor;
+	for (int i = 0; i < PZ_HAND_SIZE; i++) {
+		const int v = g->hand[side][i];
+		const int t = g->total[side] + v;
+		if (v && t <= PZ_TARGET && t > bestTotal) {
+			best = i + 1;
+			bestTotal = t;
+		}
+	}
+	return best;
+}
+
+// "!pz auto": plays the turn for you. Rescue a bust or hit 20 with a side
+// card where one does it; against someone standing, beat them if you can;
+// otherwise stand on 18 or more and draw again below that.
+static void Pz_AutoTurn(pazaakGame_t* g, int side)
+{
+	const int opp = 1 - side;
+	int card;
+
+	if (!g->playedThisTurn) {
+		if (g->total[side] > PZ_TARGET && (card = Pz_BestCard(g, side, 0)) != 0) {
+			Pz_PlayCard(g, side, card);                                 // save the bust
+		} else if ((card = Pz_BestCard(g, side, PZ_TARGET - 1)) != 0) {
+			Pz_PlayCard(g, side, card);                                 // straight to 20
+		} else if (g->stood[opp] && g->total[side] <= g->total[opp] &&
+			(card = Pz_BestCard(g, side, g->total[opp])) != 0) {
+			Pz_PlayCard(g, side, card);                                 // beat the stander
+		}
+	}
+	if (g->total[side] == PZ_TARGET || g->total[side] > PZ_TARGET) {
+		Pz_Stand(g);                                                    // 20, or bust anyway
+	} else if (g->stood[opp]) {
+		if (g->total[side] > g->total[opp]) {
+			Pz_Stand(g);
+		} else {
+			Pz_NextTurn(g);                                             // behind: draw again
+		}
+	} else if (g->total[side] >= 18) {
+		Pz_Stand(g);
+	} else {
+		Pz_NextTurn(g);
+	}
+}
+
 qboolean SV_PazaakCommand(client_t* cl, const char* args)
 {
 	char a[64], b[64];
@@ -382,7 +448,8 @@ qboolean SV_PazaakCommand(client_t* cl, const char* args)
 
 	if (argc < 1) {
 		Pz_Print(cl, "^5!pazaak <player> <credits> ^7to challenge someone. Closest to 20 without going over wins the set;");
-		Pz_Print(cl, "first to 2 sets wins the pot. In a game: ^5!pz play <n>^7, ^5!pz end^7, ^5!pz stand^7, ^5!pz forfeit^7.");
+		Pz_Print(cl, "first to 2 sets wins the pot. In a game: ^5!pz play <n>^7, ^5!pz end^7, ^5!pz stand^7, ^5!pz auto ^7(it picks for you), ^5!pz forfeit^7.");
+		Pz_Print(cl, "^5!pazaak ^7and ^5!pz ^7work the same for everything.");
 		return qtrue;
 	}
 
@@ -402,7 +469,7 @@ qboolean SV_PazaakCommand(client_t* cl, const char* args)
 		return qtrue;
 	}
 
-	if (!Q_stricmp(a, "play") || !Q_stricmp(a, "end") || !Q_stricmp(a, "stand")) {
+	if (!Q_stricmp(a, "play") || !Q_stricmp(a, "end") || !Q_stricmp(a, "stand") || !Q_stricmp(a, "auto")) {
 		if (!g) {
 			Pz_Print(cl, "You're not in a game. ^5!pazaak <player> <credits> ^7to start one.");
 			return qtrue;
@@ -415,23 +482,18 @@ qboolean SV_PazaakCommand(client_t* cl, const char* args)
 			Pz_NextTurn(g);
 		} else if (!Q_stricmp(a, "stand")) {
 			Pz_Stand(g);
+		} else if (!Q_stricmp(a, "auto")) {
+			Pz_AutoTurn(g, side);
 		} else {
 			const int n = (argc >= 2) ? atoi(b) : 0;
 			if (g->playedThisTurn) {
 				Pz_Print(cl, "Only one side card per turn.");
-			} else if (n < 1 || n > PZ_HAND_SIZE || !g->hand[side][n - 1]) {
+			} else if (!Pz_PlayCard(g, side, n)) {
 				Pz_Print(cl, va("Pick a card you still have: %s", Pz_HandText(g, side)));
+			} else if (g->total[side] == PZ_TARGET) {
+				Pz_Stand(g);
 			} else {
-				const int v = g->hand[side][n - 1];
-				g->hand[side][n - 1] = 0;
-				g->total[side] += v;
-				g->playedThisTurn = qtrue;
-				Pz_Both(g, va("%s ^7plays %s - total ^3%d^7.", cl->name, Pz_Card(v), g->total[side]));
-				if (g->total[side] == PZ_TARGET) {
-					Pz_Stand(g);
-				} else {
-					Pz_Print(cl, "^5!pz end ^7or ^5!pz stand^7.");
-				}
+				Pz_Print(cl, "^5!pz end ^7or ^5!pz stand^7.");
 			}
 		}
 		return qtrue;
