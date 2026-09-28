@@ -3,7 +3,8 @@
 bar.cpp — the Cantina bar, part of the economy (!bar)
 
 "!bar" lists the drinks and "!bar <number>" orders one; every order is
-announced in chat. Switched on with g_economyBarEnable (on top of the
+confirmed to the buyer only - the server hears about passing out and
+dying, not every round. Switched on with g_economyBarEnable (on top of the
 g_creditSystemEnable master switch, like !buy and !bounty); each drink's
 price is its own g_barCost_<id> cvar, 0 taking it off the menu.
 
@@ -553,18 +554,16 @@ qboolean SV_BarCommand(client_t* cl, const char* args)
 	if (kBarDrinks[drink].effect == BAR_CURE) {
 		Bar_OrderSounds(cl, kBarDrinks[drink].id);
 		Bar_Cure(cl, &gBarTab[cl - svs.clients]);
-		SV_SendServerCommand(NULL, "chat \"^5[Bar] ^7%s ^7is being looked after by the nurse - all better!\"\n", cl->name);
-		SV_EconomyPrint(cl, va("Nurse Wine: every drink wears off and your tab's cleared. New balance: %d", cl->economyCredits));
+		SV_EconomyPrint(cl, va("Nurse Wine: the nurse looks after you - every drink wears off and your tab's cleared. New balance: %d",
+			cl->economyCredits));
 		return qtrue;
 	}
 	if (kBarDrinks[drink].effect == BAR_PRESCRIBE) {
 		Bar_Prescribe(cl);
-		SV_SendServerCommand(NULL, "chat \"^5[Bar] ^7Doctor's orders for %s^7: ^3one of everything^7! Somebody get the nurse.\"\n", cl->name);
+		SV_EconomyPrint(cl, "Doctor's orders: ^3one of everything^7! You might want the nurse after this.");
 	} else {
 		Bar_Apply(cl, drink);
 	}
-	SV_SendServerCommand(NULL, "chat \"^5[Bar] ^7%s ^7orders %s^3%s^7!\"\n", cl->name,
-		!Q_stricmp(kBarDrinks[drink].id, "spice") ? "" : "a ", kBarDrinks[drink].name);
 	SV_EconomyPrint(cl, va("%s: %s. New balance: %d", kBarDrinks[drink].name, kBarDrinks[drink].blurb, cl->economyCredits));
 
 	Bar_OrderSounds(cl, kBarDrinks[drink].id);
