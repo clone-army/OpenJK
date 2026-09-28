@@ -396,6 +396,7 @@ extern	cvar_t* g_creditSystemEnable;
 extern	cvar_t* g_economyShopEnable;
 extern	cvar_t* g_economyBountyEnable;
 extern	cvar_t* g_economyBarEnable;
+extern	cvar_t* g_economyRegisterBonus;
 extern	cvar_t* g_spinSpawnerHackOffset;
 extern	cvar_t* g_spinSpawnerHackSkillIndex;
 extern	cvar_t* g_spinSpawnerHackSkillValue;

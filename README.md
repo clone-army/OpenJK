@@ -68,6 +68,7 @@ command: nothing is broadcast, and the commands never show up as chat.
 | `g_economyShopEnable` | `0` | The `!buy` shop (needs the master switch too) |
 | `g_economyBountyEnable` | `0` | Bounties (needs the master switch too) |
 | `g_economyBarEnable` | `0` | The `!bar` drinks menu (needs the master switch too) |
+| `g_economyRegisterBonus` | `100` | Credits given once when a player `!register`s a new account |
 | `g_shopCost_<item>` | per item | Price of one shop item; `0` removes it (see [Shop catalog](#shop-catalog)) |
 
 ### Earning credits

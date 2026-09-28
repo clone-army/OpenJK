@@ -2280,6 +2280,10 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 			svEconomyAccountCount++;
 			Q_strncpyz( acct->handle, firstArg, sizeof( acct->handle ) );
 			SV_EconomyHashPin( acct->salt, secondArg, acct->hash );
+			// Welcome bonus: only ever here, since registering always makes a
+			// brand-new account.
+			const int bonus = g_economyRegisterBonus ? Q_max( 0, g_economyRegisterBonus->integer ) : 0;
+			cl->economyCredits += bonus;
 			acct->credits = cl->economyCredits;
 			cl->economyCreditsSynced = acct->credits;
 
@@ -2287,6 +2291,9 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 			SV_EconomyAccountsSave();
 
 			SV_EconomyPrint( cl, va( "Registered! Logged in as '%s'. Use !login %s <pin> on future connects.", acct->handle, acct->handle ) );
+			if ( bonus > 0 ) {
+				SV_EconomyPrint( cl, va( "Welcome bonus: +%d credits! Balance: %d", bonus, cl->economyCredits ) );
+			}
 		}
 		return qtrue;
 	}
