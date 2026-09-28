@@ -68,6 +68,7 @@ command: nothing is broadcast, and the commands never show up as chat.
 | `g_economyShopEnable` | `0` | The `!buy` shop (needs the master switch too) |
 | `g_economyBountyEnable` | `0` | Bounties (needs the master switch too) |
 | `g_economyBarEnable` | `0` | The `!bar` drinks menu (needs the master switch too) |
+| `g_economyJukeboxEnable` | `0` | The `!jukebox` (needs the master switch too): `g_jukeboxCost` (10) per track, `g_jukeboxCooldown` (60) seconds before it can change again |
 | `g_economyRegisterBonus` | `100` | Credits given once when a player `!register`s a new account |
 | `g_shopCost_<item>` | per item | Price of one shop item; `0` removes it (see [Shop catalog](#shop-catalog)) |
 
@@ -133,6 +134,10 @@ overdose: announced, then MBII's usual 5-second `/kill` countdown.
 Each price is its own cvar, `g_barCost_<drink>` (the drink's name in lower case with underscores, e.g.
 `g_barCost_jawa_juice`); `0` takes a drink off the menu. Effects only last for the life they were bought in. See the
 header of `codemp/server/bar.cpp` for how each effect works.
+
+### The jukebox
+
+`!jukebox` lists fifteen tracks - Cantina Band, Nightclub, Jabba's Sail Barge, Duel of the Fates, Benny Hill, Crazy Train and more, all from MBII's own files so nobody downloads anything - and `!jukebox <number>` pays to play one for everyone, announced in chat. The map's own music comes back next round. See `codemp/server/jukebox.cpp`.
 
 ### Shop catalog
 

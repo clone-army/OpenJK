@@ -2014,6 +2014,7 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 		( !Q_stricmp( commandName, "balance" ) ||
 		  !Q_stricmp( commandName, "buy" ) ||
 		  !Q_stricmp( commandName, "bar" ) ||
+		  !Q_stricmp( commandName, "jukebox" ) ||
 		  !Q_stricmp( commandName, "bounty" ) ||
 		  !Q_stricmp( commandName, "bountry" ) ||
 		  !Q_stricmp( commandName, "register" ) ||
@@ -2039,6 +2040,10 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 
 	if ( !Q_stricmp( commandName, "bar" ) ) {
 		return SV_BarCommand( cl, chatCursor );
+	}
+
+	if ( !Q_stricmp( commandName, "jukebox" ) ) {
+		return SV_JukeboxCommand( cl, chatCursor );
 	}
 
 	if ( !Q_stricmp( commandName, "buy" ) ) {
@@ -2401,6 +2406,10 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 
 			if ( g_economyBarEnable && g_economyBarEnable->integer ) {
 				SV_EconomyMenuAddLine( cl, "^2!bar ^7- the drinks menu. ^5!bar <number> ^7to order one." );
+			}
+
+			if ( g_economyJukeboxEnable && g_economyJukeboxEnable->integer ) {
+				SV_EconomyMenuAddLine( cl, "^2!jukebox ^7- list the tracks. ^5!jukebox <number> ^7to play one for everyone." );
 			}
 
 			if ( SV_EconomyBountyEnabled() ) {
