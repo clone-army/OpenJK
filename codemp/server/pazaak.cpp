@@ -4,7 +4,8 @@ pazaak.cpp — Pazaak for credits, part of the economy (!pazaak / !pz)
 
 KOTOR's card game, played in chat between two logged-in players:
 
-  !pazaak <player> <credits>   challenge someone (they have 60s to answer)
+  !pazaak <player> <credits>   challenge someone (they have 60s to answer);
+                               part of their name is enough
   !pazaak accept | decline     answer a challenge
   !pz play <n>                 play side card n (at most one per turn)
   !pz end                      end your turn - you'll be dealt another card
@@ -253,11 +254,10 @@ static void Pz_BeginTurn(pazaakGame_t* g)
 static void Pz_Challenge(client_t* cl, const char* who, const char* amountStr)
 {
 	const int me = cl - svs.clients;
-	client_t* target = SV_BetterGetPlayerByHandle(who);
+	client_t* target = SV_EconomyFindPlayer(cl, who);
 	const int bet = atoi(amountStr);
 
-	if (!target || target->state != CS_ACTIVE) {
-		Pz_Print(cl, va("No player found matching \"%s\".", who));
+	if (!target) {
 		return;
 	}
 	if (target == cl) {

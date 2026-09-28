@@ -585,6 +585,7 @@ void SV_GunGameClampWeaponSelect(client_t* cl, usercmd_t* cmd);
 void SV_EconomyShopInitCvars( void );
 void SV_EconomyPrint( client_t *cl, const char *text );
 qboolean SV_EconomyAddCreditsToAccount( const char *handle, int amount );
+client_t *SV_EconomyFindPlayer( client_t *asker, const char *query );
 void SV_EconomyMenuBegin( client_t *cl );
 void SV_EconomyMenuAddLine( client_t *cl, const char *line );
 void SV_EconomyMenuPump( client_t *cl );
