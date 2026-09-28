@@ -4,6 +4,7 @@ chance.cpp — Chance, a coin flip for credits, part of the economy (!chance)
 
   !chance <player> <credits>   challenge someone (part of their name is enough)
   !chance red | blue           accept a challenge and pick your colour
+  !chance random               accept and let the server pick your colour
   !chance decline              turn one down
 
 The challenged player picks a colour and the challenger gets the other one;
@@ -63,8 +64,8 @@ static void Chance_Challenge(client_t* cl, const char* who, const char* amountSt
 	ch->expires = svs.time + CHANCE_CHALLENGE_MS;
 
 	Chance_Print(cl, va("You challenged %s ^7to Chance for %d credits. They pick red or blue...", target->name, bet));
-	Chance_Print(target, va("%s ^7challenges you to Chance for ^2%d ^7credits each! Pick a colour: ^1!chance red ^7or ^4!chance blue^7, "
-		"or ^5!chance decline ^7(60s).", cl->name, bet));
+	Chance_Print(target, va("%s ^7challenges you to Chance for ^2%d ^7credits each! Pick: ^1!chance red^7, ^4!chance blue^7, "
+		"^5!chance random ^7or ^5!chance decline ^7(60s).", cl->name, bet));
 }
 
 static void Chance_Answer(client_t* cl, const char* answer)
@@ -133,6 +134,10 @@ qboolean SV_ChanceCommand(client_t* cl, const char* args)
 	if (argc < 1) {
 		Chance_Print(cl, "^5!chance <player> <credits> ^7to challenge someone. They pick red or blue, the server rolls, "
 			"and the winning colour takes the pot.");
+		return qtrue;
+	}
+	if (!Q_stricmp(a, "random")) {
+		Chance_Answer(cl, Q_irand(0, 1) ? "red" : "blue");
 		return qtrue;
 	}
 	if (!Q_stricmp(a, "red") || !Q_stricmp(a, "blue") || !Q_stricmp(a, "decline")) {
