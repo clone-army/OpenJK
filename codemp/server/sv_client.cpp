@@ -2478,7 +2478,7 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 
 		if ( g_socialMode && g_socialMode->integer ) {
 			anySection = qtrue;
-			SV_EconomyMenuAddLine( cl, "^2!emotes ^7- !sit, !handsup, !cower, !playdead, !nod and more. Move to stop." );
+			SV_EconomyMenuAddLine( cl, "^2!emotes ^7- !sit, !dance, !handsup, !cower, !playdead, !nod and more. Move to stop." );
 		}
 
 		if ( g_statsEnable && g_statsEnable->integer ) {

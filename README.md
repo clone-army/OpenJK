@@ -135,7 +135,7 @@ overdose: announced, then MBII's usual 5-second `/kill` countdown.
 
 Every order burps (Jawa Juice adds a Jawa line, spice and death sticks a cough), and the 8th order in 3 minutes knocks you out cold for a few seconds.
 
-On social servers, `!emotes` lists chat emotes played with MBII's own animations: `!sit`, `!slump`, `!handsup`, `!cower` and `!playdead` hold until you move; `!nod`, `!shakehead` and `!talk` play once (`codemp/server/emotes.cpp`).
+On social servers, `!emotes` lists chat emotes played with MBII's own animations: `!sit`, `!slump`, `!handsup`, `!cower`, `!playdead` and `!dance` (a shuffled chain of taunts, a spin and victory flourishes) hold until you move; `!nod`, `!shakehead` and `!talk` play once (`codemp/server/emotes.cpp`).
 
 Each price is its own cvar, `g_barCost_<drink>` (the drink's name in lower case with underscores, e.g.
 `g_barCost_jawa_juice`); `0` takes a drink off the menu. Effects only last for the life they were bought in. See the
