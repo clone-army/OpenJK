@@ -2037,6 +2037,7 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 		  !Q_stricmp( commandName, "pazaak" ) ||
 		  !Q_stricmp( commandName, "pz" ) ||
 		  !Q_stricmp( commandName, "raffle" ) ||
+		  !Q_stricmp( commandName, "gift" ) ||
 		  !Q_stricmp( commandName, "bounty" ) ||
 		  !Q_stricmp( commandName, "bountry" ) ||
 		  !Q_stricmp( commandName, "register" ) ||
@@ -2055,6 +2056,7 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 		  !Q_stricmp( commandName, "pazaak" ) ||
 		  !Q_stricmp( commandName, "pz" ) ||
 		  !Q_stricmp( commandName, "raffle" ) ||
+		  !Q_stricmp( commandName, "gift" ) ||
 		  !Q_stricmp( commandName, "bounty" ) ||
 		  !Q_stricmp( commandName, "bountry" ) ) ) {
 		SV_EconomyPrint( cl, "You need to be logged in to use this. "
@@ -2200,6 +2202,55 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 	// "!bounty" alone (or with an unresolvable target/amount) falls back to
 	// a quick reference instead: your own numbers plus anyone currently
 	// carrying a bounty.
+	// "!gift <player> <credits>": straight from one account to another. Both
+	// have to be logged in - the gate above covers the giver.
+	if ( !Q_stricmp( commandName, "gift" ) ) {
+		client_t *target;
+		int amount;
+
+		if ( sscanf( chatCursor, "%63s %63s", firstArg, secondArg ) != 2 ) {
+			SV_EconomyPrint( cl, "Usage: ^5!gift <player> <credits>^7, e.g. ^5!gift Ricks 50" );
+			return qtrue;
+		}
+		target = SV_BetterGetPlayerByHandle( firstArg );
+		amount = atoi( secondArg );
+
+		if ( !target || target->state != CS_ACTIVE ) {
+			SV_EconomyPrint( cl, va( "No player found matching \"%s\".", firstArg ) );
+			return qtrue;
+		}
+		if ( target == cl ) {
+			SV_EconomyPrint( cl, "You can't gift credits to yourself." );
+			return qtrue;
+		}
+		if ( !target->economyHandle[0] ) {
+			SV_EconomyPrint( cl, va( "%s ^7isn't logged in, so can't receive credits.", target->name ) );
+			return qtrue;
+		}
+		if ( !Q_stricmp( target->economyHandle, cl->economyHandle ) ) {
+			SV_EconomyPrint( cl, "That's your own account." );
+			return qtrue;
+		}
+		if ( amount <= 0 ) {
+			SV_EconomyPrint( cl, "Gift at least 1 credit." );
+			return qtrue;
+		}
+		SV_EconomySyncCredits( target );
+		if ( cl->economyCredits < amount ) {
+			SV_EconomyPrint( cl, va( "You only have %d credits.", cl->economyCredits ) );
+			return qtrue;
+		}
+
+		cl->economyCredits -= amount;
+		SV_EconomyPersistCredits( cl );
+		target->economyCredits += amount;
+		SV_EconomyPersistCredits( target );
+
+		SV_EconomyPrint( cl, va( "You gifted %d credits to %s^7. New balance: %d", amount, target->name, cl->economyCredits ) );
+		SV_EconomyPrint( target, va( "%s ^7gifted you ^2%d ^7credits! New balance: %d", cl->name, amount, target->economyCredits ) );
+		return qtrue;
+	}
+
 	if ( !Q_stricmp( commandName, "bounty" ) || !Q_stricmp( commandName, "bountry" ) ) {
 		if ( !SV_EconomyEnabled() ) {
 			SV_EconomyPrint( cl, "Credit system is disabled." );
@@ -2472,6 +2523,7 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 				SV_EconomyMenuAddLine( cl, "^2!bounty <player> <credits> ^7- place a bounty. ^5!bounty ^7alone shows active bounties." );
 			}
 
+			SV_EconomyMenuAddLine( cl, "^2!gift <player> <credits> ^7- give some of your credits to another player." );
 			SV_EconomyMenuAddLine( cl, "^2!register <handle> <pin> ^7- new account. ^2!login <handle> <pin> ^7- returning." );
 			SV_EconomyMenuAddLine( cl, "^3Credits are earned from kills while logged in." );
 		}
