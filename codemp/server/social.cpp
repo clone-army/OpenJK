@@ -51,7 +51,8 @@ behaviour switched on in a mode that normally doesn't use it:
     miss RESPAWN_MODE's spawn timer entirely - RefreshNewRespawnTimers only
     starts it if the player's OldSessionTeam still reads as spectator when
     their "siegeclass" command lands, and the join path can overwrite that
-    first. Live, those players sat unspawned for minutes until they went to
+    first (a new connection sits on TEAM_FREE, not spectator, until it's
+    been to spectator once). Live, those players sat unspawned for minutes until they went to
     spectator and picked their class again, which always worked. So the
     engine does exactly that for them: it remembers each player's last
     accepted siegeclass command, and if they're still not spawned well
@@ -499,6 +500,27 @@ void SV_SocialClientCommand(client_t* cl)
 	}
 }
 
+// Actually in the game: on red or blue, and moving about. A freshly connected
+// player sits on TEAM_FREE rather than TEAM_SPECTATOR until they've been to
+// spectator once - which is exactly the state RESPAWN_MODE never gives a
+// spawn timer to - so "not spectator" isn't enough. pm_type is the same
+// stock alive test gungame.cpp uses.
+static qboolean Social_IsSpawned(const playerState_t* ps)
+{
+	const int team = ps->persistant[PERS_TEAM];
+	if (team != TEAM_RED && team != TEAM_BLUE) {
+		return qfalse;
+	}
+	switch (ps->pm_type) {
+		case PM_NORMAL:
+		case PM_JETPACK:
+		case PM_FLOAT:
+			return qtrue;
+		default:
+			return qfalse;
+	}
+}
+
 static void Social_ReplayClientCommand(client_t* cl, const char* line)
 {
 	Cmd_TokenizeString(line);
@@ -551,7 +573,7 @@ static void Social_RescueStuckJoiners(void)
 			continue;
 		}
 		playerState_t* ps = cl->gentity->playerState;
-		if (ps->persistant[PERS_TEAM] != TEAM_SPECTATOR) {
+		if (Social_IsSpawned(ps)) {
 			js->siegeClassCmd[0] = '\0'; // spawned - job done
 			js->lastSpawnedAt = svs.time;
 			js->botSide = 0;
