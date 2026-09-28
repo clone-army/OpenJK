@@ -28,9 +28,12 @@ playerState_t / entityState_t / usercmd_t fields:
     crouching. The client still predicts its own unaltered input, so these
     feel a little rubbery - which rather suits a drink
   - Death Stick and Spice combine two of the above (speed + hiccups,
-    low gravity + spin), with a look on top; a Death Stick also puffs
-    MBII's spice pipe smoke from your head (G_EffectIndex / G_PlayEffectID,
-    found by name like everything else) - a real world effect everyone sees
+    low gravity + spin), with a look on top; most drinks also play one of
+    MBII's own effects on you while they last - spice smoke, a confusion
+    swirl, bubbles, frost, dust, sparks, flames (G_EffectIndex /
+    G_PlayEffectID, found by name like everything else). They're real world
+    effects, so everyone sees them, the drinker included; ones with a sound
+    only play every few seconds
   - the rest are looks: one of MBII's own powerup visuals - the cloak
     shimmer, the Hoth freeze (slowed animation), flames, electric crackle -
     switched on by setting its bit in the entityState_t powerups mask cgame
@@ -56,7 +59,10 @@ effect is dropped without touching anything.
 #include "sv_gameapi.h"
 #include "sys/sys_loadlib.h"
 
-#define BAR_PUFF_MS 500
+// Where on the player a drink's effect plays.
+#define BAR_FX_HEAD 0
+#define BAR_FX_BODY 1
+#define BAR_FX_FEET 2
 
 // MBII's own effect functions, found by name in the game module (as
 // social.cpp does): the smoke is a real world effect, so everyone -
@@ -76,7 +82,7 @@ static qboolean Bar_ResolveFx(void)
 	return (gBarEffectIndex && gBarPlayEffectID) ? qtrue : qfalse;
 }
 
-static void Bar_Puff(client_t* cl, const char* fx)
+static void Bar_Puff(client_t* cl, const char* fx, int where)
 {
 	if (!Bar_ResolveFx()) {
 		return;
@@ -84,7 +90,11 @@ static void Bar_Puff(client_t* cl, const char* fx)
 	const playerState_t* ps = cl->gentity->playerState;
 	vec3_t org, ang = { -90.0f, 0.0f, 0.0f }; // pointing up
 	VectorCopy(ps->origin, org);
-	org[2] += ps->viewheight;
+	if (where == BAR_FX_HEAD) {
+		org[2] += ps->viewheight;
+	} else if (where == BAR_FX_FEET) {
+		org[2] -= 20.0f;
+	}
 	// Registered per map (configstrings reset on a new map); a no-op lookup after the first.
 	const int id = GVM_CallEffectIndex(gBarEffectIndex, fx);
 	if (id > 0) {
@@ -137,28 +147,30 @@ typedef struct {
 	int         look;       // BAR_PW_* powerup visual for the main effect, or BAR_LOOK_NONE
 	int         glow;       // BAR_PW_* shell/aura while it lasts, or BAR_LOOK_NONE
 	barEffect_t effect2;    // a second effect at the same time, or BAR_LOOK for none
-	const char* fx;         // effect puffed from the player's head while it lasts, or NULL
+	const char* fx;         // effect played on the player while it lasts, or NULL
+	int         fxEveryMs;  // how often (effects with a sound get a long gap)
+	int         fxWhere;    // BAR_FX_*
 } barDrink_t;
 
 // Order is the menu numbering.
 static const barDrink_t kBarDrinks[] = {
-	{ "jawa_juice",        "Jawa Juice",        "shrinks you to Jawa size for 2 minutes",       10, BAR_SCALE,   50,  120, BAR_LOOK_NONE,    BAR_PW_BOON, BAR_LOOK, NULL },
-	{ "hutt_brew",         "Hutt Brew",         "makes you huge for 2 minutes",                 15, BAR_SCALE,   175, 120, BAR_LOOK_NONE,    BAR_PW_YSALAMIRI, BAR_LOOK, NULL },
-	{ "corellian_whiskey", "Corellian Whiskey", "gets you properly drunk for 90 seconds",       12, BAR_DRUNK,   0,   90,  BAR_LOOK_NONE,    BAR_PW_ENDARK, BAR_LOOK, NULL },
-	{ "tatooine_twister",  "Tatooine Twister",  "your head spins for 20 seconds",               10, BAR_SPIN,    0,   20,  BAR_LOOK_NONE,    BAR_PW_GALAK, BAR_LOOK, NULL },
-	{ "bubble_brew",       "Bubble Brew",       "hiccups - you hop about for a minute",         10, BAR_HICCUP,  0,   60,  BAR_LOOK_NONE,    BAR_PW_ENLIGHT, BAR_LOOK, NULL },
-	{ "moon_milk",         "Moon Milk",         "low gravity for a minute",                     12, BAR_MOON,    0,   60,  BAR_LOOK_NONE,    BAR_PW_ENLIGHT, BAR_LOOK, NULL },
-	{ "sugar_rush",        "Sugar Rush",        "super speed for 30 seconds",                   15, BAR_RUSH,    0,   30,  BAR_PW_ELECTRIFY, BAR_PW_BOON, BAR_LOOK, NULL },
-	{ "bantha_sludge",     "Bantha Sludge",     "you can barely move for a minute",             10, BAR_SLOW,    0,   60,  BAR_LOOK_NONE,    BAR_PW_YSALAMIRI, BAR_LOOK, NULL },
-	{ "backwards_brandy",  "Backwards Brandy",  "your controls are reversed for a minute",      12, BAR_REVERSE, 0,   60,  BAR_LOOK_NONE,    BAR_PW_ENDARK, BAR_LOOK, NULL },
-	{ "runaway_rum",       "Runaway Rum",       "you can't stop running for 30 seconds",        12, BAR_RUNAWAY, 0,   30,  BAR_LOOK_NONE,    BAR_PW_GALAK, BAR_LOOK, NULL },
-	{ "low_ceiling_lager", "Low-Ceiling Lager", "stuck crouching for a minute",                 10, BAR_CROUCH,  0,   60,  BAR_LOOK_NONE,    BAR_PW_BOON, BAR_LOOK, NULL },
-	{ "spotchka",          "Spotchka",          "you shimmer nearly invisible for 45 seconds",  20, BAR_LOOK,    0,   45,  BAR_PW_CLOAKED,   BAR_LOOK_NONE, BAR_LOOK, NULL },
-	{ "hoth_chiller",      "Hoth Chiller",      "frozen in slow motion for a minute",           12, BAR_LOOK,    0,   60,  BAR_PW_FREEZE,    BAR_LOOK_NONE, BAR_LOOK, NULL },
-	{ "mustafar_magma",    "Mustafar Magma",    "you're on fire (just for show) for a minute",  12, BAR_LOOK,    0,   60,  BAR_PW_FLAMES,    BAR_LOOK_NONE, BAR_LOOK, NULL },
-	{ "ion_fizz",          "Ion Fizz",          "you crackle with electricity for a minute",    12, BAR_LOOK,    0,   60,  BAR_PW_ELECTRIFY, BAR_LOOK_NONE, BAR_LOOK, NULL },
-	{ "death_stick",       "Death Stick",       "you want to go home and rethink your life",    20, BAR_RUSH,    0,   30,  BAR_PW_ELECTRIFY, BAR_PW_ENDARK,    BAR_HICCUP, "effects/spice/pipe_smoke" },
-	{ "spice",             "Spice",             "floaty and spinny for 45 seconds",  20, BAR_MOON,    0,   45,  BAR_PW_FREEZE,    BAR_PW_ENLIGHT,   BAR_SPIN, NULL },
+	{ "jawa_juice",        "Jawa Juice",        "shrinks you to Jawa size for 2 minutes",       10, BAR_SCALE,   50,  120, BAR_LOOK_NONE,    BAR_PW_BOON, BAR_LOOK, NULL, 0, BAR_FX_HEAD },
+	{ "hutt_brew",         "Hutt Brew",         "makes you huge for 2 minutes",                 15, BAR_SCALE,   175, 120, BAR_LOOK_NONE,    BAR_PW_YSALAMIRI, BAR_LOOK, NULL, 0, BAR_FX_HEAD },
+	{ "corellian_whiskey", "Corellian Whiskey", "gets you properly drunk for 90 seconds",       12, BAR_DRUNK,   0,   90,  BAR_LOOK_NONE,    BAR_PW_ENDARK, BAR_LOOK, "effects/Force/confusion_red", 1000, BAR_FX_HEAD },
+	{ "tatooine_twister",  "Tatooine Twister",  "your head spins for 20 seconds",               10, BAR_SPIN,    0,   20,  BAR_LOOK_NONE,    BAR_PW_GALAK, BAR_LOOK, "effects/Tatooine/dustcloud", 500, BAR_FX_FEET },
+	{ "bubble_brew",       "Bubble Brew",       "hiccups - you hop about for a minute",         10, BAR_HICCUP,  0,   60,  BAR_LOOK_NONE,    BAR_PW_ENLIGHT, BAR_LOOK, "effects/Saber/water_boilbubble_nosnd", 500, BAR_FX_HEAD },
+	{ "moon_milk",         "Moon Milk",         "low gravity for a minute",                     12, BAR_MOON,    0,   60,  BAR_LOOK_NONE,    BAR_PW_ENLIGHT, BAR_LOOK, NULL, 0, BAR_FX_HEAD },
+	{ "sugar_rush",        "Sugar Rush",        "super speed for 30 seconds",                   15, BAR_RUSH,    0,   30,  BAR_PW_ELECTRIFY, BAR_PW_BOON, BAR_LOOK, "effects/Tatooine/dustcloud", 500, BAR_FX_FEET },
+	{ "bantha_sludge",     "Bantha Sludge",     "you can barely move for a minute",             10, BAR_SLOW,    0,   60,  BAR_LOOK_NONE,    BAR_PW_YSALAMIRI, BAR_LOOK, "effects/Flamethrower/poisoned", 3000, BAR_FX_BODY },
+	{ "backwards_brandy",  "Backwards Brandy",  "your controls are reversed for a minute",      12, BAR_REVERSE, 0,   60,  BAR_LOOK_NONE,    BAR_PW_ENDARK, BAR_LOOK, "effects/Force/confusion_red", 1000, BAR_FX_HEAD },
+	{ "runaway_rum",       "Runaway Rum",       "you can't stop running for 30 seconds",        12, BAR_RUNAWAY, 0,   30,  BAR_LOOK_NONE,    BAR_PW_GALAK, BAR_LOOK, "effects/Tatooine/dustcloud", 500, BAR_FX_FEET },
+	{ "low_ceiling_lager", "Low-Ceiling Lager", "stuck crouching for a minute",                 10, BAR_CROUCH,  0,   60,  BAR_LOOK_NONE,    BAR_PW_BOON, BAR_LOOK, NULL, 0, BAR_FX_HEAD },
+	{ "spotchka",          "Spotchka",          "you shimmer nearly invisible for 45 seconds",  20, BAR_LOOK,    0,   45,  BAR_PW_CLOAKED,   BAR_LOOK_NONE, BAR_LOOK, NULL, 0, BAR_FX_HEAD },
+	{ "hoth_chiller",      "Hoth Chiller",      "frozen in slow motion for a minute",           12, BAR_LOOK,    0,   60,  BAR_PW_FREEZE,    BAR_LOOK_NONE, BAR_LOOK, "effects/Flamethrower/ice", 1000, BAR_FX_BODY },
+	{ "mustafar_magma",    "Mustafar Magma",    "you're on fire (just for show) for a minute",  12, BAR_LOOK,    0,   60,  BAR_PW_FLAMES,    BAR_LOOK_NONE, BAR_LOOK, "effects/Emitter/flamestiny", 2000, BAR_FX_BODY },
+	{ "ion_fizz",          "Ion Fizz",          "you crackle with electricity for a minute",    12, BAR_LOOK,    0,   60,  BAR_PW_ELECTRIFY, BAR_LOOK_NONE, BAR_LOOK, "effects/Swords/shock_person", 3000, BAR_FX_BODY },
+	{ "death_stick",       "Death Stick",       "you want to go home and rethink your life",    20, BAR_RUSH,    0,   30,  BAR_PW_ELECTRIFY, BAR_PW_ENDARK,    BAR_HICCUP, "effects/spice/pipe_smoke", 500, BAR_FX_HEAD },
+	{ "spice",             "Spice",             "floaty and spinny for 45 seconds",  20, BAR_MOON,    0,   45,  BAR_PW_FREEZE,    BAR_PW_ENLIGHT,   BAR_SPIN, "effects/spice/pipe_smoke", 500, BAR_FX_HEAD },
 };
 
 static cvar_t* gBarCostCvars[ARRAY_LEN(kBarDrinks)];
@@ -175,7 +187,7 @@ typedef struct {
 	int nextHiccup;
 	int lastFrameTime;
 	int visualUntil[BAR_MB2_PW_COUNT];
-	const char* fx;         // puffing this until fxUntil
+	const barDrink_t* fxDrink; // playing its effect until fxUntil
 	int fxUntil;
 	int nextPuff;
 } barState_t;
@@ -348,7 +360,7 @@ static void Bar_Apply(client_t* cl, int drink)
 		st->visualUntil[d->glow] = until;
 	}
 	if (d->fx) {
-		st->fx = d->fx;
+		st->fxDrink = d;
 		st->fxUntil = until;
 		st->nextPuff = svs.time;
 	}
@@ -645,9 +657,9 @@ void SV_BarFrame(void)
 			}
 		}
 
-		if (st->fx && st->fxUntil > svs.time && svs.time >= st->nextPuff) {
-			Bar_Puff(cl, st->fx);
-			st->nextPuff = svs.time + BAR_PUFF_MS;
+		if (st->fxDrink && st->fxUntil > svs.time && svs.time >= st->nextPuff) {
+			Bar_Puff(cl, st->fxDrink->fx, st->fxDrink->fxWhere);
+			st->nextPuff = svs.time + st->fxDrink->fxEveryMs;
 		}
 	}
 }
