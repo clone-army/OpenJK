@@ -114,7 +114,7 @@ bubbles, frost, dust, flames, sparks) that everyone sees, you included:
 | # | Drink | Does | Lasts |
 |---|---|---|---|
 | 1 | Jawa Juice | Tiny | 2 min |
-| 2 | Hutt Brew | Huge | 2 min |
+| 2 | Gungan Grog | You keep tripping over | 1 min |
 | 3 | Corellian Whiskey | Drunk: your view sways hard, and you choke on it | 90 s |
 | 4 | Tatooine Twister | Your view spins | 20 s |
 | 5 | Bubble Brew | Hiccups: you hop every few seconds | 1 min |
