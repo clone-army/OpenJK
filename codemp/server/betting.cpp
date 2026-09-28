@@ -16,7 +16,8 @@ BET_OPEN_MS of it starting, while both are still at full health; then both
 fighters are frozen for g_betWindowSeconds (30) - their input is rewritten
 before the game sees it, like the bar's control drinks, so nobody lands a
 hit - and bets are only taken during that freeze: up to g_betMax credits a
-duel (100, 0 = no limit), on one side only, never on your own duel. The stake is taken when you bet and goes into the duel's pot;
+duel (100, 0 = no limit), on one side only, never on your own duel. The
+two fighters see a countdown to the fight on screen, with the pot so far. The stake is taken when you bet and goes into the duel's pot;
 the winning side splits the whole pot in proportion to what each put in,
 so no credits are made or lost overall (if nobody backed the loser,
 winners just get their stake back). Paid into the account, so it counts if
@@ -41,6 +42,7 @@ typedef struct {
 	int      started;           // svs.time
 	qboolean betsOpened;        // a fighter opened it to bets (once only)
 	int      betsUntil;         // bets taken, and fighters frozen, until then
+	int      countdownShown;    // last seconds-left shown to the fighters
 	qboolean seen;              // still duelling this frame
 } betDuel_t;
 
@@ -241,6 +243,20 @@ void SV_BetFrame(void)
 			}
 		}
 		duel->seen = qtrue;
+
+		// Frozen fighters get a countdown on screen, refreshed each second.
+		if (duel->betsUntil > svs.time) {
+			const int secs = (duel->betsUntil - svs.time + 999) / 1000;
+			if (secs != duel->countdownShown) {
+				duel->countdownShown = secs;
+				const int pot = Bet_Backing(duel->id, 0) + Bet_Backing(duel->id, 1);
+				for (int s = 0; s < 2; s++) {
+					SV_SendServerCommand(&svs.clients[duel->fighter[s]],
+						"cp \"^6Bets are open ^7- ^2%d ^7cr on the fight\n^7Fight in ^3%d\"\n", pot, secs);
+				}
+			}
+		}
+
 		if (duel->betsUntil && svs.time >= duel->betsUntil) {
 			duel->betsUntil = 0;
 			SV_SendServerCommand(NULL, "chat \"^6[Bet] ^7Bets are closed on %s ^7vs %s^7 - ^1FIGHT!\"\n", duel->handle[0], duel->handle[1]);
@@ -336,9 +352,7 @@ static void Bet_OpenDuel(client_t* cl)
 	duel->betsUntil = svs.time + Bet_WindowMs();
 	SV_SendServerCommand(NULL, "chat \"^6[Bet] ^7%s ^7vs %s ^7is taking bets for %ds! ^5!bet <fighter> <credits>^7, e.g. ^5!bet %s 50\"\n",
 		duel->handle[0], duel->handle[1], Bet_WindowMs() / 1000, duel->handle[0]);
-	for (int s = 0; s < 2; s++) {
-		SV_SendServerCommand(&svs.clients[duel->fighter[s]], "cp \"^6Bets are open\n^7you're frozen for %d seconds\"\n", Bet_WindowMs() / 1000);
-	}
+	// The fighters' on-screen countdown starts on the next frame (SV_BetFrame).
 }
 
 // Fighters in a duel that's taking bets can look around, but not move,
