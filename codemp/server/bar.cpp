@@ -37,6 +37,11 @@ playerState_t / entityState_t / usercmd_t fields:
     as pmove and the rest of the game read playerState, never touched here.
     Every drink also gives a glow the same way while it's working.
 
+Order a few in quick succession (3 within 3 minutes) and the bar starts
+announcing it - tipsy, then wasted, then "needs to lay off the booze" -
+picked at random from the lines below. A third Spice within 3 minutes is an
+overdose: announced, then MBII's own /kill (its usual 5 second countdown).
+
 Effects only ever last for the life they were bought in: a new life
 (persistant[PERS_SPAWN_COUNT], which MBII bumps on every spawn - same index
 in MBII and the engine) means MBII has already reset the player, so the
@@ -45,6 +50,7 @@ effect is dropped without touching anything.
 */
 
 #include "server.h"
+#include "sv_gameapi.h"
 
 #define BAR_MB2_PW_COUNT   32
 
@@ -131,6 +137,78 @@ typedef struct {
 } barState_t;
 
 static barState_t gBarState[MAX_CLIENTS];
+
+// The tab: recent orders per player, across lives (the drinking doesn't stop
+// because you died), cleared when the slot empties. Drives the "X is wasted"
+// announcements and the spice overdose.
+#define BAR_TAB_WINDOW_MS     180000
+#define BAR_TAB_SIZE          16
+#define BAR_SPICE_OVERDOSE    3       // spice orders within the window that kill you
+typedef struct {
+	int orderTimes[BAR_TAB_SIZE];
+	int spiceTimes[BAR_TAB_SIZE];
+} barTab_t;
+static barTab_t gBarTab[MAX_CLIENTS];
+
+static const char* const kTipsyLines[] = {
+	"%s ^7is getting a little tipsy.",
+	"%s ^7is feeling it now.",
+	"%s ^7has started telling everyone they love them.",
+	"%s ^7just ordered another. Someone keep an eye on them.",
+	"%s ^7is laughing at a joke nobody told.",
+};
+static const char* const kWastedLines[] = {
+	"%s ^7is absolutely wasted.",
+	"%s ^7is trying to pick a fight with the jukebox.",
+	"%s ^7has lost their blaster. Again.",
+	"The bartender is starting to worry about %s^7.",
+	"%s ^7just proposed to a Gamorrean.",
+	"%s ^7thinks they can use the Force now.",
+	"%s ^7is dancing on the bar.",
+};
+static const char* const kLayOffLines[] = {
+	"%s ^7needs to lay off the booze.",
+	"Someone take %s ^7home.",
+	"%s^7's liver has filed a complaint with the Senate.",
+	"%s ^7is one drink away from joining the Hutts.",
+	"Wuher has refused to serve %s ^7any more... after this one.",
+	"%s ^7has been cut off. (Not really. Keep ordering.)",
+	"%s ^7can no longer find the door. Or the floor.",
+};
+static const char* const kSpiceWarnLines[] = {
+	"%s ^7is getting a bit too friendly with the spice...",
+	"%s ^7should probably slow down on the spice.",
+};
+static const char* const kOverdoseLines[] = {
+	"%s ^7took way too much spice.",
+	"%s ^7has seen the far side of the Kessel Run.",
+	"%s ^7overdosed on spice. Don't do spice, kids.",
+	"%s ^7went to the spice mines and didn't come back.",
+};
+
+#define BAR_RANDOM_LINE(lines) (lines[Q_irand(0, ARRAY_LEN(lines) - 1)])
+
+// Records an order and returns how many are on the tab within the window,
+// including this one.
+static int Bar_TabAdd(int* times)
+{
+	int oldest = 0, count = 1;
+	for (int i = 0; i < BAR_TAB_SIZE; i++) {
+		if (times[i] && svs.time - times[i] < BAR_TAB_WINDOW_MS) {
+			count++;
+		}
+		if (times[i] < times[oldest]) {
+			oldest = i;
+		}
+	}
+	times[oldest] = svs.time;
+	return count;
+}
+
+static void Bar_Announce(client_t* cl, const char* fmt)
+{
+	SV_SendServerCommand(NULL, "chat \"^5[Bar] ^7%s\"\n", va(fmt, cl->name));
+}
 
 void SV_BarInitCvars(void)
 {
@@ -279,6 +357,29 @@ qboolean SV_BarCommand(client_t* cl, const char* args)
 	Bar_Apply(cl, drink);
 	SV_SendServerCommand(NULL, "chat \"^5[Bar] ^7%s ^7orders a ^3%s^7!\"\n", cl->name, kBarDrinks[drink].name);
 	SV_EconomyPrint(cl, va("%s: %s. New balance: %d", kBarDrinks[drink].name, kBarDrinks[drink].blurb, cl->economyCredits));
+
+	barTab_t* tab = &gBarTab[cl - svs.clients];
+	if (!Q_stricmp(kBarDrinks[drink].id, "spice")) {
+		const int spice = Bar_TabAdd(tab->spiceTimes);
+		if (spice >= BAR_SPICE_OVERDOSE) {
+			Bar_Announce(cl, BAR_RANDOM_LINE(kOverdoseLines));
+			memset(tab->spiceTimes, 0, sizeof(tab->spiceTimes));
+			// MBII's own /kill: a 5 second countdown, then they drop.
+			Cmd_TokenizeString("kill");
+			GVM_ClientCommand(cl - svs.clients);
+		} else if (spice == BAR_SPICE_OVERDOSE - 1) {
+			Bar_Announce(cl, BAR_RANDOM_LINE(kSpiceWarnLines));
+		}
+	}
+
+	const int orders = Bar_TabAdd(tab->orderTimes);
+	if (orders >= 6) {
+		Bar_Announce(cl, BAR_RANDOM_LINE(kLayOffLines));
+	} else if (orders >= 4) {
+		Bar_Announce(cl, BAR_RANDOM_LINE(kWastedLines));
+	} else if (orders == 3) {
+		Bar_Announce(cl, BAR_RANDOM_LINE(kTipsyLines));
+	}
 	return qtrue;
 }
 
@@ -428,6 +529,9 @@ void SV_BarFrame(void)
 		client_t* cl = &svs.clients[i];
 		barState_t* st = &gBarState[i];
 
+		if (cl->state < CS_CONNECTED) {
+			memset(&gBarTab[i], 0, sizeof(gBarTab[i]));
+		}
 		if (!Bar_AnythingActive(st)) {
 			continue;
 		}
