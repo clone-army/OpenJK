@@ -1742,6 +1742,20 @@ static void SV_EconomySyncCredits( client_t *cl ) {
 	}
 }
 
+// Adds to an account's stored balance directly (raffle winnings, Pazaak
+// payouts to someone who's left). A logged-in session picks the change up
+// through SV_EconomyMergeExternal like any other outside change.
+qboolean SV_EconomyAddCreditsToAccount( const char *handle, int amount ) {
+	economyAccount_t *acct = SV_EconomyFindAccount( handle );
+
+	if ( !acct ) {
+		return qfalse;
+	}
+	acct->credits += amount;
+	SV_EconomyAccountsSave();
+	return qtrue;
+}
+
 void SV_EconomyPersistCredits( client_t *cl ) {
 	economyAccount_t *acct;
 
@@ -2015,6 +2029,9 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 		  !Q_stricmp( commandName, "buy" ) ||
 		  !Q_stricmp( commandName, "bar" ) ||
 		  !Q_stricmp( commandName, "jukebox" ) ||
+		  !Q_stricmp( commandName, "pazaak" ) ||
+		  !Q_stricmp( commandName, "pz" ) ||
+		  !Q_stricmp( commandName, "raffle" ) ||
 		  !Q_stricmp( commandName, "bounty" ) ||
 		  !Q_stricmp( commandName, "bountry" ) ||
 		  !Q_stricmp( commandName, "register" ) ||
@@ -2030,6 +2047,9 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 		  !Q_stricmp( commandName, "buy" ) ||
 		  !Q_stricmp( commandName, "bar" ) ||
 		  !Q_stricmp( commandName, "jukebox" ) ||
+		  !Q_stricmp( commandName, "pazaak" ) ||
+		  !Q_stricmp( commandName, "pz" ) ||
+		  !Q_stricmp( commandName, "raffle" ) ||
 		  !Q_stricmp( commandName, "bounty" ) ||
 		  !Q_stricmp( commandName, "bountry" ) ) ) {
 		SV_EconomyPrint( cl, "You need to be logged in to use this. "
@@ -2059,6 +2079,14 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 
 	if ( !Q_stricmp( commandName, "jukebox" ) ) {
 		return SV_JukeboxCommand( cl, chatCursor );
+	}
+
+	if ( !Q_stricmp( commandName, "pazaak" ) || !Q_stricmp( commandName, "pz" ) ) {
+		return SV_PazaakCommand( cl, chatCursor );
+	}
+
+	if ( !Q_stricmp( commandName, "raffle" ) ) {
+		return SV_RaffleCommand( cl, chatCursor );
 	}
 
 	if ( !Q_stricmp( commandName, "buy" ) ) {
@@ -2425,6 +2453,14 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 
 			if ( g_economyJukeboxEnable && g_economyJukeboxEnable->integer ) {
 				SV_EconomyMenuAddLine( cl, "^2!jukebox ^7- list the tracks. ^5!jukebox <number> ^7to play one for everyone." );
+			}
+
+			if ( g_economyPazaakEnable && g_economyPazaakEnable->integer ) {
+				SV_EconomyMenuAddLine( cl, "^2!pazaak <player> <credits> ^7- challenge someone to Pazaak. ^5!pazaak ^7for the rules." );
+			}
+
+			if ( g_economyRaffleEnable && g_economyRaffleEnable->integer ) {
+				SV_EconomyMenuAddLine( cl, "^2!raffle ^7- this raffle's pool and time left. ^5!raffle <count> ^7to buy tickets." );
 			}
 
 			if ( SV_EconomyBountyEnabled() ) {
