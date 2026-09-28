@@ -34,23 +34,40 @@ typedef struct {
 	qboolean    hold;       // keep going until they move
 	const char* desc;
 	qboolean    dance;      // chain kDanceMoves instead of .anim
+	const char* const* pool; // non-dance: play one of these at random instead of .anim
+	int         poolSize;
 } emote_t;
 
 static const char* const kDanceMoves[EMOTE_DANCE_MOVES] = {
 	"BOTH_TUSKENTAUNT1", "BOTH_GUNGAN_TAUNT", "BOTH_ALORA_TAUNT", "BOTH_SPIN1",
 	"BOTH_VICTORY_FAST", "BOTH_VICTORY_MEDIUM", "BOTH_ENGAGETAUNT", "BOTH_HAN_TAUNT",
 };
+static const char* const kTaunts[] = {
+	"BOTH_TUSKENTAUNT1", "BOTH_GUNGAN_TAUNT", "BOTH_ALORA_TAUNT", "BOTH_HAN_TAUNT", "BOTH_DOOKU_TAUNT",
+	"BOTH_MAUL_TAUNT", "BOTH_STAFF_TAUNT", "BOTH_DUAL_TAUNT", "BOTH_ENGAGETAUNT",
+};
+static const char* const kVictories[] = {
+	"BOTH_VICTORY_FAST", "BOTH_VICTORY_MEDIUM", "BOTH_VICTORY_STRONG", "BOTH_VICTORY_STAFF", "BOTH_VICTORY_DUAL",
+};
 
 static const emote_t kEmotes[] = {
-	{ "sit",       "BOTH_SIT1",             EMOTE_SETANIM_BOTH,  qtrue,  "sit down", qfalse },
-	{ "slump",     "BOTH_SIT3",             EMOTE_SETANIM_BOTH,  qtrue,  "slump, elbows on knees", qfalse },
-	{ "handsup",   "TORSO_SURRENDER_START", EMOTE_SETANIM_TORSO, qtrue,  "hands up", qfalse },
-	{ "cower",     "BOTH_COWER1",           EMOTE_SETANIM_BOTH,  qtrue,  "cower", qfalse },
-	{ "playdead",  "BOTH_DEAD1",            EMOTE_SETANIM_BOTH,  qtrue,  "play dead", qfalse },
-	{ "nod",       "BOTH_HEADNOD",          EMOTE_SETANIM_BOTH,  qfalse, "nod", qfalse },
-	{ "shakehead", "BOTH_HEADSHAKE",        EMOTE_SETANIM_BOTH,  qfalse, "shake your head", qfalse },
-	{ "talk",      "BOTH_TALK1",            EMOTE_SETANIM_BOTH,  qfalse, "gesture while talking", qfalse },
-	{ "dance",     NULL,                    EMOTE_SETANIM_BOTH,  qtrue,  "dance", qtrue },
+	{ "sit",       "BOTH_SIT1",             EMOTE_SETANIM_BOTH,  qtrue,  "sit down", qfalse, NULL, 0 },
+	{ "slump",     "BOTH_SIT3",             EMOTE_SETANIM_BOTH,  qtrue,  "slump, elbows on knees", qfalse, NULL, 0 },
+	{ "handsup",   "TORSO_SURRENDER_START", EMOTE_SETANIM_TORSO, qtrue,  "hands up", qfalse, NULL, 0 },
+	{ "cower",     "BOTH_COWER1",           EMOTE_SETANIM_BOTH,  qtrue,  "cower", qfalse, NULL, 0 },
+	{ "playdead",  "BOTH_DEAD1",            EMOTE_SETANIM_BOTH,  qtrue,  "play dead", qfalse, NULL, 0 },
+	{ "nod",       "BOTH_HEADNOD",          EMOTE_SETANIM_BOTH,  qfalse, "nod", qfalse, NULL, 0 },
+	{ "shakehead", "BOTH_HEADSHAKE",        EMOTE_SETANIM_BOTH,  qfalse, "shake your head", qfalse, NULL, 0 },
+	{ "talk",      "BOTH_TALK1",            EMOTE_SETANIM_BOTH,  qfalse, "gesture while talking", qfalse, NULL, 0 },
+	{ "dance",     NULL,                    EMOTE_SETANIM_BOTH,  qtrue,  "dance", qtrue, NULL, 0 },
+	{ "taunt",     NULL,                    EMOTE_SETANIM_BOTH,  qfalse, "a random taunt", qfalse, kTaunts, ARRAY_LEN(kTaunts) },
+	{ "victory",   NULL,                    EMOTE_SETANIM_BOTH,  qfalse, "a victory flourish", qfalse, kVictories, ARRAY_LEN(kVictories) },
+	{ "rage",      "BOTH_WOOKIEE_RAGE_STAND", EMOTE_SETANIM_BOTH, qfalse, "Wookiee rage", qfalse, NULL, 0 },
+	{ "hug",       "BOTH_HUGGER1",          EMOTE_SETANIM_BOTH,  qtrue,  "hug", qfalse, NULL, 0 },
+	{ "sleep",     "BOTH_SLEEP1",           EMOTE_SETANIM_BOTH,  qtrue,  "sleep", qfalse, NULL, 0 },
+	{ "choke",     "BOTH_CHOKE1",           EMOTE_SETANIM_BOTH,  qfalse, "choke", qfalse, NULL, 0 },
+	{ "lookaround", "BOTH_GUARD_LOOKAROUND1", EMOTE_SETANIM_BOTH, qfalse, "look around", qfalse, NULL, 0 },
+	{ "salute",    "TORSO_HANDSIGNAL1",     EMOTE_SETANIM_TORSO, qfalse, "salute", qfalse, NULL, 0 },
 };
 
 typedef struct {
@@ -123,6 +140,18 @@ static int Emote_NextDanceAnim(emoteState_t* st)
 	return -1;
 }
 
+static int Emote_PickFromPool(const emote_t* e)
+{
+	const int start = Q_irand(0, e->poolSize - 1);
+	for (int i = 0; i < e->poolSize; i++) {
+		const int anim = Emote_AnimByName(e->pool[(start + i) % e->poolSize]);
+		if (anim >= 0) {
+			return anim;
+		}
+	}
+	return -1;
+}
+
 static void Emote_ShuffleDance(emoteState_t* st)
 {
 	for (int i = 0; i < EMOTE_DANCE_MOVES; i++) {
@@ -176,6 +205,8 @@ qboolean SV_EmoteCommand(client_t* cl, const char* command)
 	if (e->dance) {
 		Emote_ShuffleDance(st);
 		anim = Emote_NextDanceAnim(st);
+	} else if (e->pool) {
+		anim = Emote_PickFromPool(e);
 	} else {
 		anim = Emote_AnimByName(e->anim);
 	}
@@ -194,6 +225,16 @@ qboolean SV_EmoteCommand(client_t* cl, const char* command)
 		st->emote = NULL; // one-shot: nothing to keep up
 	}
 	return qtrue;
+}
+
+// Plays an emote on a player from elsewhere (e.g. choking on a whiskey);
+// quietly does nothing if they can't do it right now.
+void SV_EmoteTrigger(client_t* cl, const char* command)
+{
+	if (!Emote_Enabled() || !cl->gentity || !cl->gentity->playerState || !Emote_Resolve() || !Emote_CanPlay(cl)) {
+		return;
+	}
+	SV_EmoteCommand(cl, command);
 }
 
 void SV_EmotesFrame(void)

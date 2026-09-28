@@ -102,6 +102,9 @@ static void Bar_Sound(client_t* cl, const char* path)
 
 static void Bar_OrderSounds(client_t* cl, const char* id)
 {
+	if (!Q_stricmp(id, "corellian_whiskey")) {
+		SV_EmoteTrigger(cl, "choke"); // it goes down the wrong way
+	}
 	Bar_Sound(cl, va("sound/chars/chefporkins/misc/burp%d.wav", Q_irand(1, 7)));
 	if (!Q_stricmp(id, "jawa_juice")) {
 		Bar_Sound(cl, va("Sound/Chars/r_jawa_bane/misc/gloat%d.mp3", Q_irand(1, 3)));
