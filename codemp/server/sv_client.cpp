@@ -2024,6 +2024,11 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 		return qtrue;
 	}
 
+	// Emotes (social servers) aren't part of the economy either.
+	if ( SV_EmoteCommand( cl, commandName ) ) {
+		return qtrue;
+	}
+
 	if ( !SV_EconomyEnabled() &&
 		( !Q_stricmp( commandName, "balance" ) ||
 		  !Q_stricmp( commandName, "buy" ) ||
@@ -2469,6 +2474,11 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 
 			SV_EconomyMenuAddLine( cl, "^2!register <handle> <pin> ^7- new account. ^2!login <handle> <pin> ^7- returning." );
 			SV_EconomyMenuAddLine( cl, "^3Credits are earned from kills while logged in." );
+		}
+
+		if ( g_socialMode && g_socialMode->integer ) {
+			anySection = qtrue;
+			SV_EconomyMenuAddLine( cl, "^2!emotes ^7- !sit, !handsup, !cower, !playdead, !nod and more. Move to stop." );
 		}
 
 		if ( g_statsEnable && g_statsEnable->integer ) {
