@@ -2354,7 +2354,7 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 			}
 
 			if ( g_economyBarEnable && g_economyBarEnable->integer ) {
-				SV_EconomyMenuAddLine( cl, "^2!bar ^7- the drinks menu. ^5!bar <number> ^7to order, ^5!bar round <number> ^7for everyone." );
+				SV_EconomyMenuAddLine( cl, "^2!bar ^7- the drinks menu. ^5!bar <number> ^7to order one." );
 			}
 
 			if ( SV_EconomyBountyEnabled() ) {
@@ -2553,6 +2553,7 @@ void SV_ClientThink (client_t *cl, usercmd_t *cmd) {
 	// to land before this assignment, not after it, or the stored copy the
 	// game module actually reads still has the player's original request.
 	SV_GunGameClampWeaponSelect( cl, cmd );
+	SV_BarClientThink( cl, cmd );
 	SV_VehicleClientThinkHook( cl, cmd );
 
 	cl->lastUsercmd = *cmd;
