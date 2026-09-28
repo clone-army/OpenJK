@@ -67,6 +67,7 @@ command: nothing is broadcast, and the commands never show up as chat.
 | `g_creditSystemEnable` | `0` | Master switch: accounts, earning credits, `!balance`, `!register`, `!login`, `!help` |
 | `g_economyShopEnable` | `0` | The `!buy` shop (needs the master switch too) |
 | `g_economyBountyEnable` | `0` | Bounties (needs the master switch too) |
+| `g_economyBarEnable` | `0` | The `!bar` drinks menu (needs the master switch too) |
 | `g_shopCost_<item>` | per item | Price of one shop item; `0` removes it (see [Shop catalog](#shop-catalog)) |
 
 ### Earning credits
@@ -97,6 +98,27 @@ players can see the commands but don't earn.
 `!<n> <credits>` only counts as a bounty command when `n` is a valid number from your own latest `!bounty`
 list. Anything else (like typing `!1 lol`) is left alone as normal chat. Long `!buy` listings are sent a line
 at a time so they don't scroll off the chat overlay before you can read them.
+
+### The bar
+
+`!bar` lists the drinks, `!bar <number>` orders one for yourself and `!bar round <number>` buys one for every living
+player (price x players served). Every order is announced in chat. There's no drinking animation in the game, so
+drinks do something instead, and you glow while they're working:
+
+| # | Drink | Does | Glow | Default price |
+|---|---|---|---|---|
+| 1 | Jawa Juice | Shrinks you for 2 minutes | Gold | 10 |
+| 2 | Hutt Brew | Makes you huge for 2 minutes | Green | 15 |
+| 3 | Blue Milk | +100 armour | Blue shimmer (30s) | 10 |
+| 4 | Bacta Shot | A bacta tank | White-blue (30s) | 8 |
+| 5 | Spotchka | A cloak generator | None (it's a cloak) | 20 |
+| 6 | Corellian Whiskey | Drunk for a minute: your view sways and you stagger | Red | 12 |
+| 7 | Ion Fizz | A shockfield | Electric crackle (30s) | 20 |
+| 8 | Jet Juice | A jetpack | Plasma flames (30s) | 22 |
+
+Each price is its own cvar, `g_barCost_<drink>` (`jawa_juice`, `hutt_brew`, `blue_milk`, `bacta_shot`, `spotchka`,
+`corellian_whiskey`, `ion_fizz`, `jet_juice`); `0` takes a drink off the menu. Effects only last for the life they
+were bought in. See the header of `codemp/server/bar.cpp` for how the effects and glows work.
 
 ### Shop catalog
 
