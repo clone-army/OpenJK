@@ -319,6 +319,7 @@ if(BuildMPEngine OR BuildMPDed)
 		"${MPDir}/server/jukebox_tracks.h"
 		"${MPDir}/server/emotes.cpp"
 		"${MPDir}/server/pazaak.cpp"
+		"${MPDir}/server/chance.cpp"
 		"${MPDir}/server/raffle.cpp"
 		"${MPDir}/server/gungame.h"
 		"${MPDir}/server/gungame.cpp"

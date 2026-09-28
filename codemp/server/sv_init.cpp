@@ -1027,6 +1027,8 @@ void SV_Init (void) {
 	g_raffleOpenMinutes = Cvar_Get("g_raffleOpenMinutes", "10", CVAR_TEMP, "Minutes before each draw that raffle tickets go on sale");
 	g_raffleTicketPrice = Cvar_Get("g_raffleTicketPrice", "5", CVAR_TEMP, "Credits per raffle ticket");
 	g_raffleMinEntrants = Cvar_Get("g_raffleMinEntrants", "5", CVAR_TEMP, "Different players who must enter for a raffle draw to happen (otherwise refunded)");
+	g_economyChanceEnable = Cvar_Get("g_economyChanceEnable", "0", CVAR_TEMP, "Enable !chance red/blue challenges for credits (also requires g_creditSystemEnable 1)");
+	g_economyChanceEnable->flags &= ~CVAR_ARCHIVE;
 	SV_EconomyShopInitCvars();
 	SV_BarInitCvars();
 	g_barTabMinutes = Cvar_Get("g_barTabMinutes", "5", CVAR_TEMP, "Minutes of bar orders that count towards passing out, poisoning and overdoses");

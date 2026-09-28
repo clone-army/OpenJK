@@ -2085,6 +2085,7 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 		  !Q_stricmp( commandName, "pz" ) ||
 		  !Q_stricmp( commandName, "raffle" ) ||
 		  !Q_stricmp( commandName, "gift" ) ||
+		  !Q_stricmp( commandName, "chance" ) ||
 		  !Q_stricmp( commandName, "bounty" ) ||
 		  !Q_stricmp( commandName, "bountry" ) ||
 		  !Q_stricmp( commandName, "register" ) ||
@@ -2104,6 +2105,7 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 		  !Q_stricmp( commandName, "pz" ) ||
 		  !Q_stricmp( commandName, "raffle" ) ||
 		  !Q_stricmp( commandName, "gift" ) ||
+		  !Q_stricmp( commandName, "chance" ) ||
 		  !Q_stricmp( commandName, "bounty" ) ||
 		  !Q_stricmp( commandName, "bountry" ) ) ) {
 		SV_EconomyPrint( cl, "You need to be logged in to use this. "
@@ -2141,6 +2143,10 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 
 	if ( !Q_stricmp( commandName, "raffle" ) ) {
 		return SV_RaffleCommand( cl, chatCursor );
+	}
+
+	if ( !Q_stricmp( commandName, "chance" ) ) {
+		return SV_ChanceCommand( cl, chatCursor );
 	}
 
 	if ( !Q_stricmp( commandName, "buy" ) ) {
@@ -2558,6 +2564,10 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 
 			if ( g_economyPazaakEnable && g_economyPazaakEnable->integer ) {
 				SV_EconomyMenuAddLine( cl, "^2!pazaak <player> <credits> ^7- challenge someone to Pazaak. ^5!pazaak ^7for the rules." );
+			}
+
+			if ( g_economyChanceEnable && g_economyChanceEnable->integer ) {
+				SV_EconomyMenuAddLine( cl, "^2!chance <player> <credits> ^7- they pick red or blue, the server rolls, winning colour takes the pot." );
 			}
 
 			if ( g_economyRaffleEnable && g_economyRaffleEnable->integer ) {
