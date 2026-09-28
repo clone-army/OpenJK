@@ -2,6 +2,8 @@
 ===========================================================================
 betting.cpp — betting on duels, part of the economy (!bet)
 
+  !bets start                a fighter opens their duel to bets: both of them
+                             are frozen while bets come in
   !bet                       each fighter in each duel as a numbered option:
                              "1. Ricks vs Cody (Ricks to win) - 150 cr backing"
   !bet <number> <credits>    back that option
@@ -9,10 +11,13 @@ betting.cpp — betting on duels, part of the economy (!bet)
 
 Duels are tracked straight from the players' own playerState -
 duelInProgress and duelIndex, stock fields, the same ones social.cpp's
-duel handling reads - so any duel counts however it was started. Bets are
-only taken in the first g_betWindowSeconds of a duel (30), up to g_betMax
-credits a duel (100, 0 = no limit), on one side only, and never on a duel
-you're in. The stake is taken when you bet and goes into the duel's pot;
+duel handling reads - so any duel counts however it was started. A duel
+only takes bets if one of its fighters opens it with "!bets start" within
+BET_OPEN_MS of it starting, while both are still at full health; then both
+fighters are frozen for g_betWindowSeconds (30) - their input is rewritten
+before the game sees it, like the bar's control drinks, so nobody lands a
+hit - and bets are only taken during that freeze: up to g_betMax credits a
+duel (100, 0 = no limit), on one side only, never on your own duel. The stake is taken when you bet and goes into the duel's pot;
 the winning side splits the whole pot in proportion to what each put in,
 so no credits are made or lost overall (if nobody backed the loser,
 winners just get their stake back). Paid into the account, so it counts if
@@ -26,6 +31,7 @@ g_economyBetEnable.
 
 #define BET_MAX_DUELS   16
 #define BET_MAX_BETS    128
+#define BET_OPEN_MS     10000   // how long after a duel starts a fighter can open it to bets
 
 typedef struct {
 	qboolean active;
@@ -34,6 +40,8 @@ typedef struct {
 	char     handle[2][MAX_NAME_LENGTH]; // names at the start, for announcements
 	int      spawnCount[2];
 	int      started;           // svs.time
+	qboolean betsOpened;        // a fighter opened it to bets (once only)
+	int      betsUntil;         // bets taken, and fighters frozen, until then
 	qboolean seen;              // still duelling this frame
 } betDuel_t;
 
@@ -227,11 +235,20 @@ void SV_BetFrame(void)
 			}
 			duel->started = svs.time;
 			if (Bet_Enabled() && Bet_WindowMs() > 0) {
-				SV_SendServerCommand(NULL, "chat \"^6[Bet] ^7%s ^7vs %s ^7- place your bets! ^5!bet <fighter> <credits> ^7(%ds)\"\n",
-					duel->handle[0], duel->handle[1], Bet_WindowMs() / 1000);
+				for (int s = 0; s < 2; s++) {
+					Bet_Print(&svs.clients[duel->fighter[s]],
+						va("Want bets on this fight? ^5!bets start ^7in the next %ds.", BET_OPEN_MS / 1000));
+				}
 			}
 		}
 		duel->seen = qtrue;
+		if (duel->betsUntil && svs.time >= duel->betsUntil) {
+			duel->betsUntil = 0;
+			SV_SendServerCommand(NULL, "chat \"^6[Bet] ^7Bets are closed on %s ^7vs %s^7 - ^1FIGHT!\"\n", duel->handle[0], duel->handle[1]);
+			for (int s = 0; s < 2; s++) {
+				SV_SendServerCommand(&svs.clients[duel->fighter[s]], "cp \"^1FIGHT!\"\n");
+			}
+		}
 	}
 
 	for (int d = 0; d < BET_MAX_DUELS; d++) {
@@ -253,8 +270,8 @@ static void Bet_List(client_t* cl)
 		if (!duel->active) {
 			continue;
 		}
-		const int left = Bet_WindowMs() - (svs.time - duel->started);
-		const char* status = left > 0 ? va("^2open %ds", (left + 999) / 1000) : "^1closed";
+		const int left = duel->betsUntil - svs.time;
+		const char* status = left > 0 ? va("^2open %ds", (left + 999) / 1000) : duel->betsOpened ? "^1closed" : "^7not taking bets";
 		for (int s = 0; s < 2; s++) {
 			SV_EconomyMenuAddLine(cl, va("^3%d^7. %s ^7vs %s ^7(^3%s ^7to win) - ^2%d ^7cr backing - %s",
 				d * 2 + s + 1, duel->handle[0], duel->handle[1], duel->handle[s], Bet_Backing(duel->id, s), status));
@@ -275,6 +292,70 @@ static void Bet_List(client_t* cl)
 	SV_EconomyMenuPump(cl);
 }
 
+// "!bets start" from a fighter: opens their duel to bets and freezes both.
+static void Bet_OpenDuel(client_t* cl)
+{
+	const int me = cl - svs.clients;
+	betDuel_t* duel = NULL;
+
+	for (int d = 0; d < BET_MAX_DUELS; d++) {
+		if (gBetDuels[d].active && (gBetDuels[d].fighter[0] == me || gBetDuels[d].fighter[1] == me)) {
+			duel = &gBetDuels[d];
+			break;
+		}
+	}
+	if (!duel) {
+		Bet_Print(cl, "You need to be in a duel to open it to bets.");
+		return;
+	}
+	if (duel->betsOpened) {
+		Bet_Print(cl, "This duel has already been opened to bets.");
+		return;
+	}
+	if (svs.time - duel->started > BET_OPEN_MS) {
+		Bet_Print(cl, va("Too late - bets have to be opened in the first %d seconds of a duel.", BET_OPEN_MS / 1000));
+		return;
+	}
+	for (int s = 0; s < 2; s++) {
+		const playerState_t* ps = svs.clients[duel->fighter[s]].gentity->playerState;
+		if (ps->stats[STAT_HEALTH] < ps->stats[STAT_MAX_HEALTH]) {
+			Bet_Print(cl, "Too late - the fight's already started.");
+			return;
+		}
+	}
+	if (Bet_WindowMs() <= 0) {
+		Bet_Print(cl, "Betting windows are switched off on this server.");
+		return;
+	}
+
+	duel->betsOpened = qtrue;
+	duel->betsUntil = svs.time + Bet_WindowMs();
+	const int opt = (int)(duel - gBetDuels) * 2 + 1;
+	SV_SendServerCommand(NULL, "chat \"^6[Bet] ^7%s ^7vs %s ^7is taking bets for %ds! ^5!bet %d <credits> ^7backs %s^7, ^5!bet %d <credits> ^7backs %s^7.\"\n",
+		duel->handle[0], duel->handle[1], Bet_WindowMs() / 1000, opt, duel->handle[0], opt + 1, duel->handle[1]);
+	for (int s = 0; s < 2; s++) {
+		SV_SendServerCommand(&svs.clients[duel->fighter[s]], "cp \"^6Bets are open\n^7you're frozen for %d seconds\"\n", Bet_WindowMs() / 1000);
+	}
+}
+
+// Fighters in a duel that's taking bets can look around, but not move,
+// attack or use Force powers until the window closes.
+void SV_BetClientThink(client_t* cl, usercmd_t* cmd)
+{
+	const int me = cl - svs.clients;
+	for (int d = 0; d < BET_MAX_DUELS; d++) {
+		const betDuel_t* duel = &gBetDuels[d];
+		if (duel->active && duel->betsUntil > svs.time && (duel->fighter[0] == me || duel->fighter[1] == me)) {
+			cmd->forwardmove = 0;
+			cmd->rightmove = 0;
+			cmd->upmove = 0;
+			cmd->buttons = 0;
+			cmd->generic_cmd = 0;
+			return;
+		}
+	}
+}
+
 qboolean SV_BetCommand(client_t* cl, const char* args)
 {
 	char who[64], amountStr[64];
@@ -284,7 +365,12 @@ qboolean SV_BetCommand(client_t* cl, const char* args)
 		Bet_Print(cl, "There's no betting on this server.");
 		return qtrue;
 	}
-	if (sscanf(args, "%63s %63s", who, amountStr) != 2) {
+	const int argc = sscanf(args, "%63s %63s", who, amountStr);
+	if (argc >= 1 && (!Q_stricmp(who, "start") || !Q_stricmp(who, "open"))) {
+		Bet_OpenDuel(cl);
+		return qtrue;
+	}
+	if (argc != 2) {
 		Bet_List(cl);
 		return qtrue;
 	}
@@ -336,8 +422,8 @@ qboolean SV_BetCommand(client_t* cl, const char* args)
 		Bet_Print(cl, "You can't bet on your own duel.");
 		return qtrue;
 	}
-	if (svs.time - duel->started > Bet_WindowMs()) {
-		Bet_Print(cl, "Betting on that duel has closed.");
+	if (duel->betsUntil <= svs.time) {
+		Bet_Print(cl, duel->betsOpened ? "Betting on that duel has closed." : "That duel isn't taking bets.");
 		return qtrue;
 	}
 

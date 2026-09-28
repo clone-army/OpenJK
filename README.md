@@ -158,9 +158,11 @@ in chat; the map's own music comes back next round. See `codemp/server/jukebox.c
 
 ### Betting on duels
 
-`!bet` lists each fighter in each duel as a numbered option (`1. Ricks vs Cody (Ricks to win) - 150 cr backing`);
-`!bet <number> <credits>` backs that option (or `!bet <fighter> <credits>`, by part of the name). Bets are only taken in a
-duel's first `g_betWindowSeconds`, up to `g_betMax` a duel, on one side only, and never on your own duel. Every stake goes
+A duel only takes bets if one of its fighters types `!bets start` in its first 10 seconds, while both are still at full
+health. That announces it to the server and freezes both fighters for `g_betWindowSeconds` while bets come in; then
+"FIGHT!". `!bet` lists each fighter in each duel as a numbered option (`1. Ricks vs Cody (Ricks to win) - 150 cr
+backing`); `!bet <number> <credits>` backs that option (or `!bet <fighter> <credits>`, by part of the name), up to
+`g_betMax` a duel, on one side only, and never on your own duel. Every stake goes
 into the duel's pot and the winning side splits the whole pot by stake, so no credits are created; a duel with no clear
 winner (a fighter leaving) or nobody on the winning side refunds everyone. See `codemp/server/betting.cpp`.
 

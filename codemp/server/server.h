@@ -628,6 +628,7 @@ qboolean SV_ChanceCommand(client_t* cl, const char* args);
 // betting.cpp
 //
 qboolean SV_BetCommand(client_t* cl, const char* args);
+void SV_BetClientThink(client_t* cl, usercmd_t* cmd);
 void SV_BetFrame(void);
 void SV_PazaakFrame(void);
 
