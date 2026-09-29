@@ -168,11 +168,35 @@ The given command will be transmitted to the client, and is guaranteed to
 not have future snapshot_t executed before it is executed
 ======================
 */
+// Commands a client can miss without harm: chat and console lines, and
+// the team overlay (tinfo), which the game resends every second anyway.
+static qboolean SV_IsExpendableCommand( const char *cmd ) {
+	return ( !Q_strncmp( cmd, "print ", 6 ) || !Q_strncmp( cmd, "chat ", 5 ) ||
+		!Q_strncmp( cmd, "tchat ", 6 ) || !Q_strncmp( cmd, "tinfo ", 6 ) ) ? qtrue : qfalse;
+}
+
+// Once this many commands are waiting unacknowledged, expendable ones are
+// skipped for that client, keeping the rest of the MAX_RELIABLE_COMMANDS
+// window for commands that matter (configstrings and game state).
+#define SV_RELIABLE_SOFT_LIMIT	( MAX_RELIABLE_COMMANDS / 2 )
+
 void SV_AddServerCommand( client_t *client, const char *cmd ) {
 	int		index, i;
 
 	// do not send commands until the gamestate has been sent
 	if ( client->state < CS_PRIMED ) {
+		return;
+	}
+
+	// A client that stops acknowledging for a few seconds - typically one
+	// that has just entered a busy map and hitches while it loads twenty-odd
+	// players' models - used to be dropped with "Server command overflow"
+	// once 128 commands piled up, most of them "X entered the game" prints,
+	// chat and team overlay updates. After an RTV map change on a full
+	// server that was 6-20 players at a time. Skip the expendable ones
+	// instead of dropping the player.
+	if ( client->reliableSequence - client->reliableAcknowledge >= SV_RELIABLE_SOFT_LIMIT &&
+		SV_IsExpendableCommand( cmd ) ) {
 		return;
 	}
 
