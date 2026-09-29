@@ -2177,16 +2177,34 @@ static qboolean SV_ChatFloodCheck( client_t *cl ) {
 // broadcast like SV_GunrayCheckFrame's) - this can fire on every click if
 // someone keeps trying, and broadcasting each attempt would spam chat for
 // no added benefit once the pick is already blocked.
+// Siege classes that break the server, by class token (the "sc" key a pick
+// sends and CS_PLAYERS carries), with a name for the messages. Nute Gunray
+// crashes it; R2-D2 (h5_AstroR2, Legends) is broken too.
+static const struct { const char *cls; const char *name; } kBlockedClasses[] = {
+	{ "v7_NuteG",   "Nute Gunray" },
+	{ "h5_AstroR2", "R2-D2" },
+};
+
+static const char *SV_BlockedClassName( const char *cls ) {
+	for ( size_t i = 0; i < ARRAY_LEN( kBlockedClasses ); i++ ) {
+		if ( !Q_stricmp( cls, kBlockedClasses[i].cls ) ) {
+			return kBlockedClasses[i].name;
+		}
+	}
+	return NULL;
+}
+
 static qboolean SV_GunrayClassBlockCheck( client_t *cl ) {
 	if ( Q_stricmp( Cmd_Argv( 0 ), "siegeclass" ) ) {
 		return qfalse;
 	}
-	if ( Q_stricmp( Cmd_Argv( 1 ), "v7_NuteG" ) ) {
+	const char *blocked = SV_BlockedClassName( Cmd_Argv( 1 ) );
+	if ( !blocked ) {
 		return qfalse;
 	}
 
-	Com_Printf( "[GunrayDebug] %s blocked from picking Nute Gunray (siegeclass command intercepted)\n", cl->name );
-	SV_SendServerCommand( cl, "cp \"^1Nute Gunray is disabled on this server^7 - please pick another class.\"\n" );
+	Com_Printf( "[GunrayDebug] %s blocked from picking %s (siegeclass command intercepted)\n", cl->name, blocked );
+	SV_SendServerCommand( cl, "cp \"^1%s is disabled on this server^7 - please pick another class.\"\n", blocked );
 	return qtrue;
 }
 
@@ -3680,17 +3698,23 @@ void SV_GunrayCheckFrame( void ) {
 		// overwriting a value this code is still holding a pointer to.
 		Q_strncpyz( model, csBuf[0] ? Info_ValueForKey( csBuf, "m" ) : "", sizeof( model ) );
 		Q_strncpyz( team, csBuf[0] ? Info_ValueForKey( csBuf, "t" ) : "", sizeof( team ) );
-		isGunray = ( !Q_stricmp( model, "gunray/default" ) && atoi( team ) != TEAM_SPECTATOR ) ? qtrue : qfalse;
+		// Any blocked class (kBlockedClasses), by its "sc" class token -
+		// Gunray used to be recognised by his model alone.
+		char sc[128];
+		Q_strncpyz( sc, csBuf[0] ? Info_ValueForKey( csBuf, "sc" ) : "", sizeof( sc ) );
+		const char *blockedName = SV_BlockedClassName( sc );
+		if ( !blockedName && !Q_stricmp( model, "gunray/default" ) ) {
+			blockedName = "Nute Gunray";
+		}
+		isGunray = ( blockedName && atoi( team ) != TEAM_SPECTATOR ) ? qtrue : qfalse;
 
 		if ( isGunray && !wasGunray[i] ) {
-			char sc[128];
-			Q_strncpyz( sc, Info_ValueForKey( csBuf, "sc" ), sizeof( sc ) );
-			Com_Printf( "[GunrayDebug] %s (slot %d) picked Nute Gunray (model=%s, sc=%s) - forcing to spectator in 5s\n",
-				cl->name, i, model, sc );
-			SV_SendServerCommand( NULL, "chat \"^1%s^7 Gunray is disabled on this server, please choose another class.\"\n", cl->name );
+			Com_Printf( "[GunrayDebug] %s (slot %d) picked %s (model=%s, sc=%s) - forcing to spectator in 5s\n",
+				cl->name, i, blockedName, model, sc );
+			SV_SendServerCommand( NULL, "chat \"^1%s^7 %s is disabled on this server, please choose another class.\"\n", cl->name, blockedName );
 			cl->gunraySpecTime = svs.time + 5000;
 		} else if ( !isGunray && wasGunray[i] ) {
-			Com_Printf( "[GunrayDebug] %s (slot %d) is no longer Nute Gunray - cancelling pending spectator force\n", cl->name, i );
+			Com_Printf( "[GunrayDebug] %s (slot %d) is no longer on a blocked class - cancelling pending spectator force\n", cl->name, i );
 			cl->gunraySpecTime = 0;
 		}
 
