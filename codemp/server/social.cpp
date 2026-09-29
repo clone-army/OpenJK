@@ -1078,10 +1078,44 @@ static void Social_Tell(client_t* cl, const char* text)
 	SV_SendServerCommand(cl, "chat \"^5[Social]^7 %s\"\n", text);
 }
 
-// Logged into an account listed in g_socialAdmins (space separated).
+// economy_admins.dat: one account handle a line, kept beside the accounts
+// file (fs_basepath/fs_game - shared by every instance) and edited from the
+// web panel's Economy page. Re-read every few seconds, so a tick there
+// counts straight away.
+static qboolean Social_AdminFileHas(const char* handle)
+{
+	static char cache[4096];
+	static int loadedAt = -1000000;
+	if (svs.time - loadedAt > 5000 || svs.time < loadedAt) {
+		loadedAt = svs.time;
+		cache[0] = '\0';
+		FILE* f = fopen(va("%s/%s/economy_admins.dat", Cvar_VariableString("fs_basepath"), Cvar_VariableString("fs_game")), "r");
+		if (f) {
+			const size_t n = fread(cache, 1, sizeof(cache) - 1, f);
+			cache[n] = '\0';
+			fclose(f);
+		}
+	}
+	char buf[sizeof(cache)];
+	Q_strncpyz(buf, cache, sizeof(buf));
+	for (char* w = strtok(buf, " \r\n\t"); w; w = strtok(NULL, " \r\n\t")) {
+		if (!Q_stricmp(w, handle)) {
+			return qtrue;
+		}
+	}
+	return qfalse;
+}
+
+// Logged into an account in economy_admins.dat, or listed in g_socialAdmins.
 static qboolean Social_IsAdmin(client_t* cl)
 {
-	if (!cl->economyHandle[0] || !g_socialAdmins) {
+	if (!cl->economyHandle[0]) {
+		return qfalse;
+	}
+	if (Social_AdminFileHas(cl->economyHandle)) {
+		return qtrue;
+	}
+	if (!g_socialAdmins) {
 		return qfalse;
 	}
 	char buf[MAX_CVAR_VALUE_STRING];
@@ -1517,36 +1551,54 @@ static void Social_NpcFrame(void)
 typedef struct {
 	const char* name;
 	const char* intro;
-	const char* types[4];
+	const char* types[8];
 	int base, perPlayer, max;     // how many: base + perPlayer * players, up to max
 	const char* music;            // plays while it's on
 	float spacing;                // how far apart they arrive - beasts are big
 	const char* leader;           // arrives first, once (NULL = none)
 	const char* quote;            // said in chat as it starts (NULL = none)
-	const char* shouts[5];        // one played as it starts, at random (NULL-ended)
+	const char* shouts[13];       // one played as it starts, at random (NULL-ended)
 } barFightKind_t;
 
 // Only types MBII spawns as NPCs: most armed TEAM_FREE ones (droideka,
 // espo, dxun_g0t0, maxrebo...) are vehicles and are refused.
 static const barFightKind_t kBarFights[] = {
-	{ "Thugs",   "Noghri assassins storm the cantina!", { "noghri", NULL },                 3, 2, 20, BARFIGHT_MUSIC, 64.0f },
-	{ "Beasts",  "Something's escaped from the cellar!", { "nexu", "howler", "BomaBeast", NULL }, 3, 0, 3, BARFIGHT_MUSIC, 140.0f },
-	{ "Rancor",  "A rancor's got loose in the bar!",   { "rancor", NULL },                  1, 0, 1, BARFIGHT_MUSIC, 0.0f },
-	{ "Wampas",  "Wampas want a drink!",               { "wampa", NULL },                   2, 0, 3, BARFIGHT_MUSIC, 110.0f },
-	{ "Horrors", "Horrors crawl out of the swamp!",    { "selkath_zombie", "ice_spider", "acklaymb", NULL }, 3, 0, 3, BARFIGHT_MUSIC, 120.0f },
-	// Our own NPC types (ext_data/NPCs/ca_cantina.npc in the instance's MBII
-	// folder - server-side; players have the models as playable classes).
-	{ "Droid Attack", "Roger roger - battle droids roll in!", { "CA_B1", "CA_B1", "CA_B2", NULL }, 3, 2, 20, BARFIGHT_MUSIC, 64.0f, "CA_Magna", NULL,
-		{ "sound/canyon/roger_blowitup.wav", "sound/chars/battledroid/misc/anger1.mp3", "sound/chars/battledroid_cw/misc/combat1.mp3",
-		  "sound/chars/battledroid_cw2/misc/combat1.mp3", NULL } },
-	{ "Clone Raid: 212th", "The 212th Attack Battalion storms the bar!", { "CA_212", NULL },     3, 2, 20, BARFIGHT_MUSIC, 64.0f, "CA_Cody",
+	// Our own NPC types (ext_data/NPCs/ca_cantina.npc, written out by the
+	// engine - SV_SocialEnsureNpcFiles), except the rancor.
+	{ "Thugs", "Jabba's heavies kick the door in!",
+		{ "CA_Trando", "CA_Weequay", "CA_Nikto", "CA_Klatoo", "CA_Rodian", NULL }, 3, 2, 20, BARFIGHT_MUSIC, 64.0f, "CA_Gamorrean",
+		"^3[Gamorrean Enforcer]^7 *snort* Somebody in here owes Jabba. Everybody pays!",
+		{ NULL } },
+	{ "Rancor", "A rancor is on the loose in the cantina!",
+		{ "rancor", NULL }, 1, 0, 1, BARFIGHT_MUSIC, 0.0f, NULL, NULL, { NULL } },
+	{ "Droid Attack", "Roger roger - battle droids roll in!",
+		{ "CA_B1", "CA_B1", "CA_B2", NULL }, 3, 2, 20, BARFIGHT_MUSIC, 64.0f, "CA_Magna",
+		"^3[Tactical Droid]^7 Enemy combatants detected in this cantina. Leave no survivors.",
+		{ "sound/canyon/roger_blowitup.wav", "sound/chars/battledroid/misc/anger1.mp3", "sound/chars/battledroid/misc/anger2.mp3",
+		  "sound/chars/battledroid/misc/taunt.mp3", "sound/chars/battledroid/misc/taunt1.mp3", "sound/chars/battledroid/misc/taunt2.mp3",
+		  "sound/chars/battledroid/misc/taunt3.mp3", "sound/chars/battledroid/misc/taunt4.mp3", "sound/chars/battledroid_cw/misc/combat1.mp3",
+		  "sound/chars/battledroid_cw2/misc/combat1.mp3", "sound/chars/battledroid_cw2/misc/combat2.mp3", NULL } },
+	{ "Clone Raid: 212th", "The 212th Attack Battalion storms the bar!",
+		{ "CA_212", NULL }, 3, 2, 20, BARFIGHT_MUSIC, 64.0f, "CA_Cody",
 		"^3[Clone Sergeant]^7 Commander Cody wants these separatists dealt with. You're all under arrest!",
-		{ "sound/chars/cody/misc/anger1.mp3", "sound/chars/cody/misc/anger2.mp3", "sound/chars/clone_tcw/misc/combat1.mp3",
-		  "sound/chars/clone_tcw/misc/combat2.mp3", NULL } },
-	{ "Clone Raid: 501st", "The 501st Legion kicks the door in!",       { "CA_501", NULL },     3, 2, 20, BARFIGHT_MUSIC, 64.0f, "CA_Rex",
-		"^3[Clone Sergeant]^7 Captain Rex wants these separatists dealt with. You're all under arrest!",
-		{ "sound/chars/rex/misc/anger1.mp3", "sound/chars/rex2/misc/combat1.mp3", "sound/chars/rex2/misc/combat2.mp3",
-		  "sound/chars/clone_tcw2/misc/combat1.mp3", NULL } },
+		{ "sound/chars/cody/misc/anger1.mp3", "sound/chars/cody/misc/anger2.mp3", "sound/chars/cody/misc/taunt.mp3",
+		  "sound/chars/cody/misc/taunt1.mp3", "sound/chars/cody/misc/taunt2.mp3", "sound/chars/cody/misc/taunt3.mp3",
+		  "sound/chars/cody/misc/taunt4.mp3", "sound/chars/cody/misc/detected1.mp3", NULL } },
+	{ "Clone Raid: 501st", "The 501st Legion kicks the door in!",
+		{ "CA_501", NULL }, 3, 2, 20, BARFIGHT_MUSIC, 64.0f, "CA_Rex",
+		"^3[Captain Rex]^7 General's orders - there's been a disturbance, and we're here to put it down!",
+		{ "sound/chars/rex/misc/anger1.mp3", "sound/chars/rex/misc/taunt.mp3", "sound/chars/rex/misc/taunt1.mp3",
+		  "sound/chars/rex/misc/taunt2.mp3", "sound/chars/rex/misc/taunt3.mp3", "sound/chars/rex/misc/taunt4.mp3",
+		  "sound/chars/rex2/misc/anger1.mp3", "sound/chars/rex2/misc/anger2.mp3", "sound/chars/rex2/misc/combat1.mp3",
+		  "sound/chars/rex2/misc/combat2.mp3", NULL } },
+	{ "Death Watch", "Death Watch drops into the cantina!",
+		{ "CA_DeathWatch", "CA_DeathWatchRed", NULL }, 3, 2, 16, BARFIGHT_MUSIC, 64.0f, "CA_Vizsla",
+		"^3[Pre Vizsla]^7 This cantina answers to Death Watch now. Anyone who disagrees can take it up with Mandalore!",
+		{ NULL } },
+	{ "Pyke Syndicate", "The Pyke Syndicate raids the cantina!",
+		{ "CA_Pyke", "CA_Pyke", "CA_PykeGunner", NULL }, 3, 2, 20, BARFIGHT_MUSIC, 64.0f, "CA_PykeBoss",
+		"^3[Pyke Boss]^7 Someone in here has been skimming our spice. Nobody leaves until we get it back!",
+		{ NULL } },
 };
 
 static struct {
@@ -1691,7 +1743,7 @@ static void Social_BarFightFrame(void)
 		if (spawner && gBarFight.count < BARFIGHT_MAX) {
 			const barFightKind_t* k = &kBarFights[gBarFight.kind];
 			int types = 0;
-			while (types < 4 && k->types[types]) {
+			while (types < 8 && k->types[types]) {
 				types++;
 			}
 			const int n = gBarFight.spawned;
@@ -1915,6 +1967,10 @@ qboolean SV_SocialBarFightCommand(client_t* cl, const char* args)
 
 	if (!Social_Enabled() || !g_barFightEnable || !g_barFightEnable->integer) {
 		SV_SendServerCommand(cl, "chat \"^1[Bar fight]^7 No bar fights on this server.\"\n");
+		return qtrue;
+	}
+	if (!Social_IsAdmin(cl)) {
+		SV_SendServerCommand(cl, "chat \"^1[Bar fight]^7 Only admins can start bar fights - log in with an admin account.\"\n");
 		return qtrue;
 	}
 	if (!Q_stricmp(arg, "stop")) {
