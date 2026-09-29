@@ -154,6 +154,7 @@ static void* (*gNPCSpawnType)(void* ent, char* type, char* targetname, int isVeh
 static void (*gFreeEntity)(void* ent) = NULL;
 static void (*gSetEnemy)(void* self, void* enemy) = NULL;
 static void (*gSetMoveGoal)(void* ent, float* point, int radius, int isNavGoal, int combatPoint, void* targetEnt) = NULL;
+static void (*gSoundOnEnt)(void* ent, int channel, const char* path) = NULL;
 static void (*gSaveNPCGlobals)(void) = NULL;
 static void (*gRestoreNPCGlobals)(void) = NULL;
 static void (*gSetNPCGlobals)(void* ent) = NULL;
@@ -1126,6 +1127,27 @@ void SV_SocialWhere_f(void)
 	Com_Printf("%s^7: %s\n", cl->name, Social_PositionText(cl->gentity->playerState));
 }
 
+// "!playsound <path>" (admins): plays a game sound on yourself - for
+// listening through candidates, e.g. sound/chars/cody/misc/anger1.mp3.
+qboolean SV_SocialPlaySoundCommand(client_t* cl, const char* args)
+{
+	char path[MAX_QPATH] = "";
+	sscanf(args, "%63s", path);
+	if (!Social_IsAdmin(cl)) {
+		Social_Tell(cl, "Only admins can do that.");
+		return qtrue;
+	}
+	if (!path[0] || !cl->gentity || !gSoundOnEnt) {
+		Social_Tell(cl, "Usage: ^5!playsound <path>^7, e.g. ^5!playsound sound/chars/cody/misc/anger1.mp3");
+		return qtrue;
+	}
+	void* old = GVM_BeginNative();
+	gSoundOnEnt(cl->gentity, 0 /* CHAN_AUTO */, path);
+	GVM_EndNative(old);
+	Social_Tell(cl, va("Playing ^3%s", path));
+	return qtrue;
+}
+
 // "!wp add <route>", "!wp undo <route>", "!wp clear <route>", "!wp list"
 qboolean SV_SocialWaypointCommand(client_t* cl, const char* args)
 {
@@ -1501,6 +1523,7 @@ typedef struct {
 	float spacing;                // how far apart they arrive - beasts are big
 	const char* leader;           // arrives first, once (NULL = none)
 	const char* quote;            // said in chat as it starts (NULL = none)
+	const char* shouts[5];        // one played as it starts, at random (NULL-ended)
 } barFightKind_t;
 
 // Only types MBII spawns as NPCs: most armed TEAM_FREE ones (droideka,
@@ -1513,11 +1536,17 @@ static const barFightKind_t kBarFights[] = {
 	{ "Horrors", "Horrors crawl out of the swamp!",    { "selkath_zombie", "ice_spider", "acklaymb", NULL }, 3, 0, 3, BARFIGHT_MUSIC, 120.0f },
 	// Our own NPC types (ext_data/NPCs/ca_cantina.npc in the instance's MBII
 	// folder - server-side; players have the models as playable classes).
-	{ "Droid Attack", "Roger roger - battle droids roll in!", { "CA_B1", "CA_B1", "CA_B2", NULL }, 3, 2, 20, BARFIGHT_MUSIC, 64.0f, "CA_Magna" },
+	{ "Droid Attack", "Roger roger - battle droids roll in!", { "CA_B1", "CA_B1", "CA_B2", NULL }, 3, 2, 20, BARFIGHT_MUSIC, 64.0f, "CA_Magna", NULL,
+		{ "sound/canyon/roger_blowitup.wav", "sound/chars/battledroid/misc/anger1.mp3", "sound/chars/battledroid_cw/misc/combat1.mp3",
+		  "sound/chars/battledroid_cw2/misc/combat1.mp3", NULL } },
 	{ "Clone Raid: 212th", "The 212th Attack Battalion storms the bar!", { "CA_212", NULL },     3, 2, 20, BARFIGHT_MUSIC, 64.0f, "CA_Cody",
-		"^3[Clone Sergeant]^7 Commander Cody wants these separatists dealt with. You're all under arrest!" },
+		"^3[Clone Sergeant]^7 Commander Cody wants these separatists dealt with. You're all under arrest!",
+		{ "sound/chars/cody/misc/anger1.mp3", "sound/chars/cody/misc/anger2.mp3", "sound/chars/clone_tcw/misc/combat1.mp3",
+		  "sound/chars/clone_tcw/misc/combat2.mp3", NULL } },
 	{ "Clone Raid: 501st", "The 501st Legion kicks the door in!",       { "CA_501", NULL },     3, 2, 20, BARFIGHT_MUSIC, 64.0f, "CA_Rex",
-		"^3[Clone Sergeant]^7 Captain Rex wants these separatists dealt with. You're all under arrest!" },
+		"^3[Clone Sergeant]^7 Captain Rex wants these separatists dealt with. You're all under arrest!",
+		{ "sound/chars/rex/misc/anger1.mp3", "sound/chars/rex2/misc/combat1.mp3", "sound/chars/rex2/misc/combat2.mp3",
+		  "sound/chars/clone_tcw2/misc/combat1.mp3", NULL } },
 };
 
 static struct {
@@ -1580,6 +1609,32 @@ static qboolean Social_FightNpcUp(int num)
 	const sharedEntity_t* e = SV_GentityNum(num);
 	return (e->r.linked && e->playerState && e->s.number == num && e->s.eType == ET_NPC &&
 		e->playerState->stats[STAT_HEALTH] > 0 && e->playerState->pm_type != MB2_PM_DEAD) ? qtrue : qfalse;
+}
+
+static void Social_ShoutToAll(const char* path)
+{
+	if (!gSoundOnEnt || !path) {
+		return;
+	}
+	int played[MAX_CLIENTS], count = 0;
+	for (int i = 0; i < sv_maxclients->integer; i++) {
+		client_t* cl = &svs.clients[i];
+		if (cl->state != CS_ACTIVE || !cl->gentity || !cl->gentity->playerState || cl->netchan.remoteAddress.type == NA_BOT) {
+			continue;
+		}
+		qboolean near = qfalse;
+		for (int j = 0; j < count && !near; j++) {
+			near = (DistanceSquared(cl->gentity->playerState->origin,
+				svs.clients[played[j]].gentity->playerState->origin) < 1000.0f * 1000.0f) ? qtrue : qfalse;
+		}
+		if (near) {
+			continue;
+		}
+		void* old = GVM_BeginNative();
+		gSoundOnEnt(cl->gentity, 0 /* CHAN_AUTO */, path);
+		GVM_EndNative(old);
+		played[count++] = i;
+	}
 }
 
 static client_t* Social_AnyPlayer(void)
@@ -1940,6 +1995,13 @@ qboolean SV_SocialBarFightCommand(client_t* cl, const char* args)
 	if (k->quote) {
 		SV_SendServerCommand(NULL, "chat \"%s\"\n", k->quote);
 	}
+	int shouts = 0;
+	while (shouts < 5 && k->shouts[shouts]) {
+		shouts++;
+	}
+	if (shouts) {
+		Social_ShoutToAll(k->shouts[Q_irand(0, shouts - 1)]);
+	}
 	Com_Printf("Social mode: %s started a bar fight (%s, %d)\n", cl->name, k->name, gBarFight.toSpawn);
 	return qtrue;
 }
@@ -2024,6 +2086,7 @@ void SV_SocialGameInit(void)
 		gFreeEntity = (void (*)(void*))Sys_LoadFunction(dll, "G_FreeEntity");
 		gSetEnemy = (void (*)(void*, void*))Sys_LoadFunction(dll, "G_SetEnemy");
 		gSetMoveGoal = (void (*)(void*, float*, int, int, int, void*))Sys_LoadFunction(dll, "NPC_SetMoveGoal");
+		gSoundOnEnt = (void (*)(void*, int, const char*))Sys_LoadFunction(dll, "G_SoundOnEnt");
 		gSaveNPCGlobals = (void (*)(void))Sys_LoadFunction(dll, "SaveNPCGlobals");
 		gRestoreNPCGlobals = (void (*)(void))Sys_LoadFunction(dll, "RestoreNPCGlobals");
 		gSetNPCGlobals = (void (*)(void*))Sys_LoadFunction(dll, "SetNPCGlobals");

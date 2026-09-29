@@ -667,6 +667,7 @@ qboolean SV_SocialBarFightCommand(client_t* cl, const char* args);
 void SV_SocialEnsureNpcFiles(void);
 qboolean SV_SocialWaypointCommand(client_t* cl, const char* args);
 qboolean SV_SocialWhereCommand(client_t* cl);
+qboolean SV_SocialPlaySoundCommand(client_t* cl, const char* args);
 void SV_SocialWhere_f(void);
 int SV_SocialRouteCount(void);
 int SV_SocialRoutePoints(int route, vec3_t* out, int max);
