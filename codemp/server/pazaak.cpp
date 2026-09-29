@@ -141,6 +141,11 @@ static void Pz_EndMatch(pazaakGame_t* g, int winner, const char* how)
 			}
 		}
 		Pz_Both(g, va("No winner (%s) - stakes returned.", how));
+		for (int s = 0; s < 2; s++) {
+			if (Pz_Present(g->player[s], g->handle[s])) {
+				SV_EconomyResultBanner(Pz_Client(g->player[s]), "Pazaak", 0);
+			}
+		}
 	} else {
 		if (Pz_Present(g->player[winner], g->handle[winner])) {
 			Pz_Payout(Pz_Client(g->player[winner]), pot);
@@ -149,6 +154,11 @@ static void Pz_EndMatch(pazaakGame_t* g, int winner, const char* how)
 		}
 		SV_SendServerCommand(NULL, "chat \"^3[Pazaak] ^7%s ^7beat %s ^7at Pazaak%s and won ^2%d ^7credits!\"\n",
 			Pz_Name(g, winner), Pz_Name(g, 1 - winner), how, pot);
+		for (int s = 0; s < 2; s++) {
+			if (Pz_Present(g->player[s], g->handle[s])) {
+				SV_EconomyResultBanner(Pz_Client(g->player[s]), "Pazaak", s == winner ? g->bet : -g->bet);
+			}
+		}
 	}
 	memset(g, 0, sizeof(*g));
 }

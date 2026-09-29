@@ -2088,6 +2088,21 @@ static qboolean SV_EconomyBountyEnabled( void ) {
 	return (g_economyBountyEnable && g_economyBountyEnable->integer == 1) ? qtrue : qfalse;
 }
 
+// A game's result, large in the middle of the player's screen: net is what
+// they came away with - positive won, negative lost, 0 stake returned.
+void SV_EconomyResultBanner( client_t *cl, const char *game, int net ) {
+	if ( !cl || cl->state < CS_CONNECTED ) {
+		return;
+	}
+	if ( net > 0 ) {
+		SV_SendServerCommand( cl, "cp \"^3%s\n^2You win +%d credits!\"\n", game, net );
+	} else if ( net < 0 ) {
+		SV_SendServerCommand( cl, "cp \"^3%s\n^1You lose %d credits\"\n", game, -net );
+	} else {
+		SV_SendServerCommand( cl, "cp \"^3%s\n^7Your credits are back\"\n", game );
+	}
+}
+
 void SV_EconomyPrint( client_t *cl, const char *text ) {
 	SV_SendServerCommand( cl, "chat \"^2[Economy]^7 %s\"\n", text );
 }
@@ -2919,7 +2934,7 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 			}
 
 			if ( g_economyBetEnable && g_economyBetEnable->integer ) {
-				SV_EconomyMenuAddLine( cl, "^2!bet ^7- the fight taking bets. ^5!bet <fighter> <credits> ^7to back one. In a duel: ^5!bets start ^7to take bets." );
+				SV_EconomyMenuAddLine( cl, "^2!bet ^7- the fight taking bets. ^5!bet <fighter> <credits> ^7to back one. In a duel: ^5!bet start ^7to take bets." );
 			}
 
 			if ( g_economyRaffleEnable && g_economyRaffleEnable->integer ) {
@@ -3441,6 +3456,7 @@ void SV_EconomyFrame( void ) {
 							SV_EconomyBountyClear( victim );
 							attacker->economyCredits += payout;
 							SV_EconomyPrint( attacker, va( "You won %s's bounty of %d credits!", victim->name, payout ) );
+							SV_EconomyResultBanner( attacker, "Bounty claimed", payout );
 							SV_EconomyPrint( victim, "Your bounty was claimed." );
 
 							// Let whoever placed it know it paid off, if

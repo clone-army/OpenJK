@@ -1045,7 +1045,7 @@ void SV_Init (void) {
 	g_bartenderPublic->flags &= ~CVAR_ARCHIVE;
 	g_economyBetEnable = Cvar_Get("g_economyBetEnable", "0", CVAR_TEMP, "Enable !bet on duels (also requires g_creditSystemEnable 1)");
 	g_economyBetEnable->flags &= ~CVAR_ARCHIVE;
-	g_betWindowSeconds = Cvar_Get("g_betWindowSeconds", "30", CVAR_TEMP, "Seconds a duel opened to bets (!bets start) takes bets, with both fighters frozen");
+	g_betWindowSeconds = Cvar_Get("g_betWindowSeconds", "30", CVAR_TEMP, "Seconds a duel opened to bets (!bet start) takes bets, with both fighters frozen");
 	g_betWindowSeconds->flags &= ~CVAR_ARCHIVE;
 	g_betMax = Cvar_Get("g_betMax", "100", CVAR_TEMP, "Most credits one player can bet on one duel (0 = no limit)");
 	g_betMax->flags &= ~CVAR_ARCHIVE;
