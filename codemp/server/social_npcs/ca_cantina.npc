@@ -1,0 +1,196 @@
+// Clone Army cantina bar fight NPCs (social server). Server-side only:
+// players already have every model and skin used here, as playable classes.
+// All on TEAM_FREE, which MBII's NPC_ValidEnemy has attack everyone who
+// isn't - both player teams alike.
+
+CA_B1
+{
+	playerModel	battledroid
+	customSkin	default
+	weapon		WP_BLASTER
+	health		40
+	armor		0
+	reactions	3
+	aim		1
+	move		3
+	aggression	4
+	evasion		1
+	intelligence	3
+	rank		crewman
+	playerTeam	TEAM_FREE
+	enemyTeam	TEAM_PLAYER
+	class		CLASS_STORMTROOPER
+	yawspeed	70
+	walkSpeed	55
+	runSpeed	200
+	dismemberProbHead	30
+	dismemberProbArms	30
+	dismemberProbLegs	20
+	dismemberProbHands	20
+	dismemberProbWaist	10
+}
+
+CA_B2
+{
+	playerModel	sbd
+	customSkin	default
+	weapon		WP_BLASTER
+	altFire		1
+	health		150
+	armor		50
+	reactions	3
+	aim		2
+	move		2
+	aggression	5
+	evasion		1
+	intelligence	3
+	rank		crewman
+	playerTeam	TEAM_FREE
+	enemyTeam	TEAM_PLAYER
+	class		CLASS_STORMTROOPER
+	yawspeed	60
+	walkSpeed	45
+	runSpeed	160
+	dismemberProbHead	0
+	dismemberProbArms	0
+	dismemberProbLegs	0
+	dismemberProbHands	0
+	dismemberProbWaist	0
+}
+
+CA_Magna
+{
+	playerModel	magnaguard
+	customSkin	default
+	weapon		WP_MELEE
+	health		200
+	armor		50
+	reactions	5
+	aim		5
+	move		5
+	aggression	5
+	evasion		4
+	intelligence	5
+	rank		ensign
+	playerTeam	TEAM_FREE
+	enemyTeam	TEAM_PLAYER
+	class		CLASS_STORMTROOPER
+	yawspeed	110
+	walkSpeed	65
+	runSpeed	240
+	dismemberProbHead	0
+	dismemberProbArms	0
+	dismemberProbLegs	0
+	dismemberProbHands	0
+	dismemberProbWaist	0
+}
+
+CA_212
+{
+	playerModel	clonetrooper_p2
+	customSkin	212
+	weapon		WP_CLONE_RIFLE
+	health		60
+	armor		20
+	reactions	4
+	aim		3
+	move		4
+	aggression	4
+	evasion		3
+	intelligence	5
+	rank		crewman
+	playerTeam	TEAM_FREE
+	enemyTeam	TEAM_PLAYER
+	class		CLASS_STORMTROOPER
+	yawspeed	80
+	walkSpeed	55
+	runSpeed	210
+	dismemberProbHead	0
+	dismemberProbArms	10
+	dismemberProbLegs	0
+	dismemberProbHands	10
+	dismemberProbWaist	0
+}
+
+CA_Cody
+{
+	playerModel	clonetrooper_p2
+	customSkin	212_cody
+	weapon		WP_CLONE_RIFLE
+	health		120
+	armor		40
+	reactions	5
+	aim		5
+	move		5
+	aggression	5
+	evasion		4
+	intelligence	5
+	rank		ensign
+	scale		105
+	playerTeam	TEAM_FREE
+	enemyTeam	TEAM_PLAYER
+	class		CLASS_STORMTROOPER
+	yawspeed	110
+	walkSpeed	55
+	runSpeed	220
+	dismemberProbHead	0
+	dismemberProbArms	0
+	dismemberProbLegs	0
+	dismemberProbHands	0
+	dismemberProbWaist	0
+}
+
+CA_501
+{
+	playerModel	clonetrooper_p2
+	customSkin	501
+	weapon		WP_CLONE_RIFLE
+	health		60
+	armor		20
+	reactions	4
+	aim		3
+	move		4
+	aggression	4
+	evasion		3
+	intelligence	5
+	rank		crewman
+	playerTeam	TEAM_FREE
+	enemyTeam	TEAM_PLAYER
+	class		CLASS_STORMTROOPER
+	yawspeed	80
+	walkSpeed	55
+	runSpeed	210
+	dismemberProbHead	0
+	dismemberProbArms	10
+	dismemberProbLegs	0
+	dismemberProbHands	10
+	dismemberProbWaist	0
+}
+
+CA_Rex
+{
+	playerModel	clonetrooper_p2
+	customSkin	501_rex
+	weapon		WP_CLONE_RIFLE
+	health		120
+	armor		40
+	reactions	5
+	aim		5
+	move		5
+	aggression	5
+	evasion		4
+	intelligence	5
+	rank		ensign
+	scale		105
+	playerTeam	TEAM_FREE
+	enemyTeam	TEAM_PLAYER
+	class		CLASS_STORMTROOPER
+	yawspeed	110
+	walkSpeed	55
+	runSpeed	220
+	dismemberProbHead	0
+	dismemberProbArms	0
+	dismemberProbLegs	0
+	dismemberProbHands	0
+	dismemberProbWaist	0
+}
