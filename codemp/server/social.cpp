@@ -862,6 +862,23 @@ static qboolean Social_NpcAlive(const socialNpc_t* n)
 	return (e->r.linked && e->playerState && e->s.number == n->ent) ? qtrue : qfalse;
 }
 
+// Someone standing on (or next to) an NPC's spot.
+static qboolean Social_SpotOccupied(const vec3_t spot, int npcEnt)
+{
+	for (int i = 0; i < sv_maxclients->integer; i++) {
+		const client_t* cl = &svs.clients[i];
+		if (cl->state != CS_ACTIVE || !cl->gentity || !cl->gentity->playerState) {
+			continue;
+		}
+		const playerState_t* ps = cl->gentity->playerState;
+		const float dx = ps->origin[0] - spot[0], dy = ps->origin[1] - spot[1];
+		if (dx * dx + dy * dy < 48.0f * 48.0f && fabs(ps->origin[2] - spot[2]) < 96.0f) {
+			return qtrue;
+		}
+	}
+	return qfalse;
+}
+
 static void Social_NpcFrame(void)
 {
 	Social_ParseNpcs();
@@ -882,11 +899,16 @@ static void Social_NpcFrame(void)
 		socialNpc_t* n = &gSocialNpcs[i];
 
 		if (Social_NpcAlive(n)) {
-			// Held on the spot: back it goes if its AI walks it off.
+			// Held on the spot across the floor only - height is left to
+			// gravity (pinning that too bounced it, dropping to the floor
+			// and being put back up) - and only once it's drifted a way and
+			// nobody's standing there, or it's put back inside them.
 			playerState_t* ps = SV_GentityNum(n->ent)->playerState;
-			if (DistanceSquared(ps->origin, n->origin) > 16.0f * 16.0f) {
-				VectorCopy(n->origin, ps->origin);
-				VectorClear(ps->velocity);
+			const float dx = ps->origin[0] - n->origin[0], dy = ps->origin[1] - n->origin[1];
+			if (dx * dx + dy * dy > 32.0f * 32.0f && !Social_SpotOccupied(n->origin, n->ent)) {
+				ps->origin[0] = n->origin[0];
+				ps->origin[1] = n->origin[1];
+				ps->velocity[0] = ps->velocity[1] = 0.0f;
 			}
 			continue;
 		}
