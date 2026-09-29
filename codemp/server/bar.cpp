@@ -68,6 +68,7 @@ effect is dropped without touching anything.
 */
 
 #include "server.h"
+#include <ctype.h>
 #include "sv_gameapi.h"
 #include "sys/sys_loadlib.h"
 
@@ -737,6 +738,25 @@ static qboolean Bar_AnythingActive(const barState_t* st)
 }
 
 // Tells everyone what killed them once it actually does.
+// "a spice overdose" -> "a Spice Overdose", for the big centre banner:
+// every word capitalised except the little ones.
+static const char* Bar_TitleCase(const char* text)
+{
+	static char out[64];
+	qboolean wordStart = qtrue;
+	int n = 0;
+	for (const char* c = text; *c && n < (int)sizeof(out) - 1; c++) {
+		char ch = *c;
+		if (wordStart && ch != ' ' && Q_strncmp(c, "a ", 2) && Q_strncmp(c, "of ", 3) && Q_strncmp(c, "the ", 4)) {
+			ch = (char)toupper((unsigned char)ch);
+		}
+		out[n++] = ch;
+		wordStart = (ch == ' ') ? qtrue : qfalse;
+	}
+	out[n] = '\0';
+	return out;
+}
+
 static void Bar_OverdoseFrame(client_t* cl, barTab_t* tab)
 {
 	if (!tab->overdoseUntil) {
@@ -752,7 +772,7 @@ static void Bar_OverdoseFrame(client_t* cl, barTab_t* tab)
 	}
 	tab->overdoseUntil = 0;
 	SV_SendServerCommand(NULL, "chat \"^5[Bar] ^7%s ^1died from %s.\"\n", cl->name, tab->overdoseCause);
-	SV_SendServerCommand(NULL, "cp \"%s\n^1died from %s\"\n", cl->name, tab->overdoseCause);
+	SV_SendServerCommand(NULL, "cp \"%s\n^1Died from %s\"\n", cl->name, Bar_TitleCase(tab->overdoseCause));
 }
 
 void SV_BarFrame(void)
