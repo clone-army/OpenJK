@@ -2343,6 +2343,10 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 	}
 
 	// Emotes (social servers) aren't part of the economy either.
+	if ( SV_SocialSpawnCommand( cl, commandName ) ) {
+		return qtrue;
+	}
+
 	if ( SV_EmoteCommand( cl, commandName ) ) {
 		return qtrue;
 	}
@@ -2953,6 +2957,7 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 		if ( g_socialMode && g_socialMode->integer ) {
 			anySection = qtrue;
 			SV_EconomyMenuAddLine( cl, "^2!emotes ^7- !sit, !dance, !taunt, !victory, !hug, !sleep, !rage and more. Move to stop." );
+			SV_EconomyMenuAddLine( cl, "^2!spawn ^7- stuck in spectator? This gets you into the game." );
 		}
 
 		if ( g_statsEnable && g_statsEnable->integer ) {
