@@ -1727,9 +1727,9 @@ static void Social_BarFightFrame(void)
 			sharedEntity_t* npc = SV_GentityNum(gBarFight.ents[i]);
 
 			// An attack route (g_barFightRoutes): walk its points in order,
-			// and break off to fight once a player's within 350 units or
-			// the route's done - a point it can't get any closer to in 6s
-			// is skipped.
+			// round and round, and break off to fight once a player's within
+			// 350 units (back to it when nobody's within 500) - a point it
+			// can't get any closer to in 6s is skipped.
 			if (gBarFight.route[i][0] && !gBarFight.arrived[i]) {
 				socialRoute_t* r = Social_FindRoute(gBarFight.route[i], qfalse);
 				qboolean close = qfalse;
@@ -1741,7 +1741,10 @@ static void Social_BarFightFrame(void)
 						close = qtrue;
 					}
 				}
-				if (close || !r || gBarFight.wp[i] >= r->count || !gSetMoveGoal) {
+				if (r && gBarFight.wp[i] >= r->count) {
+					gBarFight.wp[i] = 0; // round again
+				}
+				if (close || !r || !r->count || !gSetMoveGoal) {
 					gBarFight.arrived[i] = qtrue;
 				} else if (svs.time - gBarFight.spawnedAt[i] > 800) {
 					const float* p = r->pts[gBarFight.wp[i]];
@@ -1803,6 +1806,25 @@ static void Social_BarFightFrame(void)
 				if (!nearest || d < best) {
 					nearest = cl;
 					best = d;
+				}
+			}
+			// Hunting with nobody within 500 units: back to its route,
+			// from its nearest point, till someone comes close again.
+			if (gBarFight.route[i][0] && (!nearest || best > 500.0f * 500.0f)) {
+				socialRoute_t* r = Social_FindRoute(gBarFight.route[i], qfalse);
+				if (r && r->count) {
+					float closest = 0.0f;
+					for (int p = 0; p < r->count; p++) {
+						const float d = DistanceSquared(r->pts[p], npc->playerState->origin);
+						if (!p || d < closest) {
+							closest = d;
+							gBarFight.wp[i] = p;
+						}
+					}
+					gBarFight.arrived[i] = qfalse;
+					gBarFight.wpGoalAt[i] = 0;
+					gBarFight.wpSince[i] = 0;
+					continue;
 				}
 			}
 			if (nearest) {
