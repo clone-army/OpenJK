@@ -457,6 +457,7 @@ extern	cvar_t* g_socialAutoSpawn;
 extern	cvar_t* g_barFightEnable;
 extern	cvar_t* g_barFightSeconds;
 extern	cvar_t* g_barFightSpawn;
+extern	cvar_t* g_barFightRally;
 extern	cvar_t* g_socialRespawnTime;
 extern	cvar_t* g_socialDuels;
 extern	cvar_t* g_socialRoundTime;

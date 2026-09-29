@@ -380,6 +380,7 @@ A hang-out mode on top of whatever MBII mode the server runs (e.g. Legends, with
 | `g_barFightEnable` | `0` | Allow `!barfight` (`!barfight 1`-`5`: Noghri thugs, beasts, a rancor, wampas, swamp horrors; `!barfight stop`). Hostile TEAM_FREE NPCs go for everyone; they and players can hurt each other, players still can't hurt each other; the regulars leave while it's on |
 | `g_barFightSeconds` | `180` | Longest a bar fight lasts |
 | `g_barFightSpawn` | `""` | Where bar fight NPCs arrive, `x y z yaw`, a point on the floor |
+| `g_barFightRally` | `""` | Where bar fight NPCs walk to first, `x y z yaw`; they start hunting players once there (or after 10s) |
 | `g_socialRespawnTime` | `3` | Respawn wait in seconds |
 | `g_socialDuels` | `1` | Allow duels (bow to challenge / accept) |
 | `g_socialRoundTime` | `0` | Round length in seconds; `0` keeps the map's own |

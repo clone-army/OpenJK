@@ -152,6 +152,7 @@ static void (*gSetTeam)(void* ent, char* team) = NULL;
 static void* (*gNPCSpawnType)(void* ent, char* type, char* targetname, int isVehicle, int asIfPlayer, int siegeTeam) = NULL;
 static void (*gFreeEntity)(void* ent) = NULL;
 static void (*gSetEnemy)(void* self, void* enemy) = NULL;
+static void (*gSetMoveGoal)(void* ent, float* point, int radius, int isNavGoal, int combatPoint, void* targetEnt) = NULL;
 static vmCvar_t* gAuthenticity = NULL;
 static int* gRebelTimeLimit = NULL;
 static int* gImperialTimeLimit = NULL;
@@ -1107,6 +1108,10 @@ static void Social_NpcFrame(void)
 // TEAM_FREE: they go for both teams alike. The regulars leave while it's on
 // (Social_NpcFrame). It ends when they're all down, after g_barFightSeconds,
 // or on "!barfight stop"; anything left is removed. g_barFightEnable.
+// With g_barFightRally ("x y z yaw") set, they first walk there (MBII's
+// NPC_SetMoveGoal) and start hunting once they've arrived; either way each
+// is pointed at the nearest player (G_SetEnemy), since NPC AI only charges
+// an enemy it has seen.
 #define BARFIGHT_MAX 12
 #define BARFIGHT_MUSIC "music/sailbargealternate" // Jabba's Palace (mb2_jabba's own music), for every fight
 
@@ -1137,8 +1142,12 @@ static struct {
 	int    nextSpawn;
 	int    ents[BARFIGHT_MAX];
 	int    spawnedAt[BARFIGHT_MAX];
+	qboolean goaled[BARFIGHT_MAX];   // sent towards the rally point
+	qboolean arrived[BARFIGHT_MAX];  // there (or gave up walking): hunting now
 	int    count;
 	int    nextHunt;
+	qboolean haveRally;
+	vec3_t rally;
 	vec3_t origin;
 	float  yaw;
 	int    cooldownUntil;
@@ -1277,12 +1286,34 @@ static void Social_BarFightFrame(void)
 	}
 
 	if (gSetEnemy && svs.time >= gBarFight.nextHunt) {
-		gBarFight.nextHunt = svs.time + 2000;
+		gBarFight.nextHunt = svs.time + 1000;
 		for (int i = 0; i < gBarFight.count; i++) {
 			if (!Social_FightNpcUp(gBarFight.ents[i])) {
 				continue;
 			}
 			sharedEntity_t* npc = SV_GentityNum(gBarFight.ents[i]);
+
+			// First, into the room: walk to the rally point (its AI
+			// follows a move goal while it has no enemy), a little apart
+			// from each other; hunt once there, or after 10s regardless.
+			if (gBarFight.haveRally && !gBarFight.arrived[i]) {
+				const int age = svs.time - gBarFight.spawnedAt[i];
+				vec3_t goal;
+				VectorCopy(gBarFight.rally, goal);
+				goal[0] += ((i % 3) - 1) * 56.0f;
+				goal[1] += (((i / 3) % 3) - 1) * 56.0f;
+				if (DistanceSquared(npc->playerState->origin, goal) < 160.0f * 160.0f || age > 10000) {
+					gBarFight.arrived[i] = qtrue;
+				} else {
+					if (!gBarFight.goaled[i] && age > 800 && gSetMoveGoal) {
+						void* old = GVM_BeginNative();
+						gSetMoveGoal(npc, goal, 48, 0, -1, NULL);
+						GVM_EndNative(old);
+						gBarFight.goaled[i] = qtrue;
+					}
+					continue;
+				}
+			}
 			client_t* nearest = NULL;
 			float best = 0.0f;
 			for (int c = 0; c < sv_maxclients->integer; c++) {
@@ -1371,6 +1402,11 @@ qboolean SV_SocialBarFightCommand(client_t* cl, const char* args)
 	}
 	org[2] += 24.0f; // a point on the floor: drop them in above it
 
+	vec3_t rally;
+	float rallyYaw = 0.0f;
+	const qboolean haveRally = (g_barFightRally &&
+		sscanf(g_barFightRally->string, "%f %f %f %f", &rally[0], &rally[1], &rally[2], &rallyYaw) >= 3) ? qtrue : qfalse;
+
 	int players = 0;
 	for (int i = 0; i < sv_maxclients->integer; i++) {
 		players += (svs.clients[i].state == CS_ACTIVE && svs.clients[i].netchan.remoteAddress.type != NA_BOT);
@@ -1384,6 +1420,10 @@ qboolean SV_SocialBarFightCommand(client_t* cl, const char* args)
 	gBarFight.ends = svs.time + 1000 * Q_max(30, g_barFightSeconds ? g_barFightSeconds->integer : 180);
 	VectorCopy(org, gBarFight.origin);
 	gBarFight.yaw = yaw;
+	gBarFight.haveRally = haveRally;
+	if (haveRally) {
+		VectorCopy(rally, gBarFight.rally);
+	}
 	gBarFightActive = qtrue;
 
 	SV_JukeboxFightStart(k->music);
@@ -1424,6 +1464,7 @@ void SV_SocialGameInit(void)
 		gNPCSpawnType = (void* (*)(void*, char*, char*, int, int, int))Sys_LoadFunction(dll, "NPC_SpawnType");
 		gFreeEntity = (void (*)(void*))Sys_LoadFunction(dll, "G_FreeEntity");
 		gSetEnemy = (void (*)(void*, void*))Sys_LoadFunction(dll, "G_SetEnemy");
+		gSetMoveGoal = (void (*)(void*, float*, int, int, int, void*))Sys_LoadFunction(dll, "NPC_SetMoveGoal");
 		gAuthenticity = (vmCvar_t*)Sys_LoadFunction(dll, "g_Authenticity");
 		gRebelTimeLimit = (int*)Sys_LoadFunction(dll, "rebel_time_limit");
 		gImperialTimeLimit = (int*)Sys_LoadFunction(dll, "imperial_time_limit");
