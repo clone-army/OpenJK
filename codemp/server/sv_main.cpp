@@ -115,6 +115,7 @@ cvar_t* g_killstreakEnable;
 cvar_t* g_statsEnable;
 cvar_t* g_chatFloodEnable;
 cvar_t* g_socialMode;
+cvar_t* g_socialNpcs;
 cvar_t* g_socialRespawnTime;
 cvar_t* g_socialDuels;
 cvar_t* g_socialRoundTime;
