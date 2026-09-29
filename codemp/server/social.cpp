@@ -1117,11 +1117,14 @@ typedef struct {
 	const char* music;            // plays while it's on
 } barFightKind_t;
 
+// Only types MBII spawns as NPCs: most armed TEAM_FREE ones (droideka,
+// espo, dxun_g0t0, maxrebo...) are vehicles and are refused.
 static const barFightKind_t kBarFights[] = {
-	{ "Thugs",  "Thugs storm the cantina!",       { "noghri", "espo", NULL },               2, 1, 8, BARFIGHT_MUSIC },
-	{ "Beasts", "Something's escaped from the cellar!", { "nexu", "howler", "BomaBeast", NULL }, 3, 0, 3, BARFIGHT_MUSIC },
-	{ "Rancor", "A rancor's got loose in the bar!", { "rancor", NULL },                     1, 0, 1, BARFIGHT_MUSIC },
-	{ "Droids", "Rogue droids crash the party!",  { "droideka", "dxun_g0t0", NULL },        2, 1, 6, BARFIGHT_MUSIC },
+	{ "Thugs",   "Noghri assassins storm the cantina!", { "noghri", NULL },                 2, 1, 8, BARFIGHT_MUSIC },
+	{ "Beasts",  "Something's escaped from the cellar!", { "nexu", "howler", "BomaBeast", NULL }, 3, 0, 3, BARFIGHT_MUSIC },
+	{ "Rancor",  "A rancor's got loose in the bar!",   { "rancor", NULL },                  1, 0, 1, BARFIGHT_MUSIC },
+	{ "Wampas",  "Wampas want a drink!",               { "wampa", NULL },                   2, 0, 3, BARFIGHT_MUSIC },
+	{ "Horrors", "Horrors crawl out of the swamp!",    { "selkath_zombie", "ice_spider", "acklaymb", NULL }, 3, 0, 3, BARFIGHT_MUSIC },
 };
 
 static struct {
@@ -1131,6 +1134,7 @@ static struct {
 	int    spawned;
 	int    nextSpawn;
 	int    ents[BARFIGHT_MAX];
+	int    spawnedAt[BARFIGHT_MAX];
 	int    count;
 	vec3_t origin;
 	float  yaw;
@@ -1253,6 +1257,7 @@ static void Social_BarFightFrame(void)
 				VectorCopy(org, e->s.origin);
 				VectorCopy(org, e->s.pos.trBase);
 				VectorCopy(org, e->r.currentOrigin);
+				gBarFight.spawnedAt[gBarFight.count] = svs.time;
 				gBarFight.ents[gBarFight.count++] = e->s.number;
 				Com_Printf("Social mode: bar fight - %s (entity %d)\n", k->types[n % types], e->s.number);
 			} else {
@@ -1268,7 +1273,7 @@ static void Social_BarFightFrame(void)
 	if (gBarFight.toSpawn <= 0) {
 		qboolean anyUp = qfalse;
 		for (int i = 0; i < gBarFight.count && !anyUp; i++) {
-			anyUp = Social_FightNpcUp(gBarFight.ents[i]);
+			anyUp = (svs.time - gBarFight.spawnedAt[i] < 4000 || Social_FightNpcUp(gBarFight.ents[i])) ? qtrue : qfalse;
 		}
 		if (!anyUp) {
 			Social_BarFightEnd("^2The bar is cleared!");
