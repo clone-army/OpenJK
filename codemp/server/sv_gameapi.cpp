@@ -82,6 +82,9 @@ void GVM_EndNative( void *old ) {
 }
 
 void GVM_InitGame( int levelTime, int randomSeed, int restart ) {
+	// Social servers' own NPC types, before MBII reads its .npc files.
+	SV_SocialEnsureNpcFiles();
+
 	if ( gvm->isLegacy ) {
 		VM_Call( gvm, GAME_INIT, levelTime, randomSeed, restart );
 		return;

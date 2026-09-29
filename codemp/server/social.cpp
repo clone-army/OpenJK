@@ -74,6 +74,7 @@ install and says so, rather than patching blind.
 */
 
 #include "server.h"
+#include <sys/stat.h>
 #include "social.h"
 #include "sv_gameapi.h"
 #include "sys/sys_loadlib.h"
@@ -1480,6 +1481,7 @@ typedef struct {
 	const char* music;            // plays while it's on
 	float spacing;                // how far apart they arrive - beasts are big
 	const char* leader;           // arrives first, once (NULL = none)
+	const char* quote;            // said in chat as it starts (NULL = none)
 } barFightKind_t;
 
 // Only types MBII spawns as NPCs: most armed TEAM_FREE ones (droideka,
@@ -1493,8 +1495,10 @@ static const barFightKind_t kBarFights[] = {
 	// Our own NPC types (ext_data/NPCs/ca_cantina.npc in the instance's MBII
 	// folder - server-side; players have the models as playable classes).
 	{ "Droid Attack", "Roger roger - battle droids roll in!", { "CA_B1", "CA_B1", "CA_B2", NULL }, 3, 1, 10, BARFIGHT_MUSIC, 64.0f, "CA_Magna" },
-	{ "Clone Raid: 212th", "The 212th Attack Battalion storms the bar!", { "CA_212", NULL },     3, 1, 10, BARFIGHT_MUSIC, 64.0f, "CA_Cody" },
-	{ "Clone Raid: 501st", "The 501st Legion kicks the door in!",       { "CA_501", NULL },     3, 1, 10, BARFIGHT_MUSIC, 64.0f, "CA_Rex" },
+	{ "Clone Raid: 212th", "The 212th Attack Battalion storms the bar!", { "CA_212", NULL },     3, 1, 10, BARFIGHT_MUSIC, 64.0f, "CA_Cody",
+		"^3[Clone Sergeant]^7 Commander Cody wants these separatists dealt with. You're all under arrest!" },
+	{ "Clone Raid: 501st", "The 501st Legion kicks the door in!",       { "CA_501", NULL },     3, 1, 10, BARFIGHT_MUSIC, 64.0f, "CA_Rex",
+		"^3[Clone Sergeant]^7 Captain Rex wants these separatists dealt with. You're all under arrest!" },
 };
 
 static struct {
@@ -1855,8 +1859,60 @@ qboolean SV_SocialBarFightCommand(client_t* cl, const char* args)
 	SV_SendServerCommand(NULL, "cp \"^1BAR FIGHT!\n^7%s\"\n", k->intro);
 	SV_SendServerCommand(NULL, "chat \"^1[Bar fight] ^7%s ^7started a bar fight: ^1%s^7! They can hurt you and you can hurt them.\"\n",
 		cl->name, k->name);
+	if (k->quote) {
+		SV_SendServerCommand(NULL, "chat \"%s\"\n", k->quote);
+	}
 	Com_Printf("Social mode: %s started a bar fight (%s, %d)\n", cl->name, k->name, gBarFight.toSpawn);
 	return qtrue;
+}
+
+// --- Our NPC types, kept with the engine --------------------------------------
+//
+// The bar fights' own NPC types (droids, 212th and 501st clones) are MBII
+// .npc data, which its game reads at start-up from every search path. So a
+// fresh or moved server needs no copying by hand, the engine writes them
+// into the instance's own MBII folder (fs_homepath/fs_game/ext_data/NPCs)
+// before each game starts, if missing or out of date. Called from
+// GVM_InitGame, ahead of MBII's NPC_LoadParms.
+#include "social_npcs/ca_cantina_npc.h"
+
+void SV_SocialEnsureNpcFiles(void)
+{
+	if (!g_socialMode || !g_socialMode->integer) {
+		return;
+	}
+	const char* dir = va("%s/%s/ext_data/NPCs", Cvar_VariableString("fs_homepath"), Cvar_VariableString("fs_game"));
+	char path[MAX_OSPATH];
+	Q_strncpyz(path, va("%s/ca_cantina.npc", dir), sizeof(path));
+
+	FILE* f = fopen(path, "rb");
+	if (f) {
+		char have[sizeof(kCaCantinaNpc) + 1];
+		const size_t n = fread(have, 1, sizeof(have), f);
+		fclose(f);
+		if (n == sizeof(kCaCantinaNpc) - 1 && !memcmp(have, kCaCantinaNpc, n)) {
+			return; // already there, and current
+		}
+	}
+	// mkdir -p, a level at a time.
+	char build[MAX_OSPATH];
+	Q_strncpyz(build, dir, sizeof(build));
+	for (char* c = build + 1; *c; c++) {
+		if (*c == '/') {
+			*c = '\0';
+			mkdir(build, 0755);
+			*c = '/';
+		}
+	}
+	mkdir(build, 0755);
+	f = fopen(path, "wb");
+	if (!f) {
+		Com_Printf("Social mode: couldn't write %s\n", path);
+		return;
+	}
+	fwrite(kCaCantinaNpc, 1, sizeof(kCaCantinaNpc) - 1, f);
+	fclose(f);
+	Com_Printf("Social mode: wrote %s\n", path);
 }
 
 void SV_SocialGameInit(void)
