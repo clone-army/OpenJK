@@ -1480,6 +1480,7 @@ static int SV_EconomyFindItemByName( const char *name ) {
 #define ECONOMY_HASH_SIZE			MD5_DIGEST_SIZE
 #define ECONOMY_LOGIN_MAX_ATTEMPTS	5
 #define ECONOMY_LOGIN_LOCKOUT_MS	60000
+#define ECONOMY_LOGIN_LOCKOUT_MAX_SECS	3600
 
 // Paced multi-line menu delivery for "!buy" - see SV_EconomyMenuBegin/
 // AddLine/Pump below. Must match client_t::economyMenuLines in server.h.
@@ -1601,40 +1602,92 @@ static void SV_EconomyAccountsPath( char *out, int outSize ) {
 		Cvar_VariableString( "fs_basepath" ), Cvar_VariableString( "fs_game" ), ECONOMY_ACCOUNTS_FILE );
 }
 
+// --- Account transactions ---------------------------------------------------
+//
+// Every server process shares economy_accounts.dat, and the web panel writes
+// it too. Loading under a shared lock and saving under a separate exclusive
+// one left a gap between the two where another process's change could land
+// and then be overwritten by our whole-file save - a lost registration, or
+// credits. Anything that changes an account instead runs between
+// SV_EconomyBegin and SV_EconomyEnd: one exclusive flock() held from the
+// re-read to the write, which Load and Save use instead of locking for
+// themselves. Nests, so a helper that opens its own transaction can be
+// called from inside another.
+static int svEconomyTxnFd = -1;
+static int svEconomyTxnDepth = 0;
+
+static void SV_EconomyBegin( void ) {
+	char filepath[MAX_OSPATH];
+
+	if ( svEconomyTxnDepth++ > 0 ) {
+		return;
+	}
+	SV_EconomyAccountsPath( filepath, sizeof( filepath ) );
+	svEconomyTxnFd = open( filepath, O_RDWR | O_CREAT, 0600 );
+	if ( svEconomyTxnFd < 0 ) {
+		Com_Printf( "Economy: failed to open %s\n", filepath );
+	} else if ( flock( svEconomyTxnFd, LOCK_EX ) != 0 ) {
+		Com_Printf( "Economy: failed to lock %s\n", filepath );
+		close( svEconomyTxnFd );
+		svEconomyTxnFd = -1;
+	}
+	// On failure Load and Save fall back to locking on their own.
+}
+
+static void SV_EconomyEnd( void ) {
+	if ( svEconomyTxnDepth <= 0 || --svEconomyTxnDepth > 0 ) {
+		return;
+	}
+	if ( svEconomyTxnFd >= 0 ) {
+		flock( svEconomyTxnFd, LOCK_UN );
+		close( svEconomyTxnFd );
+		svEconomyTxnFd = -1;
+	}
+}
+
 static void SV_EconomyAccountsLoad( void ) {
-	char filepath[MAX_QPATH];
+	char filepath[MAX_OSPATH];
 	int fd;
 	off_t filelen;
 	char *buf, *line, *nextline;
+	const qboolean inTxn = ( svEconomyTxnFd >= 0 ) ? qtrue : qfalse;
 
 	svEconomyAccountCount = 0;
 
-	SV_EconomyAccountsPath( filepath, sizeof( filepath ) );
+	if ( inTxn ) {
+		fd = svEconomyTxnFd;
+	} else {
+		SV_EconomyAccountsPath( filepath, sizeof( filepath ) );
 
-	fd = open( filepath, O_RDONLY );
-	if ( fd < 0 ) {
-		return;	// doesn't exist yet - nobody's registered anywhere yet
-	}
+		fd = open( filepath, O_RDONLY );
+		if ( fd < 0 ) {
+			return;	// doesn't exist yet - nobody's registered anywhere yet
+		}
 
-	if ( flock( fd, LOCK_SH ) != 0 ) {
-		Com_Printf( "Economy: failed to lock %s for reading\n", filepath );
-		close( fd );
-		return;
+		if ( flock( fd, LOCK_SH ) != 0 ) {
+			Com_Printf( "Economy: failed to lock %s for reading\n", filepath );
+			close( fd );
+			return;
+		}
 	}
 
 	filelen = lseek( fd, 0, SEEK_END );
 	lseek( fd, 0, SEEK_SET );
 
 	if ( filelen <= 0 ) {
-		flock( fd, LOCK_UN );
-		close( fd );
+		if ( !inTxn ) {
+			flock( fd, LOCK_UN );
+			close( fd );
+		}
 		return;
 	}
 
 	buf = (char *)Z_Malloc( (int)filelen + 1, TAG_TEMP_WORKSPACE );
 	filelen = read( fd, buf, (size_t)filelen );
-	flock( fd, LOCK_UN );
-	close( fd );
+	if ( !inTxn ) {
+		flock( fd, LOCK_UN );
+		close( fd );
+	}
 
 	if ( filelen <= 0 ) {
 		Z_Free( buf );
@@ -1682,22 +1735,27 @@ static void SV_EconomyAccountsEnsureLoaded( void ) {
 }
 
 static void SV_EconomyAccountsSave( void ) {
-	char filepath[MAX_QPATH];
+	char filepath[MAX_OSPATH];
 	int fd;
 	int i;
+	const qboolean inTxn = ( svEconomyTxnFd >= 0 ) ? qtrue : qfalse;
 
-	SV_EconomyAccountsPath( filepath, sizeof( filepath ) );
+	if ( inTxn ) {
+		fd = svEconomyTxnFd;
+	} else {
+		SV_EconomyAccountsPath( filepath, sizeof( filepath ) );
 
-	fd = open( filepath, O_WRONLY | O_CREAT, 0600 );
-	if ( fd < 0 ) {
-		Com_Printf( "SV_EconomyAccountsSave: failed to open %s for writing\n", filepath );
-		return;
-	}
+		fd = open( filepath, O_WRONLY | O_CREAT, 0600 );
+		if ( fd < 0 ) {
+			Com_Printf( "SV_EconomyAccountsSave: failed to open %s for writing\n", filepath );
+			return;
+		}
 
-	if ( flock( fd, LOCK_EX ) != 0 ) {
-		Com_Printf( "SV_EconomyAccountsSave: failed to lock %s for writing\n", filepath );
-		close( fd );
-		return;
+		if ( flock( fd, LOCK_EX ) != 0 ) {
+			Com_Printf( "SV_EconomyAccountsSave: failed to lock %s for writing\n", filepath );
+			close( fd );
+			return;
+		}
 	}
 
 	// Truncate under the lock rather than via O_TRUNC on open, so a
@@ -1721,8 +1779,10 @@ static void SV_EconomyAccountsSave( void ) {
 		if ( write( fd, line, (size_t)len ) != len ) { /* best-effort; nothing else to do here */ }
 	}
 
-	flock( fd, LOCK_UN );
-	close( fd );
+	if ( !inTxn ) {
+		flock( fd, LOCK_UN );
+		close( fd );
+	}
 }
 
 static economyAccount_t *SV_EconomyFindAccount( const char *handle ) {
@@ -1817,9 +1877,6 @@ static void SV_EconomySyncCredits( client_t *cl ) {
 	}
 }
 
-// Adds to an account's stored balance directly (raffle winnings, Pazaak
-// payouts to someone who's left). A logged-in session picks the change up
-// through SV_EconomyMergeExternal like any other outside change.
 // Lower-case letters and digits only: colours, spaces and clan-tag
 // punctuation dropped, so "CA[212]CE-Ricks" becomes "ca212cericks".
 static void SV_FuzzyNormalize( const char *in, char *out, int outSize ) {
@@ -1919,15 +1976,20 @@ client_t *SV_EconomyFindPlayer( client_t *asker, const char *query ) {
 	return NULL;
 }
 
+// Adds to an account's stored balance directly (raffle winnings, Pazaak
+// payouts to someone who's left). A logged-in session picks the change up
+// through SV_EconomyMergeExternal like any other outside change.
 qboolean SV_EconomyAddCreditsToAccount( const char *handle, int amount ) {
-	economyAccount_t *acct = SV_EconomyFindAccount( handle );
+	economyAccount_t *acct;
 
-	if ( !acct ) {
-		return qfalse;
+	SV_EconomyBegin();
+	acct = SV_EconomyFindAccount( handle );
+	if ( acct ) {
+		acct->credits += amount;
+		SV_EconomyAccountsSave();
 	}
-	acct->credits += amount;
-	SV_EconomyAccountsSave();
-	return qtrue;
+	SV_EconomyEnd();
+	return acct ? qtrue : qfalse;
 }
 
 void SV_EconomyPersistCredits( client_t *cl ) {
@@ -1937,15 +1999,15 @@ void SV_EconomyPersistCredits( client_t *cl ) {
 		return;
 	}
 
+	SV_EconomyBegin();
 	acct = SV_EconomyFindAccount( cl->economyHandle );
-	if ( !acct ) {
-		return;
+	if ( acct ) {
+		SV_EconomyMergeExternal( cl, acct );
+		acct->credits = cl->economyCredits;
+		cl->economyCreditsSynced = acct->credits;
+		SV_EconomyAccountsSave();
 	}
-
-	SV_EconomyMergeExternal( cl, acct );
-	acct->credits = cl->economyCredits;
-	cl->economyCreditsSynced = acct->credits;
-	SV_EconomyAccountsSave();
+	SV_EconomyEnd();
 }
 
 static qboolean SV_EconomyEnabled( void ) {
@@ -2160,7 +2222,11 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 	}
 
 	if ( chatCursor[0] != '!' ) {
-		return qfalse;
+		// A bare "help" is what new players type; answer it like !help.
+		if ( Q_stricmp( chatCursor, "help" ) ) {
+			return qfalse;
+		}
+		chatCursor = "!help";
 	}
 
 	chatCursor++;
@@ -2532,6 +2598,15 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 	if ( !Q_stricmp( commandName, "register" ) ) {
 		int argCount = sscanf( chatCursor, "%23s %15s", firstArg, secondArg );
 
+		// A new account starts from nothing but the welcome bonus - never
+		// from whatever balance the session is carrying, which is what let
+		// registering while logged in copy a whole balance into each new
+		// account.
+		if ( cl->economyHandle[0] ) {
+			SV_EconomyPrint( cl, va( "You're already logged in as '%s' - one account each.", cl->economyHandle ) );
+			return qtrue;
+		}
+
 		if ( argCount < 1 ) {
 			SV_EconomyPrint( cl, "Usage: !register <handle>, then !register <handle> <4-digit pin>" );
 			return qtrue;
@@ -2556,43 +2631,47 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 			return qtrue;
 		}
 
-		if ( SV_EconomyFindAccount( firstArg ) ) {
-			SV_EconomyPrint( cl, "That handle is taken. Choose another." );
-			return qtrue;
-		}
-
-		if ( svEconomyAccountCount >= ECONOMY_MAX_ACCOUNTS ) {
-			SV_EconomyPrint( cl, "Account storage is full. Contact an admin." );
-			return qtrue;
-		}
-
 		{
-			economyAccount_t *acct = &svEconomyAccounts[svEconomyAccountCount];
-			Com_Memset( acct, 0, sizeof( *acct ) );
+			const int bonus = g_economyRegisterBonus ? Q_max( 0, g_economyRegisterBonus->integer ) : 0;
+			economyAccount_t *acct = NULL;
+			const char *problem = NULL;
+			byte salt[ECONOMY_SALT_SIZE];
 
-			if ( !Sys_RandomBytes( acct->salt, ECONOMY_SALT_SIZE ) ) {
+			if ( !Sys_RandomBytes( salt, ECONOMY_SALT_SIZE ) ) {
 				SV_EconomyPrint( cl, "Registration failed (RNG error). Try again." );
 				return qtrue;
 			}
 
-			svEconomyAccountCount++;
-			Q_strncpyz( acct->handle, firstArg, sizeof( acct->handle ) );
-			SV_EconomyHashPin( acct->salt, secondArg, acct->hash );
-			// Welcome bonus: only ever here, since registering always makes a
-			// brand-new account.
-			const int bonus = g_economyRegisterBonus ? Q_max( 0, g_economyRegisterBonus->integer ) : 0;
-			cl->economyCredits += bonus;
-			acct->credits = cl->economyCredits;
-			cl->economyCreditsSynced = acct->credits;
+			SV_EconomyBegin();
+			if ( SV_EconomyFindAccount( firstArg ) ) {
+				problem = "That handle is taken. Choose another.";
+			} else if ( svEconomyAccountCount >= ECONOMY_MAX_ACCOUNTS ) {
+				problem = "Account storage is full. Contact an admin.";
+			} else {
+				acct = &svEconomyAccounts[svEconomyAccountCount++];
+				Com_Memset( acct, 0, sizeof( *acct ) );
+				Com_Memcpy( acct->salt, salt, ECONOMY_SALT_SIZE );
+				Q_strncpyz( acct->handle, firstArg, sizeof( acct->handle ) );
+				SV_EconomyHashPin( acct->salt, secondArg, acct->hash );
+				acct->credits = bonus;
+				SV_EconomyAccountsSave();
 
-			Q_strncpyz( cl->economyHandle, acct->handle, sizeof( cl->economyHandle ) );
-			SV_EconomyAccountsSave();
+				Q_strncpyz( cl->economyHandle, acct->handle, sizeof( cl->economyHandle ) );
+				cl->economyCredits = bonus;
+				cl->economyCreditsSynced = bonus;
+			}
+			SV_EconomyEnd();
 
-			SV_EconomyPrint( cl, va( "Registered! Logged in as '%s'. Use !login %s <pin> on future connects.", acct->handle, acct->handle ) );
+			if ( problem ) {
+				SV_EconomyPrint( cl, problem );
+				return qtrue;
+			}
+
+			SV_EconomyPrint( cl, va( "Registered! Logged in as '%s'. Use !login %s <pin> on future connects.", cl->economyHandle, cl->economyHandle ) );
 			{
 				// The welcome bonus is today's; the daily one starts tomorrow.
 				qboolean paid;
-				SV_EconomyDailyClaim( acct->handle, qtrue, &paid );
+				SV_EconomyDailyClaim( cl->economyHandle, qtrue, &paid );
 			}
 			if ( bonus > 0 ) {
 				SV_EconomyPrint( cl, va( "Welcome bonus: +%d credits! Balance: %d", bonus, cl->economyCredits ) );
@@ -2604,6 +2683,9 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 	if ( !Q_stricmp( commandName, "login" ) ) {
 		economyAccount_t *acct;
 		byte candidateHash[ECONOMY_HASH_SIZE];
+		const int now = (int)time( NULL );
+		char result[256] = "";
+		qboolean ok = qfalse;
 		int c;
 
 		if ( cl->economyHandle[0] ) {
@@ -2616,47 +2698,56 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 			return qtrue;
 		}
 
+		// Lockouts are wall-clock seconds (time()), since the file is shared
+		// by every server: they used to be svs.time, each process's own
+		// uptime in milliseconds, so a lockout meant hours on one server and
+		// nothing on another. Old svs.time values read as long past.
+		// failedAttempts keeps counting through lockouts until a good PIN,
+		// and each lockout doubles, up to an hour: a 4-digit PIN would
+		// otherwise fall to a patient script in under a day.
+		SV_EconomyBegin();
 		acct = SV_EconomyFindAccount( firstArg );
 		if ( !acct ) {
-			SV_EconomyPrint( cl, "No account with that handle." );
-			return qtrue;
-		}
-
-		if ( acct->lockoutUntil > 0 && svs.time < acct->lockoutUntil ) {
-			SV_EconomyPrint( cl, va( "Too many failed attempts. Try again in %d seconds.",
-				( acct->lockoutUntil - svs.time + 999 ) / 1000 ) );
-			return qtrue;
-		}
-
-		if ( !SV_EconomyValidatePin( secondArg ) ) {
-			SV_EconomyPrint( cl, "Incorrect PIN." );
-			return qtrue;
-		}
-
-		SV_EconomyHashPin( acct->salt, secondArg, candidateHash );
-
-		if ( !SV_EconomySecureCompare( acct->hash, candidateHash, ECONOMY_HASH_SIZE ) ) {
-			acct->failedAttempts++;
-			if ( acct->failedAttempts >= ECONOMY_LOGIN_MAX_ATTEMPTS ) {
-				acct->lockoutUntil = svs.time + ECONOMY_LOGIN_LOCKOUT_MS;
-				acct->failedAttempts = 0;
-				SV_EconomyAccountsSave();
-				SV_EconomyPrint( cl, "Too many failed attempts. Account locked for 60 seconds." );
-			} else {
-				SV_EconomyAccountsSave();
-				SV_EconomyPrint( cl, "Incorrect PIN." );
+			Q_strncpyz( result, "No account with that handle.", sizeof( result ) );
+		} else if ( acct->lockoutUntil > now ) {
+			Com_sprintf( result, sizeof( result ), "Too many failed attempts. Try again in %d seconds.", acct->lockoutUntil - now );
+		} else {
+			if ( SV_EconomyValidatePin( secondArg ) ) {
+				SV_EconomyHashPin( acct->salt, secondArg, candidateHash );
+				ok = SV_EconomySecureCompare( acct->hash, candidateHash, ECONOMY_HASH_SIZE );
 			}
+			if ( !ok ) {
+				acct->failedAttempts++;
+				if ( acct->failedAttempts % ECONOMY_LOGIN_MAX_ATTEMPTS == 0 ) {
+					const int lockouts = acct->failedAttempts / ECONOMY_LOGIN_MAX_ATTEMPTS;
+					const int secs = Q_min( ECONOMY_LOGIN_LOCKOUT_MAX_SECS,
+						( ECONOMY_LOGIN_LOCKOUT_MS / 1000 ) << Q_min( lockouts - 1, 10 ) );
+					acct->lockoutUntil = now + secs;
+					Com_sprintf( result, sizeof( result ), "Too many failed attempts. Account locked for %d seconds.", secs );
+				} else {
+					Q_strncpyz( result, "Incorrect PIN.", sizeof( result ) );
+				}
+			} else {
+				acct->failedAttempts = 0;
+				acct->lockoutUntil = 0;
+				Q_strncpyz( cl->economyHandle, acct->handle, sizeof( cl->economyHandle ) );
+				cl->economyCredits = acct->credits;
+				cl->economyCreditsSynced = acct->credits;
+			}
+			SV_EconomyAccountsSave();
+		}
+		SV_EconomyEnd();
+
+		if ( !ok ) {
+			SV_EconomyPrint( cl, result );
 			return qtrue;
 		}
 
-		// success: clear any lockout state and kick any other session already logged into this handle
-		acct->failedAttempts = 0;
-		acct->lockoutUntil = 0;
-
+		// Log out any other session on this server already on this handle.
 		for ( c = 0; c < sv_maxclients->integer; c++ ) {
 			client_t *other = &svs.clients[c];
 			if ( other != cl && other->state >= CS_CONNECTED && other->economyHandle[0] &&
-				!Q_stricmp( other->economyHandle, acct->handle ) ) {
+				!Q_stricmp( other->economyHandle, cl->economyHandle ) ) {
 				SV_EconomyPrint( other, "You were logged out because your account logged in elsewhere." );
 				other->economyHandle[0] = '\0';
 				// Clearing the handle alone leaves economyCredits holding a
@@ -2665,20 +2756,12 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 				// not login state, so without this a still-connected kicked
 				// session could keep spending (or losing to a bounty
 				// payout) credits that are also live on whichever session
-				// just logged in. Real risk now that accounts are shared
-				// across every instance: logging in on a second server
-				// while already logged in on a first is an ordinary thing
-				// to do, not an edge case.
+				// just logged in.
 				other->economyCredits = 0;
 			}
 		}
 
-		Q_strncpyz( cl->economyHandle, acct->handle, sizeof( cl->economyHandle ) );
-		cl->economyCredits = acct->credits;
-		cl->economyCreditsSynced = acct->credits;
-		SV_EconomyAccountsSave();
-
-		SV_EconomyPrint( cl, va( "Logged in as '%s'. Balance: %d credits.", acct->handle, cl->economyCredits ) );
+		SV_EconomyPrint( cl, va( "Logged in as '%s'. Balance: %d credits.", cl->economyHandle, cl->economyCredits ) );
 
 		if ( g_economyDailyBonus && g_economyDailyBonus->integer > 0 ) {
 			qboolean paid;
@@ -3241,7 +3324,11 @@ void SV_EconomyFrame( void ) {
 				// set via !register/!login) - an unregistered attacker's kill simply
 				// isn't rewarded, and any bounty on the victim is left intact rather
 				// than being consumed by a kill nobody could actually collect it from.
-				if ( attacker->state >= CS_ACTIVE && attacker->gentity && attacker->gentity->playerState ) {
+				// No kill rewards on a social server: the only kills there are
+				// duels, and two friends could duel each other for credits
+				// all night.
+				if ( attacker->state >= CS_ACTIVE && attacker->gentity && attacker->gentity->playerState &&
+					!( g_socialMode && g_socialMode->integer ) ) {
 					if ( attacker->economyHandle[0] ) {
 						attacker->economyCredits += kEconomyKillReward;
 						SV_EconomyPrint( attacker, va( "Kill reward: +%d credits (balance: %d)", kEconomyKillReward, attacker->economyCredits ) );
