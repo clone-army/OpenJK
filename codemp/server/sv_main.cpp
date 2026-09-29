@@ -86,6 +86,11 @@ cvar_t* g_jukeboxCost;
 cvar_t* g_jukeboxCooldown;
 cvar_t* g_economyPazaakEnable;
 cvar_t* g_economyChanceEnable;
+cvar_t* g_economyBartenderEnable;
+cvar_t* g_bartenderCost;
+cvar_t* g_bartenderCooldown;
+cvar_t* g_bartenderDailyCap;
+cvar_t* g_bartenderPublic;
 cvar_t* g_economyBetEnable;
 cvar_t* g_betWindowSeconds;
 cvar_t* g_betMax;
@@ -735,7 +740,9 @@ void SVC_RemoteCommand( netadr_t from, msg_t *msg ) {
 		Com_Printf ("Bad rcon from %s: %s\n", NET_AdrToString (from), Cmd_ArgsFrom(2) );
 	} else {
 		valid = qtrue;
-		Com_Printf ("Rcon from %s: %s\n", NET_AdrToString (from), Cmd_ArgsFrom(2) );
+		if ( Q_stricmpn( Cmd_Argv(2), "bartender", 9 ) ) {	// the bartender plugin's polls and replies
+			Com_Printf ("Rcon from %s: %s\n", NET_AdrToString (from), Cmd_ArgsFrom(2) );
+		}
 	}
 
 	// start redirecting all print outputs to the packet
@@ -1301,6 +1308,7 @@ void SV_Frame( int msec ) {
 	SV_BetFrame();
 	SV_EmotesFrame();
 	SV_RaffleFrame();
+	SV_BartenderFrame();
 
 	// gun game: kill-detection and weapon enforcement
 	SV_GunGameFrame();

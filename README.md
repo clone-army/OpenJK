@@ -157,6 +157,22 @@ in chat; the map's own music comes back next round. See `codemp/server/jukebox.c
 
 Player names in `!bet`, `!gift`, `!bounty`, `!pazaak` and `!chance` are matched fuzzily: case, colours and clan-tag punctuation don't matter, part of the name is enough, and even the letters in order will do (`cdy` for Cody). The closest match wins; a tie lists the players and asks for more of the name.
 
+### Bartender
+
+`!bartender <question>` (or `!barkeep`) asks the Cantina's bartender anything, for `g_bartenderCost` credits. The
+answer comes from an AI model called by MBIIEZ's creditsystem plugin, which holds the API key: the plugin collects
+questions with the rcon command `bartenderpoll` and answers each with `bartenderreply <id> <answer>` (or `!fail`,
+which refunds). Anything unanswered after 60 seconds is refunded, and nobody is charged if the plugin hasn't polled
+in the last 10 seconds.
+
+| Cvar | Default | Meaning |
+|---|---|---|
+| `g_economyBartenderEnable` | `0` | On/off; the plugin turns it on only when it has an API key |
+| `g_bartenderCost` | `5` | Credits a question |
+| `g_bartenderCooldown` | `60` | Seconds between one player's questions |
+| `g_bartenderDailyCap` | `300` | Most questions answered a day on this server (`0` = no cap) |
+| `g_bartenderPublic` | `1` | `1` everyone sees questions and answers, `0` only the asker |
+
 ### Pazaak
 
 `!pazaak <player> <credits>` challenges someone to KOTOR's card game; they `!pazaak accept` or `!pazaak decline` within 60 seconds. Both stakes are taken on accept and the winner gets the pot. The server deals from a 1-10 deck and each player gets four side cards (+1..+6 or -1..-6). On your turn you're dealt a card, may `!pz play <n>` one side card, then `!pz end` or `!pz stand` - or `!pz auto` to let the server play the turn for you. `!pazaak` and `!pz` are interchangeable. Over 20 is a bust; closest to 20 wins the set, first to two sets wins. Turns time out after 30 seconds (you stand); leaving or `!pz forfeit` loses. See `codemp/server/pazaak.cpp`.
