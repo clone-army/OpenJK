@@ -150,6 +150,7 @@ static void (*gEngageDuel)(void* ent) = NULL;
 static void (*gCheckPrivateDuel)(void* ent) = NULL;
 static void (*gSetTeam)(void* ent, char* team) = NULL;
 static void* (*gNPCSpawnType)(void* ent, char* type, char* targetname, int isVehicle, int asIfPlayer, int siegeTeam) = NULL;
+static void (*gFreeEntity)(void* ent) = NULL;
 static vmCvar_t* gAuthenticity = NULL;
 static int* gRebelTimeLimit = NULL;
 static int* gImperialTimeLimit = NULL;
@@ -824,6 +825,7 @@ typedef struct {
 	float  yaw;
 	int    ent;        // entity number once spawned, -1 before
 	int    nextTry;
+	int    deadAt;     // when it was seen dead (0 = alive)
 } socialNpc_t;
 
 static socialNpc_t gSocialNpcs[SOCIAL_MAX_NPCS];
@@ -899,6 +901,27 @@ static void Social_NpcFrame(void)
 		socialNpc_t* n = &gSocialNpcs[i];
 
 		if (Social_NpcAlive(n)) {
+			playerState_t* body = SV_GentityNum(n->ent)->playerState;
+			// Dead - players can still kill it in ways that never reach
+			// G_Damage (a grapple throw did): clear the body away after a
+			// moment, as MBII's own NPC_RemoveBody would, and a fresh one
+			// spawns in its place.
+			if (body->stats[STAT_HEALTH] <= 0 || body->pm_type == MB2_PM_DEAD) {
+				if (!n->deadAt) {
+					n->deadAt = svs.time;
+				} else if (svs.time - n->deadAt > 3000 && gFreeEntity) {
+					void* old = GVM_BeginNative();
+					gFreeEntity(SV_GentityNum(n->ent));
+					GVM_EndNative(old);
+					Com_Printf("Social mode: NPC \"%s\" died - bringing it back\n", n->type);
+					n->ent = -1;
+					n->deadAt = 0;
+					n->nextTry = 0;
+				}
+				continue;
+			}
+			n->deadAt = 0;
+
 			// Held on the spot across the floor only - height is left to
 			// gravity (pinning that too bounced it, dropping to the floor
 			// and being put back up) - and only once it's drifted a way and
@@ -947,6 +970,7 @@ void SV_SocialGameInit(void)
 	for (int i = 0; i < SOCIAL_MAX_NPCS; i++) {
 		gSocialNpcs[i].ent = -1;
 		gSocialNpcs[i].nextTry = 0;
+		gSocialNpcs[i].deadAt = 0;
 	}
 
 	void* dll = GVM_GetDllHandle();
@@ -963,6 +987,7 @@ void SV_SocialGameInit(void)
 		gCheckPrivateDuel = (void (*)(void*))Sys_LoadFunction(dll, "G_CheckPrivateDuel");
 		gSetTeam = (void (*)(void*, char*))Sys_LoadFunction(dll, "SetTeam");
 		gNPCSpawnType = (void* (*)(void*, char*, char*, int, int, int))Sys_LoadFunction(dll, "NPC_SpawnType");
+		gFreeEntity = (void (*)(void*))Sys_LoadFunction(dll, "G_FreeEntity");
 		gAuthenticity = (vmCvar_t*)Sys_LoadFunction(dll, "g_Authenticity");
 		gRebelTimeLimit = (int*)Sys_LoadFunction(dll, "rebel_time_limit");
 		gImperialTimeLimit = (int*)Sys_LoadFunction(dll, "imperial_time_limit");
