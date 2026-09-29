@@ -468,3 +468,28 @@ CA_Vizsla
 	walkSpeed	60
 	runSpeed	240
 }
+
+// --- 212th ARC trooper: leads the 212th raid ---
+
+CA_212ARC
+{
+	playerModel	clonetrooper_p2
+	customSkin	arc_yellow
+	weapon		WP_CLONE_RIFLE
+	altFire		1
+	health		150
+	armor		50
+	reactions	5
+	aim		5
+	move		5
+	aggression	5
+	evasion		4
+	intelligence	5
+	rank		ensign
+	playerTeam	TEAM_FREE
+	enemyTeam	TEAM_PLAYER
+	class		CLASS_STORMTROOPER
+	yawspeed	100
+	walkSpeed	60
+	runSpeed	230
+}
