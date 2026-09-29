@@ -151,6 +151,7 @@ static void (*gCheckPrivateDuel)(void* ent) = NULL;
 static void (*gSetTeam)(void* ent, char* team) = NULL;
 static void* (*gNPCSpawnType)(void* ent, char* type, char* targetname, int isVehicle, int asIfPlayer, int siegeTeam) = NULL;
 static void (*gFreeEntity)(void* ent) = NULL;
+static void (*gSetEnemy)(void* self, void* enemy) = NULL;
 static vmCvar_t* gAuthenticity = NULL;
 static int* gRebelTimeLimit = NULL;
 static int* gImperialTimeLimit = NULL;
@@ -1115,16 +1116,17 @@ typedef struct {
 	const char* types[4];
 	int base, perPlayer, max;     // how many: base + perPlayer * players, up to max
 	const char* music;            // plays while it's on
+	float spacing;                // how far apart they arrive - beasts are big
 } barFightKind_t;
 
 // Only types MBII spawns as NPCs: most armed TEAM_FREE ones (droideka,
 // espo, dxun_g0t0, maxrebo...) are vehicles and are refused.
 static const barFightKind_t kBarFights[] = {
-	{ "Thugs",   "Noghri assassins storm the cantina!", { "noghri", NULL },                 2, 1, 8, BARFIGHT_MUSIC },
-	{ "Beasts",  "Something's escaped from the cellar!", { "nexu", "howler", "BomaBeast", NULL }, 3, 0, 3, BARFIGHT_MUSIC },
-	{ "Rancor",  "A rancor's got loose in the bar!",   { "rancor", NULL },                  1, 0, 1, BARFIGHT_MUSIC },
-	{ "Wampas",  "Wampas want a drink!",               { "wampa", NULL },                   2, 0, 3, BARFIGHT_MUSIC },
-	{ "Horrors", "Horrors crawl out of the swamp!",    { "selkath_zombie", "ice_spider", "acklaymb", NULL }, 3, 0, 3, BARFIGHT_MUSIC },
+	{ "Thugs",   "Noghri assassins storm the cantina!", { "noghri", NULL },                 2, 1, 8, BARFIGHT_MUSIC, 64.0f },
+	{ "Beasts",  "Something's escaped from the cellar!", { "nexu", "howler", "BomaBeast", NULL }, 3, 0, 3, BARFIGHT_MUSIC, 140.0f },
+	{ "Rancor",  "A rancor's got loose in the bar!",   { "rancor", NULL },                  1, 0, 1, BARFIGHT_MUSIC, 0.0f },
+	{ "Wampas",  "Wampas want a drink!",               { "wampa", NULL },                   2, 0, 3, BARFIGHT_MUSIC, 110.0f },
+	{ "Horrors", "Horrors crawl out of the swamp!",    { "selkath_zombie", "ice_spider", "acklaymb", NULL }, 3, 0, 3, BARFIGHT_MUSIC, 120.0f },
 };
 
 static struct {
@@ -1136,6 +1138,7 @@ static struct {
 	int    ents[BARFIGHT_MAX];
 	int    spawnedAt[BARFIGHT_MAX];
 	int    count;
+	int    nextHunt;
 	vec3_t origin;
 	float  yaw;
 	int    cooldownUntil;
@@ -1235,12 +1238,15 @@ static void Social_BarFightFrame(void)
 			while (types < 4 && k->types[types]) {
 				types++;
 			}
-			// A spread around the spawn point, so they don't land in each other.
+			// In a line going into the room (along the spawn point's facing),
+			// staggered side to side, spaced for their size.
 			const int n = gBarFight.spawned;
+			const float yawRad = DEG2RAD(gBarFight.yaw);
+			const float fwd = k->spacing * (n / 2), side = (n % 2) ? k->spacing * 0.5f : -k->spacing * 0.5f * (n > 0);
 			vec3_t org;
 			VectorCopy(gBarFight.origin, org);
-			org[0] += ((n % 3) - 1) * 48.0f;
-			org[1] += (((n / 3) % 3) - 1) * 48.0f;
+			org[0] += cosf(yawRad) * fwd - sinf(yawRad) * side;
+			org[1] += sinf(yawRad) * fwd + cosf(yawRad) * side;
 
 			playerState_t* pps = spawner->gentity->playerState;
 			const float savedYaw = pps->viewangles[YAW];
@@ -1268,6 +1274,38 @@ static void Social_BarFightFrame(void)
 		}
 		gBarFight.nextSpawn = svs.time + 700;
 		return;
+	}
+
+	if (gSetEnemy && svs.time >= gBarFight.nextHunt) {
+		gBarFight.nextHunt = svs.time + 2000;
+		for (int i = 0; i < gBarFight.count; i++) {
+			if (!Social_FightNpcUp(gBarFight.ents[i])) {
+				continue;
+			}
+			sharedEntity_t* npc = SV_GentityNum(gBarFight.ents[i]);
+			client_t* nearest = NULL;
+			float best = 0.0f;
+			for (int c = 0; c < sv_maxclients->integer; c++) {
+				client_t* cl = &svs.clients[c];
+				if (cl->state != CS_ACTIVE || !cl->gentity || !cl->gentity->playerState ||
+					!Social_IsSpawned(cl->gentity->playerState, c) || cl->gentity->playerState->stats[STAT_HEALTH] <= 0 ||
+					cl->gentity->playerState->duelInProgress) {
+					continue;
+				}
+				const float d = DistanceSquared(cl->gentity->playerState->origin, npc->playerState->origin);
+				if (!nearest || d < best) {
+					nearest = cl;
+					best = d;
+				}
+			}
+			if (nearest) {
+				// G_SetEnemy only takes it if the NPC has no enemy yet, so
+				// one already in a fight carries on with it.
+				void* old = GVM_BeginNative();
+				gSetEnemy(npc, nearest->gentity);
+				GVM_EndNative(old);
+			}
+		}
 	}
 
 	if (gBarFight.toSpawn <= 0) {
@@ -1385,6 +1423,7 @@ void SV_SocialGameInit(void)
 		gSetTeam = (void (*)(void*, char*))Sys_LoadFunction(dll, "SetTeam");
 		gNPCSpawnType = (void* (*)(void*, char*, char*, int, int, int))Sys_LoadFunction(dll, "NPC_SpawnType");
 		gFreeEntity = (void (*)(void*))Sys_LoadFunction(dll, "G_FreeEntity");
+		gSetEnemy = (void (*)(void*, void*))Sys_LoadFunction(dll, "G_SetEnemy");
 		gAuthenticity = (vmCvar_t*)Sys_LoadFunction(dll, "g_Authenticity");
 		gRebelTimeLimit = (int*)Sys_LoadFunction(dll, "rebel_time_limit");
 		gImperialTimeLimit = (int*)Sys_LoadFunction(dll, "imperial_time_limit");
