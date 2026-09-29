@@ -276,8 +276,10 @@ typedef struct {
 		int until;
 		int nextPuff;
 	} fx[BAR_MAX_FX];
-	int hazeUntil;          // Spice: woozy sway and red vision until then
-	int hazeSwayYaw;        // Spice: its own sway offset, like swayYaw
+	int hazeUntil;          // Spice: red vision until then
+	int tipsyUntil;         // any drink: a gentle sway until then
+	float tipsySize;        // ...this big, as a share of one whiskey's
+	int hazeSwayYaw;        // the tipsy sway's own offset, like swayYaw
 	int hazeSwayPitch;
 	qboolean hazeSightAdded; // Spice: FP_DEADLYSIGHT set for the snapshot being sent
 } barState_t;
@@ -418,6 +420,30 @@ static void Bar_StartEffect(client_t* cl, barState_t* st, const barDrink_t* d, b
 	st->until[effect] = until;
 }
 
+// How much each drink sways you, as a share of one Corellian Whiskey's
+// sway (which has its own, escalating sway on top). Every further drink
+// while you're still swaying adds a little more.
+static float Bar_WobbleFor(const char* id)
+{
+	static const struct { const char* id; float wobble; } kWobble[] = {
+		{ "gungan_grog", 0.5f }, { "backwards_brandy", 0.5f },
+		{ "tatooine_twister", 0.4f }, { "runaway_rum", 0.4f }, { "death_stick", 0.4f },
+		{ "spice", 0.35f }, { "bantha_sludge", 0.35f }, { "low_ceiling_lager", 0.35f },
+		{ "jawa_juice", 0.3f }, { "spotchka", 0.3f }, { "mustafar_magma", 0.3f }, { "ion_fizz", 0.3f },
+		{ "bubble_brew", 0.25f },
+		{ "moon_milk", 0.2f }, { "sugar_rush", 0.2f }, { "hoth_chiller", 0.2f },
+	};
+	for (size_t i = 0; i < ARRAY_LEN(kWobble); i++) {
+		if (!Q_stricmp(kWobble[i].id, id)) {
+			return kWobble[i].wobble;
+		}
+	}
+	return 0.0f;
+}
+
+#define BAR_TIPSY_STACK   0.1f   // added per further drink while swaying
+#define BAR_TIPSY_MAX     1.2f
+
 static void Bar_Apply(client_t* cl, int drink)
 {
 	const barDrink_t* d = &kBarDrinks[drink];
@@ -465,6 +491,17 @@ static void Bar_Apply(client_t* cl, int drink)
 	}
 	if (!Q_stricmp(d->id, "spice")) {
 		st->hazeUntil = until;
+	}
+
+	const float wobble = Bar_WobbleFor(d->id);
+	if (wobble > 0.0f) {
+		if (st->tipsyUntil > svs.time) {
+			const float bigger = (st->tipsySize > wobble ? st->tipsySize : wobble) + BAR_TIPSY_STACK;
+			st->tipsySize = (bigger < BAR_TIPSY_MAX) ? bigger : BAR_TIPSY_MAX;
+		} else {
+			st->tipsySize = wobble;
+		}
+		st->tipsyUntil = (st->tipsyUntil > until) ? st->tipsyUntil : until;
 	}
 }
 
@@ -678,17 +715,19 @@ static void Bar_DrunkFrame(client_t* cl, barState_t* st)
 	st->swayPitch = wantPitch;
 }
 
-// Spice: a slow, gentle wooze - a third of a whiskey's sway - with its
-// own offset so it comes off cleanly whether or not whiskey's on top.
+// Any drink: a slow sway, tipsySize times one whiskey's, on waves out of
+// step with whiskey's own - with its own offset, so it comes off cleanly
+// whether or not whiskey's on top.
 static void Bar_HazeFrame(client_t* cl, barState_t* st)
 {
 	playerState_t* ps = cl->gentity->playerState;
 	int wantYaw = 0, wantPitch = 0;
 
-	if (st->hazeUntil > svs.time) {
+	if (st->tipsyUntil > svs.time) {
 		const float t = svs.time / 1000.0f;
-		wantYaw = ANGLE2SHORT(7.0f * sinf(t * 0.9f) + 3.0f * sinf(t * 2.1f));
-		wantPitch = ANGLE2SHORT(3.5f * sinf(t * 0.7f) + 1.5f * sinf(t * 1.9f));
+		const float size = st->tipsySize;
+		wantYaw = ANGLE2SHORT(size * (24.0f * sinf(t * 0.9f) + 10.0f * sinf(t * 2.1f)));
+		wantPitch = ANGLE2SHORT(size * (12.0f * sinf(t * 0.7f) + 5.0f * sinf(t * 1.9f)));
 	}
 	ps->delta_angles[YAW] += wantYaw - st->hazeSwayYaw;
 	ps->delta_angles[PITCH] += wantPitch - st->hazeSwayPitch;
@@ -789,7 +828,7 @@ static qboolean Bar_AnythingActive(const barState_t* st)
 		}
 	}
 	// (A spice sway still to undo counts, so the frame gets to undo it.)
-	return (st->hazeUntil > svs.time || st->hazeSwayYaw || st->hazeSwayPitch) ? qtrue : qfalse;
+	return (st->hazeUntil > svs.time || st->tipsyUntil > svs.time || st->hazeSwayYaw || st->hazeSwayPitch) ? qtrue : qfalse;
 }
 
 // Tells everyone what killed them once it actually does.
