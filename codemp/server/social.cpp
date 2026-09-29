@@ -170,6 +170,10 @@ struct socialJoinState_t {
 	int lastSpawnedAt;                    // last frame seen on a team
 	int lastSpawnCmdAt;                   // !spawn cooldown
 	int spawnCmdTries;                    // !spawn presses since last spawned
+	int enteredAt;                        // first seen in the game this connection/map
+	qboolean choseSpectator;              // went to spectator on purpose - leave them be
+	qboolean autoSpawned;                 // g_socialAutoSpawn has put them in once
+	int lastKillAt;                       // !kill cooldown
 	int botSide;                          // bots: pending side, TEAM_RED/TEAM_BLUE, 0 = none
 };
 
@@ -494,12 +498,14 @@ void SV_SocialClientCommand(client_t* cl)
 		Q_strncpyz(js->siegeClassCmd, Cmd_Cmd(), sizeof(js->siegeClassCmd));
 		js->pickedAt = svs.time;
 		js->rescues = 0;
+		js->choseSpectator = qfalse;
 	}
 	else if (!Q_stricmp(cmd, "team")) {
 		// Choosing to spectate means they don't want pulling back in.
 		const char* team = Cmd_Argv(1);
 		if (!Q_stricmp(team, "spectator") || !Q_stricmp(team, "s") || !Q_stricmp(team, "follow1") || !Q_stricmp(team, "follow2")) {
 			js->siegeClassCmd[0] = '\0';
+			js->choseSpectator = qtrue;
 		}
 	}
 }
@@ -608,6 +614,8 @@ static const char* Social_ClassDisplayName(const char* classCmd)
 	return name;
 }
 
+static const char* Social_SpawnPlayer(client_t* cl);
+
 static void Social_RescueStuckJoiners(void)
 {
 	if (!gSiegeRoundBegun) {
@@ -665,6 +673,24 @@ static void Social_RescueStuckJoiners(void)
 			continue;
 		}
 
+		// Joined but not in the game after g_socialAutoSpawn seconds: put
+		// them in, as !spawn would - once, and never anyone who chose to
+		// spectate. The class menu is still there to change class.
+		if (!js->enteredAt) {
+			js->enteredAt = svs.time;
+		}
+		const int autoMs = (g_socialAutoSpawn ? g_socialAutoSpawn->integer : 0) * 1000;
+		if (Social_Enabled() && autoMs > 0 && roundBegun && !js->autoSpawned && !js->choseSpectator &&
+			!js->lastSpawnedAt && svs.time - js->enteredAt >= autoMs &&
+			!(js->siegeClassCmd[0] && svs.time - js->pickedAt < timerMs + SOCIAL_STUCK_GRACE_MS)) {
+			js->autoSpawned = qtrue;
+			const char* cls = Social_SpawnPlayer(cl);
+			Com_Printf("Social mode: client %d (%s) not in the game after %ds - auto-spawning as %s\n",
+				i, cl->name, autoMs / 1000, cls);
+			SV_SendServerCommand(cl, "chat \"^5[Social]^7 Putting you in as ^3%s^7 - pick your own class from the menu any time.\"\n", cls);
+			continue;
+		}
+
 		if (!Social_Enabled() || !js->siegeClassCmd[0]) {
 			continue;
 		}
@@ -693,12 +719,55 @@ static void Social_RescueStuckJoiners(void)
 	}
 }
 
+// Into the game as their own class pick, or (none, or it already failed)
+// a class on the emptier side. Returns the class it used, for messages.
+static const char* Social_SpawnPlayer(client_t* cl)
+{
+	socialJoinState_t* js = &gJoinState[cl - svs.clients];
+	const qboolean ownPick = (js->siegeClassCmd[0] && js->spawnCmdTries == 0) ? qtrue : qfalse;
+	if (!ownPick) {
+		Social_PickBotClass(cl - svs.clients);
+	}
+	js->spawnCmdTries++;
+	Social_JoinWithClass(cl, js->siegeClassCmd);
+	return Social_ClassDisplayName(js->siegeClassCmd);
+}
+
 // "!spawn": gets a player stuck in spectator into the game - their own
 // class pick the first time, a class on the emptier side after that (or if
 // they never picked one). qfalse (pass through as chat) off social servers.
+static qboolean Social_KillCommand(client_t* cl)
+{
+	socialJoinState_t* js = &gJoinState[cl - svs.clients];
+	const playerState_t* ps = cl->gentity ? cl->gentity->playerState : NULL;
+
+	if (!ps || !Social_IsSpawned(ps, cl - svs.clients)) {
+		SV_SendServerCommand(cl, "chat \"^5[Social]^7 You're not in the game - ^5!spawn ^7gets you in.\"\n");
+		return qtrue;
+	}
+	if (ps->duelInProgress) {
+		SV_SendServerCommand(cl, "chat \"^5[Social]^7 Not in the middle of a duel - finish it first.\"\n");
+		return qtrue;
+	}
+	if (js->lastKillAt && svs.time - js->lastKillAt < 5000) {
+		return qtrue;
+	}
+	js->lastKillAt = svs.time;
+	// MBII's own /kill: a normal death, then the usual respawn timer.
+	Cmd_TokenizeString("kill");
+	GVM_ClientCommand(cl - svs.clients);
+	return qtrue;
+}
+
 qboolean SV_SocialSpawnCommand(client_t* cl, const char* command)
 {
-	if (Q_stricmp(command, "spawn") || !Social_Enabled()) {
+	if (!Social_Enabled()) {
+		return qfalse;
+	}
+	if (!Q_stricmp(command, "kill")) {
+		return Social_KillCommand(cl);
+	}
+	if (Q_stricmp(command, "spawn")) {
 		return qfalse;
 	}
 	const int i = cl - svs.clients;
@@ -718,19 +787,13 @@ qboolean SV_SocialSpawnCommand(client_t* cl, const char* command)
 	js->lastSpawnCmdAt = svs.time;
 
 	const qboolean ownPick = (js->siegeClassCmd[0] && js->spawnCmdTries == 0) ? qtrue : qfalse;
-	if (!ownPick) {
-		Social_PickBotClass(i);
-	}
-	js->spawnCmdTries++;
-	Com_Printf("Social mode: client %d (%s) used !spawn - joining as %s\n", i, cl->name, Social_ClassDisplayName(js->siegeClassCmd));
-
+	const char* cls = Social_SpawnPlayer(cl);
+	Com_Printf("Social mode: client %d (%s) used !spawn - joining as %s\n", i, cl->name, cls);
 	if (ownPick) {
-		SV_SendServerCommand(cl, "chat \"^5[Social]^7 Getting you in as ^3%s^7...\"\n", Social_ClassDisplayName(js->siegeClassCmd));
+		SV_SendServerCommand(cl, "chat \"^5[Social]^7 Getting you in as ^3%s^7...\"\n", cls);
 	} else {
-		SV_SendServerCommand(cl, "chat \"^5[Social]^7 Getting you in as ^3%s^7 - pick your own class from the menu any time.\"\n",
-			Social_ClassDisplayName(js->siegeClassCmd));
+		SV_SendServerCommand(cl, "chat \"^5[Social]^7 Getting you in as ^3%s^7 - pick your own class from the menu any time.\"\n", cls);
 	}
-	Social_JoinWithClass(cl, js->siegeClassCmd);
 	if (gSiegeRoundBegun && !*gSiegeRoundBegun) {
 		SV_SendServerCommand(cl, "chat \"^5[Social]^7 The round's about to start - you'll spawn when it does.\"\n");
 	}
