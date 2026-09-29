@@ -1506,7 +1506,7 @@ typedef struct {
 // Only types MBII spawns as NPCs: most armed TEAM_FREE ones (droideka,
 // espo, dxun_g0t0, maxrebo...) are vehicles and are refused.
 static const barFightKind_t kBarFights[] = {
-	{ "Thugs",   "Noghri assassins storm the cantina!", { "noghri", NULL },                 2, 1, 12, BARFIGHT_MUSIC, 64.0f },
+	{ "Thugs",   "Noghri assassins storm the cantina!", { "noghri", NULL },                 3, 2, 20, BARFIGHT_MUSIC, 64.0f },
 	{ "Beasts",  "Something's escaped from the cellar!", { "nexu", "howler", "BomaBeast", NULL }, 3, 0, 3, BARFIGHT_MUSIC, 140.0f },
 	{ "Rancor",  "A rancor's got loose in the bar!",   { "rancor", NULL },                  1, 0, 1, BARFIGHT_MUSIC, 0.0f },
 	{ "Wampas",  "Wampas want a drink!",               { "wampa", NULL },                   2, 0, 3, BARFIGHT_MUSIC, 110.0f },
@@ -1690,6 +1690,20 @@ static void Social_BarFightFrame(void)
 					}
 					if (routes) {
 						Q_strncpyz(gBarFight.route[gBarFight.count], list[gBarFight.count % routes], sizeof(gBarFight.route[0]));
+						// Joined at its point nearest where this one arrives,
+						// not its first - spawns are spread about the room.
+						socialRoute_t* r = Social_FindRoute(gBarFight.route[gBarFight.count], qfalse);
+						gBarFight.wp[gBarFight.count] = 0;
+						if (r) {
+							float best = 0.0f;
+							for (int p = 0; p < r->count; p++) {
+								const float d = DistanceSquared(r->pts[p], org);
+								if (!p || d < best) {
+									best = d;
+									gBarFight.wp[gBarFight.count] = p;
+								}
+							}
+						}
 					}
 				}
 				gBarFight.ents[gBarFight.count++] = e->s.number;
@@ -1881,7 +1895,10 @@ qboolean SV_SocialBarFightCommand(client_t* cl, const char* args)
 	const barFightKind_t* k = &kBarFights[pick];
 	memset(&gBarFight, 0, sizeof(gBarFight));
 	gBarFight.kind = pick;
-	gBarFight.toSpawn = Q_min(k->max, k->base + k->perPlayer * players);
+	// More players, more of them - with a little randomness for the ones
+	// that scale (soldiers: 3 to 20); creatures keep their few.
+	gBarFight.toSpawn = k->base + k->perPlayer * players + (k->perPlayer ? Q_irand(-1, 2) : 0);
+	gBarFight.toSpawn = Q_max(k->perPlayer ? 3 : 1, Q_min(k->max, gBarFight.toSpawn));
 	gBarFight.toSpawn = Q_min(gBarFight.toSpawn, BARFIGHT_MAX);
 	gBarFight.nextSpawn = svs.time + 1500; // the regulars clear out first
 	gBarFight.ends = svs.time + 1000 * Q_max(30, g_barFightSeconds ? g_barFightSeconds->integer : 180);
