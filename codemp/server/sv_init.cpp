@@ -1116,6 +1116,8 @@ void SV_Init (void) {
 	g_socialMode->flags &= ~CVAR_ARCHIVE;
 	g_socialNpcs = Cvar_Get("g_socialNpcs", "", CVAR_TEMP, "Social mode NPCs, \"type x y z yaw\" separated by ';', e.g. \"bartender 4008 -550 -1769 169\"");
 	g_socialNpcs->flags &= ~CVAR_ARCHIVE;
+	g_socialAutoSpawn = Cvar_Get("g_socialAutoSpawn", "0", CVAR_TEMP, "Social mode: seconds after joining to put a player who isn't in the game in automatically (0 = off)");
+	g_socialAutoSpawn->flags &= ~CVAR_ARCHIVE;
 	g_socialBots->flags &= ~CVAR_ARCHIVE;
 	g_socialDuels->flags &= ~CVAR_ARCHIVE;
 	g_socialRoundTime->flags &= ~CVAR_ARCHIVE;

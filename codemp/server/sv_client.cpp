@@ -2959,7 +2959,7 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 		if ( g_socialMode && g_socialMode->integer ) {
 			anySection = qtrue;
 			SV_EconomyMenuAddLine( cl, "^2!emotes ^7- !sit, !dance, !taunt, !victory, !hug, !sleep, !rage and more. Move to stop." );
-			SV_EconomyMenuAddLine( cl, "^2!spawn ^7- stuck in spectator? This gets you into the game." );
+			SV_EconomyMenuAddLine( cl, "^2!spawn ^7- stuck in spectator? This gets you into the game. ^2!kill ^7- die and respawn." );
 		}
 
 		if ( g_statsEnable && g_statsEnable->integer ) {
