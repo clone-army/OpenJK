@@ -1489,7 +1489,7 @@ static void Social_NpcFrame(void)
 // NPC_SetMoveGoal) and start hunting once they've arrived; either way each
 // is pointed at the nearest player (G_SetEnemy), since NPC AI only charges
 // an enemy it has seen.
-#define BARFIGHT_MAX 12
+#define BARFIGHT_MAX 20
 #define BARFIGHT_MUSIC "music/sailbargealternate" // Jabba's Palace (mb2_jabba's own music), for every fight
 
 typedef struct {
@@ -1506,17 +1506,17 @@ typedef struct {
 // Only types MBII spawns as NPCs: most armed TEAM_FREE ones (droideka,
 // espo, dxun_g0t0, maxrebo...) are vehicles and are refused.
 static const barFightKind_t kBarFights[] = {
-	{ "Thugs",   "Noghri assassins storm the cantina!", { "noghri", NULL },                 2, 1, 8, BARFIGHT_MUSIC, 64.0f },
+	{ "Thugs",   "Noghri assassins storm the cantina!", { "noghri", NULL },                 2, 1, 12, BARFIGHT_MUSIC, 64.0f },
 	{ "Beasts",  "Something's escaped from the cellar!", { "nexu", "howler", "BomaBeast", NULL }, 3, 0, 3, BARFIGHT_MUSIC, 140.0f },
 	{ "Rancor",  "A rancor's got loose in the bar!",   { "rancor", NULL },                  1, 0, 1, BARFIGHT_MUSIC, 0.0f },
 	{ "Wampas",  "Wampas want a drink!",               { "wampa", NULL },                   2, 0, 3, BARFIGHT_MUSIC, 110.0f },
 	{ "Horrors", "Horrors crawl out of the swamp!",    { "selkath_zombie", "ice_spider", "acklaymb", NULL }, 3, 0, 3, BARFIGHT_MUSIC, 120.0f },
 	// Our own NPC types (ext_data/NPCs/ca_cantina.npc in the instance's MBII
 	// folder - server-side; players have the models as playable classes).
-	{ "Droid Attack", "Roger roger - battle droids roll in!", { "CA_B1", "CA_B1", "CA_B2", NULL }, 3, 1, 10, BARFIGHT_MUSIC, 64.0f, "CA_Magna" },
-	{ "Clone Raid: 212th", "The 212th Attack Battalion storms the bar!", { "CA_212", NULL },     3, 1, 10, BARFIGHT_MUSIC, 64.0f, "CA_Cody",
+	{ "Droid Attack", "Roger roger - battle droids roll in!", { "CA_B1", "CA_B1", "CA_B2", NULL }, 3, 2, 20, BARFIGHT_MUSIC, 64.0f, "CA_Magna" },
+	{ "Clone Raid: 212th", "The 212th Attack Battalion storms the bar!", { "CA_212", NULL },     3, 2, 20, BARFIGHT_MUSIC, 64.0f, "CA_Cody",
 		"^3[Clone Sergeant]^7 Commander Cody wants these separatists dealt with. You're all under arrest!" },
-	{ "Clone Raid: 501st", "The 501st Legion kicks the door in!",       { "CA_501", NULL },     3, 1, 10, BARFIGHT_MUSIC, 64.0f, "CA_Rex",
+	{ "Clone Raid: 501st", "The 501st Legion kicks the door in!",       { "CA_501", NULL },     3, 2, 20, BARFIGHT_MUSIC, 64.0f, "CA_Rex",
 		"^3[Clone Sergeant]^7 Captain Rex wants these separatists dealt with. You're all under arrest!" },
 };
 
@@ -1537,6 +1537,7 @@ static struct {
 	float  wpBest[BARFIGHT_MAX];
 	int    count;
 	int    nextHunt;
+	int    spawnStart;     // first of the recorded spawn points to use
 	qboolean haveRally;
 	vec3_t rally;
 	vec3_t origin;
@@ -1638,15 +1639,28 @@ static void Social_BarFightFrame(void)
 			while (types < 4 && k->types[types]) {
 				types++;
 			}
-			// In a line going into the room (along the spawn point's facing),
-			// staggered side to side, spaced for their size.
 			const int n = gBarFight.spawned;
 			const float yawRad = DEG2RAD(gBarFight.yaw);
-			const float fwd = k->spacing * (n / 2), side = (n % 2) ? k->spacing * 0.5f : -k->spacing * 0.5f * (n > 0);
 			vec3_t org;
-			VectorCopy(gBarFight.origin, org);
-			org[0] += cosf(yawRad) * fwd - sinf(yawRad) * side;
-			org[1] += sinf(yawRad) * fwd + cosf(yawRad) * side;
+			socialRoute_t* spawns = (g_barFightSpawnRoute && g_barFightSpawnRoute->string[0]) ?
+				Social_FindRoute(g_barFightSpawnRoute->string, qfalse) : NULL;
+			if (spawns && spawns->count > 0) {
+				// The recorded spawn points (!wp route g_barFightSpawnRoute),
+				// in turn from a random start; once they've all been used,
+				// the next round of them just beside the last.
+				const int round = n / spawns->count;
+				VectorCopy(spawns->pts[(gBarFight.spawnStart + n) % spawns->count], org);
+				org[0] += cosf(yawRad + M_PI * 0.5f) * 40.0f * round;
+				org[1] += sinf(yawRad + M_PI * 0.5f) * 40.0f * round;
+				org[2] += 8.0f;
+			} else {
+				// In a line going into the room (along the spawn point's
+				// facing), staggered side to side, spaced for their size.
+				const float fwd = k->spacing * (n / 2), side = (n % 2) ? k->spacing * 0.5f : -k->spacing * 0.5f * (n > 0);
+				VectorCopy(gBarFight.origin, org);
+				org[0] += cosf(yawRad) * fwd - sinf(yawRad) * side;
+				org[1] += sinf(yawRad) * fwd + cosf(yawRad) * side;
+			}
 
 			playerState_t* pps = spawner->gentity->playerState;
 			const float savedYaw = pps->viewangles[YAW];
@@ -1844,9 +1858,14 @@ qboolean SV_SocialBarFightCommand(client_t* cl, const char* args)
 
 	vec3_t org;
 	float yaw = 0.0f;
+	const qboolean haveSpawnRoute = (g_barFightSpawnRoute && g_barFightSpawnRoute->string[0] &&
+		Social_FindRoute(g_barFightSpawnRoute->string, qfalse)) ? qtrue : qfalse;
 	if (!g_barFightSpawn || sscanf(g_barFightSpawn->string, "%f %f %f %f", &org[0], &org[1], &org[2], &yaw) < 3) {
-		SV_SendServerCommand(cl, "chat \"^1[Bar fight]^7 No spawn point set (g_barFightSpawn).\"\n");
-		return qtrue;
+		if (!haveSpawnRoute) {
+			SV_SendServerCommand(cl, "chat \"^1[Bar fight]^7 No spawn point set (g_barFightSpawn or g_barFightSpawnRoute).\"\n");
+			return qtrue;
+		}
+		VectorClear(org);
 	}
 	org[2] += 24.0f; // a point on the floor: drop them in above it
 
@@ -1868,6 +1887,7 @@ qboolean SV_SocialBarFightCommand(client_t* cl, const char* args)
 	gBarFight.ends = svs.time + 1000 * Q_max(30, g_barFightSeconds ? g_barFightSeconds->integer : 180);
 	VectorCopy(org, gBarFight.origin);
 	gBarFight.yaw = yaw;
+	gBarFight.spawnStart = Q_irand(0, 63);
 	gBarFight.haveRally = haveRally;
 	if (haveRally) {
 		VectorCopy(rally, gBarFight.rally);

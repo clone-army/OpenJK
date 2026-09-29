@@ -1136,6 +1136,8 @@ void SV_Init (void) {
 	g_socialAdmins->flags &= ~CVAR_ARCHIVE;
 	g_barFightRoutes = Cvar_Get("g_barFightRoutes", "", CVAR_TEMP, "Social mode: !wp routes bar fight NPCs walk in on, handed out in turn (space separated)");
 	g_barFightRoutes->flags &= ~CVAR_ARCHIVE;
+	g_barFightSpawnRoute = Cvar_Get("g_barFightSpawnRoute", "", CVAR_TEMP, "Social mode: a !wp route whose points bar fight NPCs spawn at (instead of g_barFightSpawn)");
+	g_barFightSpawnRoute->flags &= ~CVAR_ARCHIVE;
 	g_socialBots->flags &= ~CVAR_ARCHIVE;
 	g_socialDuels->flags &= ~CVAR_ARCHIVE;
 	g_socialRoundTime->flags &= ~CVAR_ARCHIVE;
