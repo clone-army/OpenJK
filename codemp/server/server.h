@@ -255,6 +255,8 @@ typedef struct client_s {
 	qboolean		economyScoreInitialized;
 	int				economyLastHealth;
 	qboolean		economyHealthInitialized;
+	int				economyReminderAt;		// when to remind them to !login/!register (0 = not yet set)
+	qboolean		economyReminded;		// once per connection
 	int				economyCreditsSynced;	// account's stored balance as of this session's last read/write (see SV_EconomyMergeExternal)
 	char			economyHandle[24];	// non-empty if logged into a persisted !register/!login account this session
 
@@ -411,6 +413,7 @@ extern	cvar_t* g_barPoisoningDrinks;
 extern	cvar_t* g_barSpiceOverdose;
 extern	cvar_t* g_economyRegisterBonus;
 extern	cvar_t* g_economyDailyBonus;
+extern	cvar_t* g_economyLoginReminder;
 extern	cvar_t* g_economyJukeboxEnable;
 extern	cvar_t* g_jukeboxCost;
 extern	cvar_t* g_jukeboxCooldown;

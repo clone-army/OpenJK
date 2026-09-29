@@ -73,6 +73,7 @@ command: nothing is broadcast, and the commands never show up as chat.
 | `g_economyBetEnable` | `0` | `!bet` on duels (needs the master switch too): `g_betWindowSeconds` (30), `g_betMax` (100), `g_betWinBonus` (20), `g_betLoserRefund` (25) |
 | `g_economyChanceEnable` | `0` | `!chance` red/blue challenges for credits (needs the master switch too) |
 | `g_economyRaffleEnable` | `0` | The `!raffle` (needs the master switch too): `g_raffleIntervalMinutes` (60), `g_raffleOpenMinutes` (10), `g_raffleTicketPrice` (5), `g_raffleMinEntrants` (5) |
+| `g_economyLoginReminder` | `0` | Seconds after joining to remind a player who hasn't logged in, once per connection, centre screen and in chat (`0` = off) |
 | `g_economyDailyBonus` | `25` | Credits for an account's first `!login` in any 24 hours, across every server (kept in `economy_daily.dat` next to the accounts file) |
 | `g_economyRegisterBonus` | `100` | Credits given once when a player `!register`s a new account |
 | `g_shopCost_<item>` | per item | Price of one shop item; `0` removes it (see [Shop catalog](#shop-catalog)) |

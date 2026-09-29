@@ -3320,6 +3320,70 @@ client packet of the frame consumes the death transition and later
 attackers get nothing.
 ===================
 */
+// Someone who's been in for g_economyLoginReminder seconds without
+// !login or !register gets one private nudge - centre screen and chat -
+// naming the welcome bonus and what credits are for here (only the
+// features switched on). Once per connection: map changes keep the flag.
+static void SV_EconomyLoginReminders( void ) {
+	const int delayMs = ( g_economyLoginReminder ? g_economyLoginReminder->integer : 0 ) * 1000;
+
+	if ( delayMs <= 0 ) {
+		return;
+	}
+	for ( int i = 0; i < sv_maxclients->integer; i++ ) {
+		client_t *cl = &svs.clients[i];
+
+		if ( cl->state != CS_ACTIVE || cl->economyReminded || cl->netchan.remoteAddress.type == NA_BOT ) {
+			continue;
+		}
+		if ( cl->economyHandle[0] ) {
+			cl->economyReminded = qtrue;	// logged in - nothing to remind
+			continue;
+		}
+		if ( !cl->economyReminderAt ) {
+			cl->economyReminderAt = svs.time + delayMs;
+			continue;
+		}
+		if ( svs.time < cl->economyReminderAt ) {
+			continue;
+		}
+		cl->economyReminded = qtrue;
+
+		const int bonus = g_economyRegisterBonus ? Q_max( 0, g_economyRegisterBonus->integer ) : 0;
+		if ( bonus > 0 ) {
+			SV_SendServerCommand( cl, "cp \"^5Welcome, %s^7!\n^2!register ^7for ^2%d free credits\"\n", cl->name, bonus );
+			SV_SendServerCommand( cl, "chat \"^5Hey %s^7! ^2!register <name> <pin> ^7for ^2%d free credits^7 - or ^2!login ^7if you've played before.\"\n", cl->name, bonus );
+		} else {
+			SV_SendServerCommand( cl, "cp \"^5Welcome, %s^7!\n^2!register ^7or ^2!login ^7to play\"\n", cl->name );
+			SV_SendServerCommand( cl, "chat \"^5Hey %s^7! ^2!register <name> <pin> ^7to start earning credits - or ^2!login ^7if you've played before.\"\n", cl->name );
+		}
+
+		// What they're for, from whatever's on here, most eye-catching first.
+		static const struct { cvar_t **enable; const char *what; } kUses[] = {
+			{ &g_economyBarEnable, "^5!bar ^7drinks" },
+			{ &g_economyBlackjackEnable, "^5!blackjack" },
+			{ &g_economyBetEnable, "^5!bet ^7on duels" },
+			{ &g_economyPazaakEnable, "^5!pazaak" },
+			{ &g_economyJukeboxEnable, "^5!jukebox" },
+			{ &g_economyChanceEnable, "^5!chance" },
+			{ &g_economyRaffleEnable, "^5!raffle" },
+			{ &g_economyShopEnable, "^5!buy ^7gear" },
+			{ &g_economyBountyEnable, "^5!bounty" },
+		};
+		char uses[160] = "";
+		int count = 0;
+		for ( size_t u = 0; u < ARRAY_LEN( kUses ) && count < 4; u++ ) {
+			if ( *kUses[u].enable && ( *kUses[u].enable )->integer ) {
+				Q_strcat( uses, sizeof( uses ), va( "%s%s", count ? "^7, " : "", kUses[u].what ) );
+				count++;
+			}
+		}
+		if ( count ) {
+			SV_SendServerCommand( cl, "chat \"^7Spend them on %s^7 and more - ^5!help ^7shows everything.\"\n", uses );
+		}
+	}
+}
+
 void SV_EconomyFrame( void ) {
 	int i;
 
@@ -3341,6 +3405,8 @@ void SV_EconomyFrame( void ) {
 	if ( !SV_EconomyEnabled() ) {
 		return;
 	}
+
+	SV_EconomyLoginReminders();
 
 	// Pick up outside balance changes (web panel gifts, other servers)
 	// every few seconds - one fresh load of the shared file, then a merge
