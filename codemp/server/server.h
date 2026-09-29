@@ -257,6 +257,8 @@ typedef struct client_s {
 	qboolean		economyHealthInitialized;
 	int				economyReminderAt;		// when to remind them to !login/!register (0 = not yet set)
 	qboolean		economyReminded;		// once per connection
+	int				economySpawnBannerAt;	// when to show the not-logged-in banner after first spawning (0 = not yet)
+	qboolean		economySpawnBannerShown;
 	int				economyCreditsSynced;	// account's stored balance as of this session's last read/write (see SV_EconomyMergeExternal)
 	char			economyHandle[24];	// non-empty if logged into a persisted !register/!login account this session
 
@@ -611,6 +613,7 @@ void SV_GunGameClampWeaponSelect(client_t* cl, usercmd_t* cmd);
 void SV_EconomyShopInitCvars( void );
 void SV_EconomyPrint( client_t *cl, const char *text );
 void SV_EconomyResultBanner( client_t *cl, const char *game, int net );
+qboolean SV_ClientIsSpawned( client_t *cl );
 qboolean SV_EconomyAddCreditsToAccount( const char *handle, int amount );
 void SV_EconomyBountyRefund( client_t *target, const char *why );
 void SV_EconomyRefundAllBounties( const char *why );

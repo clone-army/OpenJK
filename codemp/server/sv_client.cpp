@@ -3320,10 +3320,12 @@ client packet of the frame consumes the death transition and later
 attackers get nothing.
 ===================
 */
-// Someone who's been in for g_economyLoginReminder seconds without
-// !login or !register gets one private nudge - centre screen and chat -
-// naming the welcome bonus and what credits are for here (only the
-// features switched on). Once per connection: map changes keep the flag.
+// For anyone not logged in, while g_economyLoginReminder is on: a centre
+// screen banner shortly after they first spawn in ("!login to use the
+// Cantina / or !register for 100 free credits"), then, once they've been
+// in g_economyLoginReminder seconds, a chat reminder naming what credits
+// are for here (only the features switched on). Each once per connection:
+// map changes keep the flags.
 static void SV_EconomyLoginReminders( void ) {
 	const int delayMs = ( g_economyLoginReminder ? g_economyLoginReminder->integer : 0 ) * 1000;
 
@@ -3333,11 +3335,33 @@ static void SV_EconomyLoginReminders( void ) {
 	for ( int i = 0; i < sv_maxclients->integer; i++ ) {
 		client_t *cl = &svs.clients[i];
 
-		if ( cl->state != CS_ACTIVE || cl->economyReminded || cl->netchan.remoteAddress.type == NA_BOT ) {
+		if ( cl->state != CS_ACTIVE || ( cl->economyReminded && cl->economySpawnBannerShown ) ||
+			cl->netchan.remoteAddress.type == NA_BOT ) {
 			continue;
 		}
 		if ( cl->economyHandle[0] ) {
 			cl->economyReminded = qtrue;	// logged in - nothing to remind
+			cl->economySpawnBannerShown = qtrue;
+			continue;
+		}
+
+		const int bonus = g_economyRegisterBonus ? Q_max( 0, g_economyRegisterBonus->integer ) : 0;
+		if ( !cl->economySpawnBannerShown ) {
+			if ( !cl->economySpawnBannerAt ) {
+				if ( SV_ClientIsSpawned( cl ) ) {
+					cl->economySpawnBannerAt = svs.time + 1500;	// after MBII's own spawn messages
+				}
+			} else if ( svs.time >= cl->economySpawnBannerAt ) {
+				const char *use = ( g_socialMode && g_socialMode->integer ) ? "use the Cantina" : "earn and spend credits";
+				cl->economySpawnBannerShown = qtrue;
+				if ( bonus > 0 ) {
+					SV_SendServerCommand( cl, "cp \"^2!login ^7to %s\n^7or ^2!register ^7for ^2%d free credits\"\n", use, bonus );
+				} else {
+					SV_SendServerCommand( cl, "cp \"^2!login ^7to %s\n^7or ^2!register ^7to join in\"\n", use );
+				}
+			}
+		}
+		if ( cl->economyReminded ) {
 			continue;
 		}
 		if ( !cl->economyReminderAt ) {
@@ -3349,12 +3373,9 @@ static void SV_EconomyLoginReminders( void ) {
 		}
 		cl->economyReminded = qtrue;
 
-		const int bonus = g_economyRegisterBonus ? Q_max( 0, g_economyRegisterBonus->integer ) : 0;
 		if ( bonus > 0 ) {
-			SV_SendServerCommand( cl, "cp \"^5Welcome, %s^7!\n^2!register ^7for ^2%d free credits\"\n", cl->name, bonus );
 			SV_SendServerCommand( cl, "chat \"^5Hey %s^7! ^2!register <name> <pin> ^7for ^2%d free credits^7 - or ^2!login ^7if you've played before.\"\n", cl->name, bonus );
 		} else {
-			SV_SendServerCommand( cl, "cp \"^5Welcome, %s^7!\n^2!register ^7or ^2!login ^7to play\"\n", cl->name );
 			SV_SendServerCommand( cl, "chat \"^5Hey %s^7! ^2!register <name> <pin> ^7to start earning credits - or ^2!login ^7if you've played before.\"\n", cl->name );
 		}
 

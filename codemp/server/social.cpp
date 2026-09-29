@@ -507,6 +507,17 @@ void SV_SocialClientCommand(client_t* cl)
 // stock alive test gungame.cpp uses. A spectator following someone carries a
 // copy of *their* playerState - team, pm_type and all - so it only counts if
 // the playerState is the player's own (clientNum).
+static qboolean Social_IsSpawned(const playerState_t* ps, int clientNum);
+
+// Whether a client is in the game on a team (not spectating, not dead).
+qboolean SV_ClientIsSpawned(client_t* cl)
+{
+	if (cl->state != CS_ACTIVE || !cl->gentity || !cl->gentity->playerState) {
+		return qfalse;
+	}
+	return Social_IsSpawned(cl->gentity->playerState, (int)(cl - svs.clients));
+}
+
 static qboolean Social_IsSpawned(const playerState_t* ps, int clientNum)
 {
 	if (ps->clientNum != clientNum) {
