@@ -382,6 +382,7 @@ A hang-out mode on top of whatever MBII mode the server runs (e.g. Legends, with
 | `g_barFightSpawn` | `""` | Where bar fight NPCs arrive, `x y z yaw`, a point on the floor |
 | `g_barFightRally` | `""` | Where bar fight NPCs walk to first, `x y z yaw`; they start hunting players once there (or after 10s) |
 | `g_barFightRoutes` | `""` | `!wp` routes bar fight NPCs walk in on, handed out in turn (e.g. `main bar`); each breaks off to fight when a player's within 350 units or its route's done. Used instead of `g_barFightRally` when set |
+| `g_barFightSpawnRoute` | `""` | A `!wp` route whose points bar fight NPCs spawn at, in turn from a random one (extras beside earlier ones), facing `g_barFightSpawn`'s yaw; up to 20 NPCs a fight |
 | `g_socialAdmins` | `""` | Economy accounts that can record NPC patrol routes: `!wp add <route>` at each point, `!wp undo/clear <route>`, `!wp list` (kept in `social_routes.txt`). An NPC with the pose `patrol:<route>` walks it in a loop; `pace:<route>` walks it end to end and back, standing 10-20s at each end (gesturing now and then). `!where` (anyone) and rcon `where <player>` give a position as `x y z : yaw` |
 | `g_socialRespawnTime` | `3` | Respawn wait in seconds |
 | `g_socialDuels` | `1` | Allow duels (bow to challenge / accept) |
