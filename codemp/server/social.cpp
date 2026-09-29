@@ -1107,20 +1107,21 @@ static void Social_NpcFrame(void)
 // (Social_NpcFrame). It ends when they're all down, after g_barFightSeconds,
 // or on "!barfight stop"; anything left is removed. g_barFightEnable.
 #define BARFIGHT_MAX 12
+#define BARFIGHT_MUSIC "music/sailbargealternate" // Jabba's Palace (mb2_jabba's own music), for every fight
 
 typedef struct {
 	const char* name;
 	const char* intro;
 	const char* types[4];
 	int base, perPlayer, max;     // how many: base + perPlayer * players, up to max
-	const char* music;            // plays while it's on (jukebox_tracks.h paths)
+	const char* music;            // plays while it's on
 } barFightKind_t;
 
 static const barFightKind_t kBarFights[] = {
-	{ "Thugs",  "Thugs storm the cantina!",       { "noghri", "espo", NULL },               2, 1, 8, "Music/mk" },
-	{ "Beasts", "Something's escaped from the cellar!", { "nexu", "howler", "BomaBeast", NULL }, 3, 0, 3, "music/mb2_dotf/dotf" },
-	{ "Rancor", "A rancor's got loose in the bar!", { "rancor", NULL },                     1, 0, 1, "music/mustafarduel/mustafarduel" },
-	{ "Droids", "Rogue droids crash the party!",  { "droideka", "dxun_g0t0", NULL },        2, 1, 6, "Music/ultimate_showdown" },
+	{ "Thugs",  "Thugs storm the cantina!",       { "noghri", "espo", NULL },               2, 1, 8, BARFIGHT_MUSIC },
+	{ "Beasts", "Something's escaped from the cellar!", { "nexu", "howler", "BomaBeast", NULL }, 3, 0, 3, BARFIGHT_MUSIC },
+	{ "Rancor", "A rancor's got loose in the bar!", { "rancor", NULL },                     1, 0, 1, BARFIGHT_MUSIC },
+	{ "Droids", "Rogue droids crash the party!",  { "droideka", "dxun_g0t0", NULL },        2, 1, 6, BARFIGHT_MUSIC },
 };
 
 static struct {
