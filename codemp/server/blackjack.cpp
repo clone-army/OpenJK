@@ -3,7 +3,7 @@
 blackjack.cpp — blackjack against the house, part of the economy
 
   !blackjack <credits>       deal a hand for that bet (also !bj)
-  !bj hit | stand | double   play it
+  !bj hit | stand | double   play it (twist and stick work too)
   !blackjack                 the rules, or your hand if you're playing
 
 One player against the dealer, from a freshly shuffled deck every hand.
@@ -87,7 +87,10 @@ static const char* Bj_CardsText(const int* cards, int count, qboolean hideSecond
 	char* out = buf[which++ & 3];
 	out[0] = '\0';
 	for (int i = 0; i < count; i++) {
-		Q_strcat(out, 96, va("%s%s", i ? " " : "", (hideSecond && i == 1) ? "?" : Bj_CardName(cards[i])));
+		if (i) {
+			Q_strcat(out, 96, " ");
+		}
+		Q_strcat(out, 96, (hideSecond && i == 1) ? "?" : Bj_CardName(cards[i]));
 	}
 	return out;
 }
@@ -107,10 +110,17 @@ static void Bj_ShowHand(client_t* cl, const bjHand_t* h)
 }
 
 // Pays out (0 for a loss) and ends the hand. The owner may have left, in
-// which case it goes into their account.
-static void Bj_Settle(int slot, bjHand_t* h, int payout, const char* result)
+// which case it goes into their account. banner is the big centre-screen
+// line (e.g. "^2You win +50").
+static void Bj_Settle(int slot, bjHand_t* h, int payout, const char* resultText, const char* bannerText)
 {
 	client_t* cl = Bj_Owner(slot, h);
+	char result[128], banner[64];
+
+	// Callers build these with va(), whose few buffers everything below
+	// reuses - copy them first, or the result line comes out as card names.
+	Q_strncpyz(result, resultText, sizeof(result));
+	Q_strncpyz(banner, bannerText, sizeof(banner));
 
 	if (payout > 0) {
 		if (cl) {
@@ -125,6 +135,7 @@ static void Bj_Settle(int slot, bjHand_t* h, int payout, const char* result)
 			Bj_CardsText(h->player, h->numPlayer, qfalse), Bj_Value(h->player, h->numPlayer),
 			Bj_CardsText(h->dealer, h->numDealer, qfalse), Bj_Value(h->dealer, h->numDealer),
 			result, cl->economyCredits));
+		SV_SendServerCommand(cl, "cp \"^3Blackjack\n%s\"\n", banner);
 	}
 	memset(h, 0, sizeof(*h));
 }
@@ -135,7 +146,7 @@ static void Bj_Finish(int slot, bjHand_t* h)
 	const int you = Bj_Value(h->player, h->numPlayer);
 
 	if (you > 21) {
-		Bj_Settle(slot, h, 0, va("^1Bust! ^7You lose %d credits.", h->bet));
+		Bj_Settle(slot, h, 0, va("^1Bust! ^7You lose %d credits.", h->bet), va("^1Bust ^7- you lose %d", h->bet));
 		return;
 	}
 	while (Bj_Value(h->dealer, h->numDealer) < 17 && h->numDealer < BJ_MAX_CARDS) {
@@ -144,13 +155,13 @@ static void Bj_Finish(int slot, bjHand_t* h)
 	const int dealer = Bj_Value(h->dealer, h->numDealer);
 
 	if (dealer > 21) {
-		Bj_Settle(slot, h, h->bet * 2, va("^2Dealer busts - you win %d credits!", h->bet));
+		Bj_Settle(slot, h, h->bet * 2, va("^2Dealer busts - you win %d credits!", h->bet), va("^2You win +%d", h->bet));
 	} else if (you > dealer) {
-		Bj_Settle(slot, h, h->bet * 2, va("^2You win %d credits!", h->bet));
+		Bj_Settle(slot, h, h->bet * 2, va("^2You win %d credits!", h->bet), va("^2You win +%d", h->bet));
 	} else if (you == dealer) {
-		Bj_Settle(slot, h, h->bet, "^3Push ^7- your bet's back.");
+		Bj_Settle(slot, h, h->bet, "^3Push ^7- your bet's back.", "^3Push ^7- bet returned");
 	} else {
-		Bj_Settle(slot, h, 0, va("^1Dealer wins. ^7You lose %d credits.", h->bet));
+		Bj_Settle(slot, h, 0, va("^1Dealer wins. ^7You lose %d credits.", h->bet), va("^1Dealer wins ^7- you lose %d", h->bet));
 	}
 }
 
@@ -200,11 +211,11 @@ static void Bj_Deal(client_t* cl, const char* amountStr)
 	const qboolean youBj = Bj_IsBlackjack(h->player, h->numPlayer);
 	const qboolean dealerBj = Bj_IsBlackjack(h->dealer, h->numDealer);
 	if (youBj && dealerBj) {
-		Bj_Settle(slot, h, bet, "^3You both have blackjack ^7- push, your bet's back.");
+		Bj_Settle(slot, h, bet, "^3You both have blackjack ^7- push, your bet's back.", "^3Push ^7- bet returned");
 	} else if (youBj) {
-		Bj_Settle(slot, h, bet + bet * 3 / 2, va("^2Blackjack! ^7You win %d credits!", bet * 3 / 2));
+		Bj_Settle(slot, h, bet + bet * 3 / 2, va("^2Blackjack! ^7You win %d credits!", bet * 3 / 2), va("^2BLACKJACK! +%d", bet * 3 / 2));
 	} else if (dealerBj) {
-		Bj_Settle(slot, h, 0, va("^1Dealer has blackjack. ^7You lose %d credits.", bet));
+		Bj_Settle(slot, h, 0, va("^1Dealer has blackjack. ^7You lose %d credits.", bet), va("^1Dealer blackjack ^7- you lose %d", bet));
 	} else {
 		Bj_ShowHand(cl, h);
 	}
@@ -237,6 +248,7 @@ qboolean SV_BlackjackCommand(client_t* cl, const char* args)
 
 	if (!h->active) {
 		if (!Q_stricmp(a, "hit") || !Q_stricmp(a, "stand") || !Q_stricmp(a, "double") ||
+			!Q_stricmp(a, "twist") || !Q_stricmp(a, "stick") ||
 			!Q_stricmp(a, "h") || !Q_stricmp(a, "s") || !Q_stricmp(a, "d")) {
 			Bj_Print(cl, "You're not playing a hand. ^5!blackjack <credits> ^7to deal one.");
 		} else {
@@ -245,7 +257,7 @@ qboolean SV_BlackjackCommand(client_t* cl, const char* args)
 		return qtrue;
 	}
 
-	if (!Q_stricmp(a, "hit") || !Q_stricmp(a, "h")) {
+	if (!Q_stricmp(a, "hit") || !Q_stricmp(a, "h") || !Q_stricmp(a, "twist")) {
 		h->player[h->numPlayer++] = Bj_Draw(h);
 		h->turnEnds = svs.time + BJ_TURN_MS;
 		const int you = Bj_Value(h->player, h->numPlayer);
@@ -254,7 +266,7 @@ qboolean SV_BlackjackCommand(client_t* cl, const char* args)
 		} else {
 			Bj_ShowHand(cl, h);
 		}
-	} else if (!Q_stricmp(a, "stand") || !Q_stricmp(a, "s")) {
+	} else if (!Q_stricmp(a, "stand") || !Q_stricmp(a, "s") || !Q_stricmp(a, "stick")) {
 		Bj_Finish(slot, h);
 	} else if (!Q_stricmp(a, "double") || !Q_stricmp(a, "d")) {
 		if (h->numPlayer != 2) {
@@ -270,7 +282,7 @@ qboolean SV_BlackjackCommand(client_t* cl, const char* args)
 			Bj_Finish(slot, h);
 		}
 	} else {
-		Bj_Print(cl, "You're mid-hand: ^5!bj hit^7, ^5!bj stand ^7or ^5!bj double^7.");
+		Bj_Print(cl, "You're mid-hand: ^5!bj hit^7 (twist), ^5!bj stand ^7(stick) or ^5!bj double^7.");
 	}
 	return qtrue;
 }
