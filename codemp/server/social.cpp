@@ -1323,6 +1323,13 @@ static void Social_NpcFrame(void)
 			}
 			n->deadAt = 0;
 			if (n->pose == SOCIAL_POSE_PATROL) {
+				// Walking legs while it moves: left to itself it glided
+				// along its route with its legs still.
+				const playerState_t* ps = SV_GentityNum(n->ent)->playerState;
+				const float speed2 = ps->velocity[0] * ps->velocity[0] + ps->velocity[1] * ps->velocity[1];
+				if (speed2 > 15.0f * 15.0f && ps->legsTimer < 200) {
+					SV_EntitySetLegsAnim(SV_GentityNum(n->ent), "BOTH_WALK1");
+				}
 				Social_NpcPatrol(n, SV_GentityNum(n->ent));
 				continue;
 			}

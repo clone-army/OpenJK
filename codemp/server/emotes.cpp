@@ -110,6 +110,22 @@ static int Emote_AnimByName(const char* name)
 // For other server code (social NPCs): play MBII animation `anim` on any
 // entity with a playerState, both halves or just the torso, held for its
 // length. qfalse if the animation or the game's functions can't be found.
+// Just the legs (a walk under whatever the torso's doing).
+qboolean SV_EntitySetLegsAnim(sharedEntity_t* ent, const char* anim)
+{
+	if (!Emote_Resolve() || !ent || !ent->playerState) {
+		return qfalse;
+	}
+	const int a = Emote_AnimByName(anim);
+	if (a < 0) {
+		return qfalse;
+	}
+	void* old = GVM_BeginNative();
+	gSetAnim(ent, EMOTE_SETANIM_BOTH & ~EMOTE_SETANIM_TORSO, a, EMOTE_ANIM_FLAGS); // SETANIM_LEGS
+	GVM_EndNative(old);
+	return qtrue;
+}
+
 qboolean SV_EntitySetAnim(sharedEntity_t* ent, const char* anim, qboolean torsoOnly)
 {
 	if (!Emote_Resolve() || !ent || !ent->playerState) {
