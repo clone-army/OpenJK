@@ -834,6 +834,7 @@ typedef struct {
 	int    pose;       // SOCIAL_POSE_*
 	int    nextAnim;   // idle/bartend: next gesture
 	int    offSince;   // first seen off its spot (0 = on it)
+	int    failures;   // spawns MBII refused, in a row
 } socialNpc_t;
 
 enum { SOCIAL_POSE_STAND, SOCIAL_POSE_SIT, SOCIAL_POSE_IDLE, SOCIAL_POSE_BARTEND, SOCIAL_POSE_ROAM };
@@ -849,6 +850,8 @@ static socialNpc_t gSocialNpcs[SOCIAL_MAX_NPCS];
 static int gSocialNpcCount = 0;
 static char gSocialNpcsParsed[MAX_CVAR_VALUE_STRING * 4 + 4] = "\x01"; // never a real value, so the first frame parses
 
+static qboolean Social_NpcAlive(const socialNpc_t* n);
+
 static void Social_ParseNpcs(void)
 {
 	char want[MAX_CVAR_VALUE_STRING * 4 + 4];
@@ -859,6 +862,15 @@ static void Social_ParseNpcs(void)
 		return;
 	}
 	Q_strncpyz(gSocialNpcsParsed, want, sizeof(gSocialNpcsParsed));
+
+	// A new list: the old NPCs go, or they'd stay alongside the new ones.
+	for (int i = 0; i < gSocialNpcCount; i++) {
+		if (Social_NpcAlive(&gSocialNpcs[i]) && gFreeEntity) {
+			void* old = GVM_BeginNative();
+			gFreeEntity(SV_GentityNum(gSocialNpcs[i].ent));
+			GVM_EndNative(old);
+		}
+	}
 	gSocialNpcCount = 0;
 
 	char buf[MAX_CVAR_VALUE_STRING * 4 + 4];
@@ -1027,9 +1039,13 @@ static void Social_NpcFrame(void)
 		pps->viewangles[YAW] = savedYaw;
 
 		if (!e) {
-			Com_Printf("Social mode: couldn't spawn NPC \"%s\" - retrying in 10s\n", n->type);
+			if (n->failures++ < 3) {
+				Com_Printf("Social mode: couldn't spawn NPC \"%s\" - retrying every 10s%s\n", n->type,
+					n->failures == 3 ? " (no more of these messages)" : "");
+			}
 			continue;
 		}
+		n->failures = 0;
 		n->ent = e->s.number;
 		if (e->playerState) {
 			VectorCopy(n->origin, e->playerState->origin); // NPC_Begin spawns it here
