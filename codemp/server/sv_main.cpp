@@ -754,8 +754,16 @@ void SVC_RemoteCommand( netadr_t from, msg_t *msg ) {
 	char		sv_outputbuf[SV_OUTPUTBUF_LENGTH];
 	char		*cmd_aux;
 
+	// Our own tools on this box (MBIIEZ's plugins, status polls, the web
+	// panel) all send rcon from 127.0.0.1 and together easily pass 10 a
+	// second, so the limit below silently dropped their commands - plugin
+	// settings, even an "npc kill all". With the right password, local
+	// requests skip it; a wrong one is still limited like any other.
+	const qboolean localWithPassword = ( from.type == NA_IP && from.ip[0] == 127 &&
+		sv_rconPassword->string[0] && !strcmp( Cmd_Argv( 1 ), sv_rconPassword->string ) ) ? qtrue : qfalse;
+
 	// Prevent using rcon as an amplifier and make dictionary attacks impractical
-	if ( SVC_RateLimitAddress( from, 10, 1000 ) ) {
+	if ( !localWithPassword && SVC_RateLimitAddress( from, 10, 1000 ) ) {
 		if ( com_developer->integer ) {
 			Com_Printf( "SVC_RemoteCommand: rate limit from %s exceeded, dropping request\n",
 				NET_AdrToString( from ) );
