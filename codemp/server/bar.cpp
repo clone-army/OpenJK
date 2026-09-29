@@ -31,10 +31,9 @@ playerState_t / entityState_t / usercmd_t fields:
     game's weapon clamp): reversed, slowed, stuck running forward, stuck
     crouching. The client still predicts its own unaltered input, so these
     feel a little rubbery - which rather suits a drink
-  - Death Stick and Spice combine two of the above (speed + hiccups,
-    low gravity + spin). Spice also greys out your view: MBII's cgame draws
-    its Force Rage "recovery" tint while fd.forceRageRecoveryTime is ahead
-    of the clock (it also slows you to 75% while it lasts, bg_pmove.c)
+  - Death Stick is speed + hiccups. Spice is low gravity, a gentle sway
+    and red tunnel vision: Deadly Sight's full-screen blur, set only while
+    snapshots are built (SV_BarPreSnapshot), so MBII's game never sees it
   - most drinks play one of MBII's own effects while they last - spice
     smoke, a confusion swirl, bubbles, frost, dust, flames, sparks
     (G_EffectIndex / G_PlayEffectID, found by name like everything else).
@@ -249,7 +248,7 @@ static const barDrink_t kBarDrinks[] = {
 	{ "mustafar_magma",    "Mustafar Magma",    "you're on fire (just for show) for a minute",  12, BAR_LOOK,    0,   60, BAR_PW_FLAMES,    BAR_LOOK_NONE, BAR_LOOK, "effects/Emitter/flamestiny", 2000, BAR_FX_BODY },
 	{ "ion_fizz",          "Ion Fizz",          "you crackle with electricity for a minute",    12, BAR_LOOK,    0,   60, BAR_PW_ELECTRIFY, BAR_LOOK_NONE, BAR_LOOK, "effects/Swords/shock_person", 3000, BAR_FX_BODY },
 	{ "death_stick",       "Death Stick",       "you want to go home and rethink your life",    20, BAR_RUSH,    0,   30,  BAR_LOOK_NONE, BAR_LOOK_NONE,    BAR_HICCUP, "effects/spice/pipe_smoke", 500, BAR_FX_HEAD },
-	{ "spice",             "Spice",             "floaty, spinny and hazy for 45 seconds", 20, BAR_MOON,    0,   45,  BAR_LOOK_NONE,    BAR_LOOK_NONE,   BAR_SPIN, "effects/spice/pipe_smoke", 500, BAR_FX_HEAD },
+	{ "spice",             "Spice",             "floaty, woozy and seeing red for 45 seconds", 20, BAR_MOON,    0,   45,  BAR_LOOK_NONE,    BAR_LOOK_NONE,   BAR_LOOK, "effects/spice/pipe_smoke", 500, BAR_FX_HEAD },
 	{ "nurse_wine",        "Nurse Wine",        "cures every drink effect and clears your tab", 15, BAR_CURE,    0,   0,   BAR_LOOK_NONE,    BAR_LOOK_NONE, BAR_LOOK, NULL, 0, BAR_FX_HEAD },
 	{ "doctor_vodka",      "Doctor Vodka",      "one of everything on the menu, all at once",   40, BAR_PRESCRIBE, 0, 0,   BAR_LOOK_NONE,    BAR_LOOK_NONE, BAR_LOOK, NULL, 0, BAR_FX_HEAD },
 };
@@ -277,7 +276,10 @@ typedef struct {
 		int until;
 		int nextPuff;
 	} fx[BAR_MAX_FX];
-	int hazeUntil;          // Spice: grey view until then
+	int hazeUntil;          // Spice: woozy sway and red vision until then
+	int hazeSwayYaw;        // Spice: its own sway offset, like swayYaw
+	int hazeSwayPitch;
+	qboolean hazeSightAdded; // Spice: FP_DEADLYSIGHT set for the snapshot being sent
 } barState_t;
 
 static barState_t gBarState[MAX_CLIENTS];
@@ -501,8 +503,9 @@ static void Bar_Cure(client_t* cl, barTab_t* tab)
 	if (st->until[BAR_SCALE] && ps->iModelScale == st->scaleSet) {
 		ps->iModelScale = st->scaleOriginal;
 	}
-	if (st->hazeUntil > svs.time) {
-		ps->fd.forceRageRecoveryTime = 0;
+	if (st->hazeSwayYaw || st->hazeSwayPitch) {
+		ps->delta_angles[YAW] -= st->hazeSwayYaw;
+		ps->delta_angles[PITCH] -= st->hazeSwayPitch;
 	}
 	const int spawnCount = st->spawnCount;
 	memset(st, 0, sizeof(*st));
@@ -675,6 +678,24 @@ static void Bar_DrunkFrame(client_t* cl, barState_t* st)
 	st->swayPitch = wantPitch;
 }
 
+// Spice: a slow, gentle wooze - a third of a whiskey's sway - with its
+// own offset so it comes off cleanly whether or not whiskey's on top.
+static void Bar_HazeFrame(client_t* cl, barState_t* st)
+{
+	playerState_t* ps = cl->gentity->playerState;
+	int wantYaw = 0, wantPitch = 0;
+
+	if (st->hazeUntil > svs.time) {
+		const float t = svs.time / 1000.0f;
+		wantYaw = ANGLE2SHORT(7.0f * sinf(t * 0.9f) + 3.0f * sinf(t * 2.1f));
+		wantPitch = ANGLE2SHORT(3.5f * sinf(t * 0.7f) + 1.5f * sinf(t * 1.9f));
+	}
+	ps->delta_angles[YAW] += wantYaw - st->hazeSwayYaw;
+	ps->delta_angles[PITCH] += wantPitch - st->hazeSwayPitch;
+	st->hazeSwayYaw = wantYaw;
+	st->hazeSwayPitch = wantPitch;
+}
+
 static void Bar_MovementFrame(client_t* cl, barState_t* st, float dt)
 {
 	playerState_t* ps = cl->gentity->playerState;
@@ -767,7 +788,8 @@ static qboolean Bar_AnythingActive(const barState_t* st)
 			return qtrue;
 		}
 	}
-	return (st->hazeUntil > svs.time) ? qtrue : qfalse;
+	// (A spice sway still to undo counts, so the frame gets to undo it.)
+	return (st->hazeUntil > svs.time || st->hazeSwayYaw || st->hazeSwayPitch) ? qtrue : qfalse;
 }
 
 // Tells everyone what killed them once it actually does.
@@ -806,6 +828,50 @@ static void Bar_OverdoseFrame(client_t* cl, barTab_t* tab)
 	tab->overdoseUntil = 0;
 	SV_SendServerCommand(NULL, "chat \"^5[Bar] ^7%s ^1died from %s.\"\n", cl->name, tab->overdoseCause);
 	SV_SendServerCommand(NULL, "cp \"%s\n^1Died from %s\"\n", cl->name, Bar_TitleCase(tab->overdoseCause));
+}
+
+// Spice's red vision. MBII's full-screen tints are drawn in first person
+// only, but a few power "blurs" are drawn in third person too; Deadly
+// Sight's is a red, streaky tunnel vignette that turns slowly, and nothing
+// in MBII's movement code reacts to the power (Rage's swirl would: it
+// speeds up movement in bg_pmove, so the client would predict a speed the
+// server never applies). The bit is set just for building snapshots and
+// cleared straight after, so MBII's game code never sees it and nothing
+// is spent, run or stopped - only the drinker's view changes.
+// FP_DEADLYSIGHT is 21 in MBII's forcePowers_t (GCJ_NEW_FORCE), and
+// fd.forcePowersActive sits at the same offset (880) in its playerState.
+#define BAR_MB2_FP_DEADLYSIGHT 21
+
+void SV_BarPreSnapshot(void)
+{
+	for (int i = 0; i < sv_maxclients->integer; i++) {
+		client_t* cl = &svs.clients[i];
+		barState_t* st = &gBarState[i];
+		st->hazeSightAdded = qfalse;
+		if (st->hazeUntil <= svs.time || cl->state != CS_ACTIVE || !cl->gentity || !cl->gentity->playerState) {
+			continue;
+		}
+		playerState_t* ps = cl->gentity->playerState;
+		if (ps->persistant[PERS_SPAWN_COUNT] != st->spawnCount || ps->stats[STAT_HEALTH] <= 0) {
+			continue;
+		}
+		if (!(ps->fd.forcePowersActive & (1 << BAR_MB2_FP_DEADLYSIGHT))) {
+			ps->fd.forcePowersActive |= (1 << BAR_MB2_FP_DEADLYSIGHT);
+			st->hazeSightAdded = qtrue;
+		}
+	}
+}
+
+void SV_BarPostSnapshot(void)
+{
+	for (int i = 0; i < sv_maxclients->integer; i++) {
+		client_t* cl = &svs.clients[i];
+		barState_t* st = &gBarState[i];
+		if (st->hazeSightAdded && cl->gentity && cl->gentity->playerState) {
+			cl->gentity->playerState->fd.forcePowersActive &= ~(1 << BAR_MB2_FP_DEADLYSIGHT);
+		}
+		st->hazeSightAdded = qfalse;
+	}
 }
 
 void SV_BarFrame(void)
@@ -857,10 +923,7 @@ void SV_BarFrame(void)
 			}
 		}
 
-		// Kept a moment ahead of the clock; it lapses by itself when Spice ends.
-		if (st->hazeUntil > svs.time) {
-			ps->fd.forceRageRecoveryTime = sv.time + 250;
-		}
+		Bar_HazeFrame(cl, st);
 
 		for (int f = 0; f < BAR_MAX_FX; f++) {
 			if (st->fx[f].drink && st->fx[f].until > svs.time && svs.time >= st->fx[f].nextPuff) {

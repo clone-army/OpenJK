@@ -107,6 +107,24 @@ static int Emote_AnimByName(const char* name)
 	return -1;
 }
 
+// For other server code (social NPCs): play MBII animation `anim` on any
+// entity with a playerState, both halves or just the torso, held for its
+// length. qfalse if the animation or the game's functions can't be found.
+qboolean SV_EntitySetAnim(sharedEntity_t* ent, const char* anim, qboolean torsoOnly)
+{
+	if (!Emote_Resolve() || !ent || !ent->playerState) {
+		return qfalse;
+	}
+	const int a = Emote_AnimByName(anim);
+	if (a < 0) {
+		return qfalse;
+	}
+	void* old = GVM_BeginNative();
+	gSetAnim(ent, torsoOnly ? EMOTE_SETANIM_TORSO : EMOTE_SETANIM_BOTH, a, EMOTE_ANIM_FLAGS);
+	GVM_EndNative(old);
+	return qtrue;
+}
+
 static qboolean Emote_Enabled(void)
 {
 	return (g_socialMode && g_socialMode->integer) ? qtrue : qfalse;
