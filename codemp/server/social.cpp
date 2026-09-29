@@ -1419,7 +1419,10 @@ static void Social_NpcFrame(void)
 // TEAM_FREE: they go for both teams alike. The regulars leave while it's on
 // (Social_NpcFrame). It ends when they're all down, after g_barFightSeconds,
 // or on "!barfight stop"; anything left is removed. g_barFightEnable.
-// With g_barFightRally ("x y z yaw") set, they first walk there (MBII's
+// With g_barFightRoutes set ("main bar"), each walks one of those !wp routes
+// (handed out in turn) and breaks off to fight when a player's close or the
+// route's done. Otherwise, with g_barFightRally ("x y z yaw") set, they
+// first walk there (MBII's
 // NPC_SetMoveGoal) and start hunting once they've arrived; either way each
 // is pointed at the nearest player (G_SetEnemy), since NPC AI only charges
 // an enemy it has seen.
@@ -1455,6 +1458,11 @@ static struct {
 	int    spawnedAt[BARFIGHT_MAX];
 	qboolean goaled[BARFIGHT_MAX];   // sent towards the rally point
 	qboolean arrived[BARFIGHT_MAX];  // there (or gave up walking): hunting now
+	char   route[BARFIGHT_MAX][32];  // attack route it walks first ("" = rally point)
+	int    wp[BARFIGHT_MAX];         // ...the point it's heading for
+	int    wpGoalAt[BARFIGHT_MAX];
+	int    wpSince[BARFIGHT_MAX];    // heading for this point since
+	float  wpBest[BARFIGHT_MAX];
 	int    count;
 	int    nextHunt;
 	qboolean haveRally;
@@ -1584,6 +1592,19 @@ static void Social_BarFightFrame(void)
 				VectorCopy(org, e->s.pos.trBase);
 				VectorCopy(org, e->r.currentOrigin);
 				gBarFight.spawnedAt[gBarFight.count] = svs.time;
+				// Attack routes (g_barFightRoutes), handed out in turn.
+				gBarFight.route[gBarFight.count][0] = '\0';
+				if (g_barFightRoutes && g_barFightRoutes->string[0]) {
+					char names[MAX_CVAR_VALUE_STRING], *list[8];
+					int routes = 0;
+					Q_strncpyz(names, g_barFightRoutes->string, sizeof(names));
+					for (char* w = strtok(names, " ,"); w && routes < 8; w = strtok(NULL, " ,")) {
+						list[routes++] = w;
+					}
+					if (routes) {
+						Q_strncpyz(gBarFight.route[gBarFight.count], list[gBarFight.count % routes], sizeof(gBarFight.route[0]));
+					}
+				}
 				gBarFight.ents[gBarFight.count++] = e->s.number;
 				Com_Printf("Social mode: bar fight - %s (entity %d)\n", k->types[n % types], e->s.number);
 			} else {
@@ -1604,10 +1625,53 @@ static void Social_BarFightFrame(void)
 			}
 			sharedEntity_t* npc = SV_GentityNum(gBarFight.ents[i]);
 
+			// An attack route (g_barFightRoutes): walk its points in order,
+			// and break off to fight once a player's within 350 units or
+			// the route's done - a point it can't get any closer to in 6s
+			// is skipped.
+			if (gBarFight.route[i][0] && !gBarFight.arrived[i]) {
+				socialRoute_t* r = Social_FindRoute(gBarFight.route[i], qfalse);
+				qboolean close = qfalse;
+				for (int c = 0; c < sv_maxclients->integer && !close; c++) {
+					const client_t* pc = &svs.clients[c];
+					if (pc->state == CS_ACTIVE && pc->gentity && pc->gentity->playerState &&
+						Social_IsSpawned(pc->gentity->playerState, c) && pc->gentity->playerState->stats[STAT_HEALTH] > 0 &&
+						DistanceSquared(pc->gentity->playerState->origin, npc->playerState->origin) < 350.0f * 350.0f) {
+						close = qtrue;
+					}
+				}
+				if (close || !r || gBarFight.wp[i] >= r->count || !gSetMoveGoal) {
+					gBarFight.arrived[i] = qtrue;
+				} else if (svs.time - gBarFight.spawnedAt[i] > 800) {
+					const float* p = r->pts[gBarFight.wp[i]];
+					const float dx = npc->playerState->origin[0] - p[0], dy = npc->playerState->origin[1] - p[1];
+					const float d = sqrtf(dx * dx + dy * dy);
+					if (d < 48.0f || (gBarFight.wpSince[i] && svs.time - gBarFight.wpSince[i] > 6000 && d > gBarFight.wpBest[i] - 16.0f)) {
+						gBarFight.wp[i]++;
+						gBarFight.wpGoalAt[i] = 0;
+						gBarFight.wpSince[i] = 0;
+					} else {
+						if (!gBarFight.wpSince[i] || d < gBarFight.wpBest[i] - 16.0f) {
+							gBarFight.wpSince[i] = svs.time;
+							gBarFight.wpBest[i] = d;
+						}
+						if (!gBarFight.wpGoalAt[i] || svs.time - gBarFight.wpGoalAt[i] > 3000) {
+							vec3_t goal;
+							VectorCopy(p, goal);
+							void* old = GVM_BeginNative();
+							gSetMoveGoal(npc, goal, 24, 0, -1, NULL);
+							GVM_EndNative(old);
+							gBarFight.wpGoalAt[i] = svs.time;
+						}
+					}
+					continue;
+				}
+			}
+
 			// First, into the room: walk to the rally point (its AI
 			// follows a move goal while it has no enemy), a little apart
 			// from each other; hunt once there, or after 10s regardless.
-			if (gBarFight.haveRally && !gBarFight.arrived[i]) {
+			if (gBarFight.haveRally && !gBarFight.arrived[i] && !gBarFight.route[i][0]) {
 				const int age = svs.time - gBarFight.spawnedAt[i];
 				vec3_t goal;
 				VectorCopy(gBarFight.rally, goal);
