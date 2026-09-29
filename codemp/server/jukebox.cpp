@@ -15,6 +15,13 @@ g_economyJukeboxEnable (on top of the g_creditSystemEnable master switch,
 like !buy and !bar); g_jukeboxCost is the price of a track and
 g_jukeboxCooldown how long one plays before anyone can change it.
 
+With g_jukeboxAutoplay on, the jukebox is never idle: while nobody's pick
+is playing it plays random tracks (a minute or longer, each for at most
+g_jukeboxAutoplayMax seconds), a paid pick plays in full and random play
+carries on after it, and a new round or map (which puts the map's own
+music back) starts a fresh random track. Nothing changes while the server
+is empty. Track lengths come from jukebox_tracks.h.
+
 The music is the stock CS_MUSIC configstring (2 in both MBII and the
 engine): cgame restarts the background track whenever it changes
 (CG_StartMusic, cg_main.c), exactly as it does for a map's own worldspawn
@@ -30,6 +37,7 @@ typedef struct {
 	const char* name;
 	const char* path;       // as a map's "music" key: no extension
 	const char* category;
+	int         seconds;    // its length, measured from the pk3
 } jukeboxTrack_t;
 
 #include "jukebox_tracks.h"
@@ -40,6 +48,22 @@ typedef struct {
 static int gJukeboxNextChange = 0;
 static char gJukeboxLastSet[MAX_STRING_CHARS];   // what we last put in CS_MUSIC
 static char gJukeboxMapMusic[MAX_QPATH];         // the map's own track, to go back to
+static int gJukeboxAutoNext = 0;                 // autoplay: when the current track is over (0 = now)
+static int gJukeboxAutoLast = -1;                // autoplay: last random track, not to repeat
+
+#define JUKEBOX_AUTO_MIN_SECONDS 60              // shorter tracks are stingers, not songs
+
+static qboolean Jukebox_Autoplay(void)
+{
+	return (g_economyJukeboxEnable && g_economyJukeboxEnable->integer &&
+		g_jukeboxAutoplay && g_jukeboxAutoplay->integer) ? qtrue : qfalse;
+}
+
+static void Jukebox_SetMusic(const char* music)
+{
+	Q_strncpyz(gJukeboxLastSet, music, sizeof(gJukeboxLastSet));
+	SV_SetConfigstring(CS_MUSIC, gJukeboxLastSet);
+}
 
 // If CS_MUSIC isn't what we last set, the map (or a new round) set it, so
 // that's the music to return to: its loop track, or its only track.
@@ -134,14 +158,65 @@ static void Jukebox_Play(client_t* cl, int index)
 	cl->economyCredits -= cost;
 	SV_EconomyPersistCredits(cl);
 	Jukebox_NoteMapMusic();
-	// Intro = the pick, loop = the map's music: one play-through, then back.
-	Q_strncpyz(gJukeboxLastSet, gJukeboxMapMusic[0] ? va("%s %s", t->path, gJukeboxMapMusic) : t->path,
-		sizeof(gJukeboxLastSet));
-	SV_SetConfigstring(CS_MUSIC, gJukeboxLastSet);
+	if (Jukebox_Autoplay()) {
+		// Plays in full, then random play carries on.
+		Jukebox_SetMusic(t->path);
+		gJukeboxAutoNext = svs.time + Q_max(t->seconds, 30) * 1000;
+	} else {
+		// Intro = the pick, loop = the map's music: one play-through, then back.
+		Jukebox_SetMusic(gJukeboxMapMusic[0] ? va("%s %s", t->path, gJukeboxMapMusic) : t->path);
+	}
 	gJukeboxNextChange = svs.time + (g_jukeboxCooldown ? Q_max(0, g_jukeboxCooldown->integer) : 60) * 1000;
 
 	SV_SendServerCommand(NULL, "chat \"^5[Jukebox] ^7%s ^7put on ^3%s^7.\"\n", cl->name, t->name);
 	SV_EconomyPrint(cl, va("Now playing: %s. New balance: %d", t->name, cl->economyCredits));
+}
+
+// Autoplay: a random track whenever the last one's over.
+void SV_JukeboxFrame(void)
+{
+	if (!Jukebox_Autoplay()) {
+		gJukeboxAutoNext = 0;
+		return;
+	}
+	// A new round or map puts its own music back: carry on straight away.
+	const char* cur = sv.configstrings[CS_MUSIC] ? sv.configstrings[CS_MUSIC] : "";
+	if (gJukeboxLastSet[0] && Q_stricmp(cur, gJukeboxLastSet)) {
+		gJukeboxLastSet[0] = '\0';
+		gJukeboxAutoNext = 0;
+	}
+	if (gJukeboxAutoNext && svs.time < gJukeboxAutoNext) {
+		return;
+	}
+
+	qboolean anyone = qfalse;
+	for (int i = 0; i < sv_maxclients->integer && !anyone; i++) {
+		const client_t* c = &svs.clients[i];
+		anyone = (c->state == CS_ACTIVE && c->netchan.remoteAddress.type != NA_BOT) ? qtrue : qfalse;
+	}
+	if (!anyone) {
+		return;
+	}
+
+	int pick = -1;
+	for (int tries = 0; tries < 50; tries++) {
+		const int n = Q_irand(0, JUKEBOX_TRACK_COUNT - 1);
+		if (kJukeboxTracks[n].seconds >= JUKEBOX_AUTO_MIN_SECONDS && n != gJukeboxAutoLast) {
+			pick = n;
+			break;
+		}
+	}
+	if (pick < 0) {
+		gJukeboxAutoNext = svs.time + 60000;
+		return;
+	}
+
+	const jukeboxTrack_t* t = &kJukeboxTracks[pick];
+	const int maxMs = (g_jukeboxAutoplayMax && g_jukeboxAutoplayMax->integer > 0) ? g_jukeboxAutoplayMax->integer * 1000 : 0;
+	gJukeboxAutoLast = pick;
+	Jukebox_SetMusic(t->path);
+	gJukeboxAutoNext = svs.time + (maxMs ? Q_min(t->seconds * 1000, maxMs) : t->seconds * 1000);
+	SV_SendServerCommand(NULL, "chat \"^5[Jukebox] ^7Now playing ^3%s^7.\"\n", t->name);
 }
 
 qboolean SV_JukeboxCommand(client_t* cl, const char* args)
