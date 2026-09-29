@@ -69,6 +69,8 @@ command: nothing is broadcast, and the commands never show up as chat.
 | `g_economyBountyEnable` | `0` | Bounties (needs the master switch too) |
 | `g_economyBarEnable` | `0` | The `!bar` drinks menu (needs the master switch too) |
 | `g_economyJukeboxEnable` | `0` | The `!jukebox` (needs the master switch too): `g_jukeboxCost` (10) per track, `g_jukeboxCooldown` (60) seconds before it can change again |
+| `g_jukeboxAutoplay` | `0` | Play random tracks (a minute or longer) whenever nobody's pick is playing; picks play in full, then random carries on |
+| `g_jukeboxAutoplayMax` | `300` | Longest a random track plays, in seconds (`0` = the whole track) |
 | `g_economyPazaakEnable` | `0` | `!pazaak` challenges for credits (needs the master switch too) |
 | `g_economyBetEnable` | `0` | `!bet` on duels (needs the master switch too): `g_betWindowSeconds` (30), `g_betMax` (100), `g_betWinBonus` (20), `g_betLoserRefund` (25) |
 | `g_economyChanceEnable` | `0` | `!chance` red/blue challenges for credits (needs the master switch too) |

@@ -1077,6 +1077,10 @@ void SV_Init (void) {
 	g_economyLoginReminder = Cvar_Get("g_economyLoginReminder", "0", CVAR_TEMP, "Seconds after joining to remind a player who hasn't logged in to !register or !login (0 = off)");
 	g_economyLoginReminder->flags &= ~CVAR_ARCHIVE;
 	g_economyJukeboxEnable->flags &= ~CVAR_ARCHIVE;
+	g_jukeboxAutoplay = Cvar_Get("g_jukeboxAutoplay", "0", CVAR_TEMP, "Jukebox plays random tracks whenever nobody's pick is playing");
+	g_jukeboxAutoplay->flags &= ~CVAR_ARCHIVE;
+	g_jukeboxAutoplayMax = Cvar_Get("g_jukeboxAutoplayMax", "300", CVAR_TEMP, "Longest a random jukebox track plays, in seconds (0 = the whole track)");
+	g_jukeboxAutoplayMax->flags &= ~CVAR_ARCHIVE;
 	g_jukeboxCost->flags &= ~CVAR_ARCHIVE;
 	g_jukeboxCooldown->flags &= ~CVAR_ARCHIVE;
 	g_economyPazaakEnable->flags &= ~CVAR_ARCHIVE;

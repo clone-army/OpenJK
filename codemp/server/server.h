@@ -417,6 +417,8 @@ extern	cvar_t* g_economyRegisterBonus;
 extern	cvar_t* g_economyDailyBonus;
 extern	cvar_t* g_economyLoginReminder;
 extern	cvar_t* g_economyJukeboxEnable;
+extern	cvar_t* g_jukeboxAutoplay;
+extern	cvar_t* g_jukeboxAutoplayMax;
 extern	cvar_t* g_jukeboxCost;
 extern	cvar_t* g_jukeboxCooldown;
 extern	cvar_t* g_economyPazaakEnable;
@@ -635,6 +637,7 @@ void SV_BarClientThink(client_t* cl, usercmd_t* cmd);
 // jukebox.cpp
 //
 qboolean SV_JukeboxCommand(client_t* cl, const char* args);
+void SV_JukeboxFrame(void);
 
 //
 // emotes.cpp

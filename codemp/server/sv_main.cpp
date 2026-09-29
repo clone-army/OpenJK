@@ -83,6 +83,8 @@ cvar_t* g_economyRegisterBonus;
 cvar_t* g_economyDailyBonus;
 cvar_t* g_economyLoginReminder;
 cvar_t* g_economyJukeboxEnable;
+cvar_t* g_jukeboxAutoplay;
+cvar_t* g_jukeboxAutoplayMax;
 cvar_t* g_jukeboxCost;
 cvar_t* g_jukeboxCooldown;
 cvar_t* g_economyPazaakEnable;
@@ -1335,6 +1337,7 @@ void SV_Frame( int msec ) {
 	SV_BetFrame();
 	SV_EmotesFrame();
 	SV_RaffleFrame();
+	SV_JukeboxFrame();
 	SV_BartenderFrame();
 	SV_BlackjackFrame();
 
