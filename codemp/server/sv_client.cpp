@@ -2364,6 +2364,12 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 	if ( !Q_stricmp( commandName, "barfight" ) && g_socialMode && g_socialMode->integer ) {
 		return SV_SocialBarFightCommand( cl, chatCursor );
 	}
+	if ( !Q_stricmp( commandName, "wp" ) && g_socialMode && g_socialMode->integer ) {
+		return SV_SocialWaypointCommand( cl, chatCursor );
+	}
+	if ( !Q_stricmp( commandName, "where" ) && g_socialMode && g_socialMode->integer ) {
+		return SV_SocialWhereCommand( cl );
+	}
 
 	if ( SV_SocialSpawnCommand( cl, commandName ) ) {
 		return qtrue;
