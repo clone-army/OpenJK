@@ -20,6 +20,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 ===========================================================================
 */
 
+#include <errno.h>
 #include "qcommon/q_shared.h"
 #include "qcommon/qcommon.h"
 #include "sys_local.h"
@@ -353,6 +354,17 @@ char *CON_Input( void )
 	if(ttycon_on)
 	{
 		avail = read(STDIN_FILENO, &key, 1);
+		if (avail == 0 || (avail == -1 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR))
+		{
+			// The terminal is gone - EOF, or EIO after a hangup (its screen
+			// session was closed). Stop reading it: this used to treat EOF
+			// as a keypress, handing Com_Milliseconds' event loop console
+			// input forever, so an engine told to shut down (SIGHUP from the
+			// closed session) spun in SV_Shutdown holding its port.
+			ttycon_on = qfalse;
+			stdin_active = qfalse;
+			return NULL;
+		}
 		if (avail != -1)
 		{
 			// we have something
