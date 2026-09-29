@@ -850,9 +850,11 @@ typedef struct {
 	float  bestDist;   // closest it's got to that point
 	int    stuckSince; // since when it's not got any closer
 	int    stuckCount;
+	int    dir;        // pace: +1 towards the last point, -1 back
+	int    pauseUntil; // pace: standing at an end until then
 } socialNpc_t;
 
-enum { SOCIAL_POSE_STAND, SOCIAL_POSE_SIT, SOCIAL_POSE_IDLE, SOCIAL_POSE_BARTEND, SOCIAL_POSE_ROAM, SOCIAL_POSE_PATROL };
+enum { SOCIAL_POSE_STAND, SOCIAL_POSE_SIT, SOCIAL_POSE_IDLE, SOCIAL_POSE_BARTEND, SOCIAL_POSE_ROAM, SOCIAL_POSE_PATROL, SOCIAL_POSE_PACE };
 
 static const char* const kNpcIdleAnims[] = {
 	"BOTH_GUARD_LOOKAROUND1", "BOTH_HEADNOD", "BOTH_TALK1", "BOTH_HEADSHAKE", "BOTH_GUARD_LOOKAROUND1",
@@ -897,11 +899,17 @@ static void Social_ParseNpcs(void)
 		if (sscanf(entry, "%31s %f %f %f %f %47s", n->type, &n->origin[0], &n->origin[1], &n->origin[2], &n->yaw, flag) >= 5) {
 			n->ent = -1;
 			n->roam = !Q_stricmp(flag, "roam") ? qtrue : qfalse;
+			qboolean pace = qfalse;
 			if (!Q_stricmpn(flag, "patrol:", 7) && flag[7]) {
 				Q_strncpyz(n->route, flag + 7, sizeof(n->route));
 				n->roam = qtrue; // never held on its spot
+			} else if (!Q_stricmpn(flag, "pace:", 5) && flag[5]) {
+				Q_strncpyz(n->route, flag + 5, sizeof(n->route));
+				n->roam = qtrue;
+				pace = qtrue;
 			}
-			n->pose = n->route[0] ? SOCIAL_POSE_PATROL :
+			n->pose = pace ? SOCIAL_POSE_PACE :
+				n->route[0] ? SOCIAL_POSE_PATROL :
 				n->roam ? SOCIAL_POSE_ROAM :
 				!Q_stricmp(flag, "sit") ? SOCIAL_POSE_SIT :
 				!Q_stricmp(flag, "idle") ? SOCIAL_POSE_IDLE :
@@ -1198,17 +1206,43 @@ static void Social_NpcPatrol(socialNpc_t* n, sharedEntity_t* e)
 		return;
 	}
 	n->nextPatrol = svs.time + 500;
-	if (n->wp >= r->count) {
+	if (n->wp >= r->count || n->wp < 0) {
 		n->wp = 0;
+	}
+	if (!n->dir) {
+		n->dir = 1;
 	}
 
 	playerState_t* ps = e->playerState;
+	const qboolean pace = (n->pose == SOCIAL_POSE_PACE) ? qtrue : qfalse;
+
+	// Pacing and stood at an end: now and then a gesture, till it's time.
+	if (pace && svs.time < n->pauseUntil) {
+		if (svs.time >= n->nextAnim) {
+			SV_EntitySetAnim(e, kNpcBartendAnims[Q_irand(0, ARRAY_LEN(kNpcBartendAnims) - 1)], qfalse);
+			n->nextAnim = svs.time + Q_irand(4000, 8000);
+		}
+		n->stuckSince = svs.time;
+		return;
+	}
 	const float* p = r->pts[n->wp];
 	const float dx = ps->origin[0] - p[0], dy = ps->origin[1] - p[1];
 	const float d = sqrtf(dx * dx + dy * dy);
 
 	if (d < 40.0f) {
-		n->wp = (n->wp + 1) % r->count;
+		if (pace) {
+			// At an end: stand a while, then head back the other way.
+			if (n->wp == 0 || n->wp == r->count - 1) {
+				n->pauseUntil = svs.time + Q_irand(10000, 20000);
+				n->nextAnim = svs.time + Q_irand(1500, 4000);
+				n->dir = (n->wp == 0) ? 1 : -1;
+			}
+			if (r->count > 1) {
+				n->wp += n->dir;
+			}
+		} else {
+			n->wp = (n->wp + 1) % r->count;
+		}
 		n->goalAt = 0;
 		n->bestDist = 1e9f;
 		n->stuckSince = svs.time;
@@ -1226,7 +1260,14 @@ static void Social_NpcPatrol(socialNpc_t* n, sharedEntity_t* e)
 			VectorClear(ps->velocity);
 			n->stuckCount = 0;
 		}
-		n->wp = (n->wp + 1) % r->count;
+		if (pace) {
+			if (n->wp + n->dir < 0 || n->wp + n->dir >= r->count) {
+				n->dir = -n->dir;
+			}
+			n->wp = (r->count > 1) ? n->wp + n->dir : 0;
+		} else {
+			n->wp = (n->wp + 1) % r->count;
+		}
 		n->goalAt = 0;
 		n->bestDist = 1e9f;
 		n->stuckSince = svs.time;
@@ -1322,7 +1363,7 @@ static void Social_NpcFrame(void)
 				continue;
 			}
 			n->deadAt = 0;
-			if (n->pose == SOCIAL_POSE_PATROL) {
+			if (n->pose == SOCIAL_POSE_PATROL || n->pose == SOCIAL_POSE_PACE) {
 				// Walking legs while it moves: left to itself it glided
 				// along its route with its legs still.
 				const playerState_t* ps = SV_GentityNum(n->ent)->playerState;
@@ -1393,6 +1434,8 @@ static void Social_NpcFrame(void)
 		n->failures = 0;
 		n->ent = e->s.number;
 		n->wp = 0;
+		n->dir = 1;
+		n->pauseUntil = 0;
 		n->goalAt = 0;
 		n->stuckSince = 0;
 		n->stuckCount = 0;
