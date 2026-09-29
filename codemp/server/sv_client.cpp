@@ -421,6 +421,9 @@ void SV_DropClient( client_t *drop, const char *reason ) {
 	// economyHandle (used as the stats key) are gone
 	SV_StatsClientDisconnect( drop );
 
+	// a bounty on someone who's gone can never be collected - give it back
+	SV_EconomyBountyRefund( drop, "they left" );
+
 	// don't let whoever connects into this slot next inherit a stale mute
 	// or message count from a completely different player
 	drop->chatMsgCount = 0;
@@ -2010,6 +2013,66 @@ void SV_EconomyPersistCredits( client_t *cl ) {
 	SV_EconomyEnd();
 }
 
+// Clears a bounty that's been collected (or refunded).
+static void SV_EconomyBountyClear( client_t *target ) {
+	target->economyBounty = 0;
+	target->economyBountyPlacerName[0] = '\0';
+	Com_Memset( target->economyBountyStakes, 0, sizeof( target->economyBountyStakes ) );
+}
+
+// Gives every backer of target's bounty their share back: straight into the
+// balance of a backer on this server, else into their account (which their
+// session on another server picks up by itself).
+void SV_EconomyBountyRefund( client_t *target, const char *why ) {
+	int total = 0;
+
+	if ( target->economyBounty <= 0 ) {
+		return;
+	}
+
+	for ( int s = 0; s < ECONOMY_BOUNTY_BACKERS; s++ ) {
+		const bountyStake_t *stake = &target->economyBountyStakes[s];
+		client_t *backer = NULL;
+
+		if ( !stake->handle[0] || stake->amount <= 0 ) {
+			continue;
+		}
+		for ( int i = 0; i < sv_maxclients->integer; i++ ) {
+			client_t *c = &svs.clients[i];
+			if ( c != target && c->state >= CS_CONNECTED && !Q_stricmp( c->economyHandle, stake->handle ) ) {
+				backer = c;
+				break;
+			}
+		}
+		if ( backer ) {
+			backer->economyCredits += stake->amount;
+			SV_EconomyPersistCredits( backer );
+			SV_EconomyPrint( backer, va( "Your %d credit bounty on %s ^7was refunded (%s). Balance: %d",
+				stake->amount, target->name, why, backer->economyCredits ) );
+		} else {
+			SV_EconomyAddCreditsToAccount( stake->handle, stake->amount );
+		}
+		total += stake->amount;
+	}
+
+	if ( total > 0 ) {
+		Com_Printf( "Economy: refunded %d credits of bounty on %s (%s)\n", total, target->name, why );
+	}
+	SV_EconomyBountyClear( target );
+}
+
+// Every open bounty, before the server shuts down and forgets them.
+void SV_EconomyRefundAllBounties( const char *why ) {
+	if ( !svs.clients || !sv_maxclients ) {
+		return;
+	}
+	for ( int i = 0; i < sv_maxclients->integer; i++ ) {
+		if ( svs.clients[i].state >= CS_CONNECTED ) {
+			SV_EconomyBountyRefund( &svs.clients[i], why );
+		}
+	}
+}
+
 static qboolean SV_EconomyEnabled( void ) {
 	return (Cvar_VariableIntegerValue("g_creditSystemEnable") == 1) ? qtrue : qfalse;
 }
@@ -2544,6 +2607,29 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 			if ( cl->economyCredits < amount ) {
 				SV_EconomyPrint( cl, va( "Not enough credits. You have %d.", cl->economyCredits ) );
 				return qtrue;
+			}
+
+			// Each backer's share, so it can go back to them if the bounty
+			// is never collected.
+			{
+				bountyStake_t *stake = NULL;
+				for ( int s = 0; s < ECONOMY_BOUNTY_BACKERS && !stake; s++ ) {
+					if ( !Q_stricmp( target->economyBountyStakes[s].handle, cl->economyHandle ) ) {
+						stake = &target->economyBountyStakes[s];
+					}
+				}
+				for ( int s = 0; s < ECONOMY_BOUNTY_BACKERS && !stake; s++ ) {
+					if ( !target->economyBountyStakes[s].handle[0] ) {
+						stake = &target->economyBountyStakes[s];
+						Q_strncpyz( stake->handle, cl->economyHandle, sizeof( stake->handle ) );
+					}
+				}
+				if ( !stake ) {
+					SV_EconomyPrint( cl, va( "%s ^7already has %d people backing their bounty - add to it another time.",
+						target->name, ECONOMY_BOUNTY_BACKERS ) );
+					return qtrue;
+				}
+				stake->amount += amount;
 			}
 
 			cl->economyCredits -= amount;
@@ -3339,8 +3425,7 @@ void SV_EconomyFrame( void ) {
 							char placerName[MAX_NAME_LENGTH];
 							Q_strncpyz( placerName, victim->economyBountyPlacerName, sizeof( placerName ) );
 
-							victim->economyBounty = 0;
-							victim->economyBountyPlacerName[0] = '\0';
+							SV_EconomyBountyClear( victim );
 							attacker->economyCredits += payout;
 							SV_EconomyPrint( attacker, va( "You won %s's bounty of %d credits!", victim->name, payout ) );
 							SV_EconomyPrint( victim, "Your bounty was claimed." );

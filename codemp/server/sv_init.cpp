@@ -1181,6 +1181,8 @@ void SV_Shutdown( char *finalmsg )
 //	Com_Printf( "----- Server Shutdown -----\n" );
 
 	if ( svs.clients && !com_errorEntered ) {
+		// Bounties only live in memory: hand them back before they're lost.
+		SV_EconomyRefundAllBounties( "server restarting" );
 		SV_FinalMessage( finalmsg );
 	}
 
