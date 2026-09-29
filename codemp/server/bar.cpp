@@ -208,6 +208,7 @@ typedef enum {
 	BAR_RUNAWAY,
 	BAR_CROUCH,
 	BAR_CLUMSY,     // tripping over every few seconds
+	BAR_TRIGGER,    // Blaster Brew: fires your weapon in random bursts
 	BAR_CURE,       // Nurse Wine: ends everything and clears the tab (at order)
 	BAR_PRESCRIBE,  // Doctor Vodka: one of everything (at order)
 	BAR_LOOK,       // just the visual in .look
@@ -251,6 +252,7 @@ static const barDrink_t kBarDrinks[] = {
 	{ "spice",             "Spice",             "floaty, woozy and seeing red for 45 seconds", 20, BAR_MOON,    0,   45,  BAR_LOOK_NONE,    BAR_LOOK_NONE,   BAR_LOOK, "effects/spice/pipe_smoke", 500, BAR_FX_HEAD },
 	{ "nurse_wine",        "Nurse Wine",        "cures every drink effect and clears your tab", 15, BAR_CURE,    0,   0,   BAR_LOOK_NONE,    BAR_LOOK_NONE, BAR_LOOK, NULL, 0, BAR_FX_HEAD },
 	{ "doctor_vodka",      "Doctor Vodka",      "one of everything on the menu, all at once",   40, BAR_PRESCRIBE, 0, 0,   BAR_LOOK_NONE,    BAR_LOOK_NONE, BAR_LOOK, NULL, 0, BAR_FX_HEAD },
+	{ "blaster_brew",      "Blaster Brew",      "your trigger finger twitches for a minute",     12, BAR_TRIGGER, 0,   60,  BAR_LOOK_NONE,    BAR_LOOK_NONE, BAR_LOOK, NULL, 0, BAR_FX_HEAD },
 };
 
 static cvar_t* gBarCostCvars[ARRAY_LEN(kBarDrinks)];
@@ -258,6 +260,8 @@ static cvar_t* gBarCostCvars[ARRAY_LEN(kBarDrinks)];
 typedef struct {
 	int spawnCount;         // the life these effects belong to
 	int until[BAR_NUM_EFFECTS];
+	int nextTrigger;        // Blaster Brew: next burst starts
+	int triggerEnd;         // ...and the current one ends
 	int scaleOriginal;
 	int scaleSet;
 	int swayYaw;            // drunk: delta_angles offset currently applied, in SHORT units
@@ -414,6 +418,12 @@ static void Bar_StartEffect(client_t* cl, barState_t* st, const barDrink_t* d, b
 				st->nextTrip = svs.time + Q_irand(3000, 6000);
 			}
 			break;
+		case BAR_TRIGGER:
+			if (fresh) {
+				st->nextTrigger = svs.time + Q_irand(1500, 4000);
+				st->triggerEnd = 0;
+			}
+			break;
 		default:
 			break;
 	}
@@ -430,6 +440,7 @@ static float Bar_WobbleFor(const char* id)
 		{ "tatooine_twister", 0.4f }, { "runaway_rum", 0.4f }, { "death_stick", 0.4f },
 		{ "spice", 0.35f }, { "bantha_sludge", 0.35f }, { "low_ceiling_lager", 0.35f },
 		{ "jawa_juice", 0.3f }, { "spotchka", 0.3f }, { "mustafar_magma", 0.3f }, { "ion_fizz", 0.3f },
+		{ "blaster_brew", 0.3f },
 		{ "bubble_brew", 0.25f },
 		{ "moon_milk", 0.2f }, { "sugar_rush", 0.2f }, { "hoth_chiller", 0.2f },
 	};
@@ -680,6 +691,17 @@ void SV_BarClientThink(client_t* cl, usercmd_t* cmd)
 	if (Bar_Active(st, BAR_CROUCH)) {
 		cmd->upmove = -127;
 	}
+	// A burst of fire every few seconds - not in a duel, where it could
+	// decide the fight (and the bets on it).
+	if (Bar_Active(st, BAR_TRIGGER) && !cl->gentity->playerState->duelInProgress) {
+		if (svs.time >= st->nextTrigger) {
+			st->triggerEnd = svs.time + Q_irand(200, 700);
+			st->nextTrigger = st->triggerEnd + Q_irand(2000, 6000);
+		}
+		if (svs.time < st->triggerEnd) {
+			cmd->buttons |= BUTTON_ATTACK;
+		}
+	}
 }
 
 static void Bar_Expire(client_t* cl, barState_t* st, barEffect_t e, const char* message)
@@ -738,6 +760,10 @@ static void Bar_HazeFrame(client_t* cl, barState_t* st)
 static void Bar_MovementFrame(client_t* cl, barState_t* st, float dt)
 {
 	playerState_t* ps = cl->gentity->playerState;
+
+	if (st->until[BAR_TRIGGER] && !Bar_Active(st, BAR_TRIGGER)) {
+		Bar_Expire(cl, st, BAR_TRIGGER, "Your trigger finger calms down.");
+	}
 	const qboolean onGround = (ps->groundEntityNum != ENTITYNUM_NONE) ? qtrue : qfalse;
 
 	if (st->until[BAR_SPIN]) {
