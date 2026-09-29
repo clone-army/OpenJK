@@ -2,7 +2,7 @@
 ===========================================================================
 betting.cpp — betting on duels, part of the economy (!bet)
 
-  !bets start                a fighter opens their duel to bets: both of them
+  !bet start                a fighter opens their duel to bets (!bets start too): both
                              are frozen while bets come in. One fight at a
                              time takes bets, until it's decided
   !bet                       the fight taking bets, and what's backing whom
@@ -11,7 +11,7 @@ betting.cpp — betting on duels, part of the economy (!bet)
 Duels are tracked straight from the players' own playerState -
 duelInProgress and duelIndex, stock fields, the same ones social.cpp's
 duel handling reads - so any duel counts however it was started. A duel
-only takes bets if one of its fighters opens it with "!bets start" within
+only takes bets if one of its fighters opens it with "!bet start" within
 BET_OPEN_MS of it starting, while both are still at full health; then both
 fighters are frozen for g_betWindowSeconds (30) - their input is rewritten
 before the game sees it, like the bar's control drinks, so nobody lands a
@@ -159,6 +159,7 @@ static void Bet_Resolve(betDuel_t* duel, int winner)
 			Bet_Pay(b, b->amount);
 			if (here) {
 				Bet_Print(cl, va("That duel ended without a winner - your %d credits are back.", b->amount));
+				SV_EconomyResultBanner(cl, "Bet", 0);
 			}
 		} else if (b->side == winner) {
 			const int bonus = Q_min(b->amount, g_betWinBonus ? Q_max(0, g_betWinBonus->integer) : 20);
@@ -170,6 +171,7 @@ static void Bet_Resolve(betDuel_t* duel, int winner)
 			if (here) {
 				Bet_Print(cl, va("Your fighter won! ^2%d ^7credits back (stake %d + bonus %d + %d from the losers).",
 					payout, b->amount, bonus, share));
+				SV_EconomyResultBanner(cl, "Bet won", payout - b->amount);
 			}
 		} else {
 			const int refund = b->amount * refundPct / 100;
@@ -181,6 +183,7 @@ static void Bet_Resolve(betDuel_t* duel, int winner)
 				Bet_Print(cl, refund > 0
 					? va("Your fighter lost, and nobody backed the winner - %d of your %d credits back.", refund, b->amount)
 					: va("Your fighter lost - there go your %d credits.", b->amount));
+				SV_EconomyResultBanner(cl, "Bet lost", refund - b->amount);
 			}
 		}
 		memset(b, 0, sizeof(*b));
@@ -250,7 +253,7 @@ void SV_BetFrame(void)
 			if (Bet_Enabled() && Bet_WindowMs() > 0) {
 				for (int s = 0; s < 2; s++) {
 					Bet_Print(&svs.clients[duel->fighter[s]],
-						va("Want bets on this fight? ^5!bets start ^7in the next %ds.", BET_OPEN_MS / 1000));
+						va("Want bets on this fight? ^5!bet start ^7in the next %ds.", BET_OPEN_MS / 1000));
 				}
 			}
 		}
@@ -296,7 +299,7 @@ static void Bet_List(client_t* cl)
 		}
 	}
 	if (!duel) {
-		Bet_Print(cl, "No fight is taking bets right now. Duelling? ^5!bets start ^7in the first 10 seconds.");
+		Bet_Print(cl, "No fight is taking bets right now. Duelling? ^5!bet start ^7in the first 10 seconds.");
 		return;
 	}
 
@@ -318,7 +321,7 @@ static void Bet_List(client_t* cl)
 	SV_EconomyMenuPump(cl);
 }
 
-// "!bets start" from a fighter: opens their duel to bets and freezes both.
+// "!bet start" from a fighter: opens their duel to bets and freezes both.
 static void Bet_OpenDuel(client_t* cl)
 {
 	const int me = cl - svs.clients;

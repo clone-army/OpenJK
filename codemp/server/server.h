@@ -607,6 +607,7 @@ void SV_GunGameClientDisconnect(int clientNum);
 void SV_GunGameClampWeaponSelect(client_t* cl, usercmd_t* cmd);
 void SV_EconomyShopInitCvars( void );
 void SV_EconomyPrint( client_t *cl, const char *text );
+void SV_EconomyResultBanner( client_t *cl, const char *game, int net );
 qboolean SV_EconomyAddCreditsToAccount( const char *handle, int amount );
 void SV_EconomyBountyRefund( client_t *target, const char *why );
 void SV_EconomyRefundAllBounties( const char *why );

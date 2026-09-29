@@ -179,7 +179,7 @@ in the last 10 seconds.
 
 ### Betting on duels
 
-A duel only takes bets if one of its fighters types `!bets start` in its first 10 seconds, while both are still at full
+A duel only takes bets if one of its fighters types `!bet start` in its first 10 seconds, while both are still at full
 health. That announces it to the server and freezes both fighters for `g_betWindowSeconds` while bets come in; then
 "FIGHT!". One fight takes bets at a time, until it's decided. `!bet` shows that fight and what's backing each
 fighter; `!bet <fighter> <credits>` backs one, up to `g_betMax`, on one side only, and never on your own duel. Back the winner and

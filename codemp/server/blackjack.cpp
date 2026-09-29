@@ -146,7 +146,7 @@ static void Bj_Finish(int slot, bjHand_t* h)
 	const int you = Bj_Value(h->player, h->numPlayer);
 
 	if (you > 21) {
-		Bj_Settle(slot, h, 0, va("^1Bust! ^7You lose %d credits.", h->bet), va("^1Bust ^7- you lose %d", h->bet));
+		Bj_Settle(slot, h, 0, va("^1Bust! ^7You lose %d credits.", h->bet), va("^1Bust ^7- you lose %d credits", h->bet));
 		return;
 	}
 	while (Bj_Value(h->dealer, h->numDealer) < 17 && h->numDealer < BJ_MAX_CARDS) {
@@ -155,13 +155,13 @@ static void Bj_Finish(int slot, bjHand_t* h)
 	const int dealer = Bj_Value(h->dealer, h->numDealer);
 
 	if (dealer > 21) {
-		Bj_Settle(slot, h, h->bet * 2, va("^2Dealer busts - you win %d credits!", h->bet), va("^2You win +%d", h->bet));
+		Bj_Settle(slot, h, h->bet * 2, va("^2Dealer busts - you win %d credits!", h->bet), va("^2You win +%d credits!", h->bet));
 	} else if (you > dealer) {
-		Bj_Settle(slot, h, h->bet * 2, va("^2You win %d credits!", h->bet), va("^2You win +%d", h->bet));
+		Bj_Settle(slot, h, h->bet * 2, va("^2You win %d credits!", h->bet), va("^2You win +%d credits!", h->bet));
 	} else if (you == dealer) {
-		Bj_Settle(slot, h, h->bet, "^3Push ^7- your bet's back.", "^3Push ^7- bet returned");
+		Bj_Settle(slot, h, h->bet, "^3Push ^7- your bet's back.", "^3Push ^7- your credits are back");
 	} else {
-		Bj_Settle(slot, h, 0, va("^1Dealer wins. ^7You lose %d credits.", h->bet), va("^1Dealer wins ^7- you lose %d", h->bet));
+		Bj_Settle(slot, h, 0, va("^1Dealer wins. ^7You lose %d credits.", h->bet), va("^1Dealer wins ^7- you lose %d credits", h->bet));
 	}
 }
 
@@ -211,11 +211,11 @@ static void Bj_Deal(client_t* cl, const char* amountStr)
 	const qboolean youBj = Bj_IsBlackjack(h->player, h->numPlayer);
 	const qboolean dealerBj = Bj_IsBlackjack(h->dealer, h->numDealer);
 	if (youBj && dealerBj) {
-		Bj_Settle(slot, h, bet, "^3You both have blackjack ^7- push, your bet's back.", "^3Push ^7- bet returned");
+		Bj_Settle(slot, h, bet, "^3You both have blackjack ^7- push, your bet's back.", "^3Push ^7- your credits are back");
 	} else if (youBj) {
-		Bj_Settle(slot, h, bet + bet * 3 / 2, va("^2Blackjack! ^7You win %d credits!", bet * 3 / 2), va("^2BLACKJACK! +%d", bet * 3 / 2));
+		Bj_Settle(slot, h, bet + bet * 3 / 2, va("^2Blackjack! ^7You win %d credits!", bet * 3 / 2), va("^2BLACKJACK! You win +%d credits!", bet * 3 / 2));
 	} else if (dealerBj) {
-		Bj_Settle(slot, h, 0, va("^1Dealer has blackjack. ^7You lose %d credits.", bet), va("^1Dealer blackjack ^7- you lose %d", bet));
+		Bj_Settle(slot, h, 0, va("^1Dealer has blackjack. ^7You lose %d credits.", bet), va("^1Dealer blackjack ^7- you lose %d credits", bet));
 	} else {
 		Bj_ShowHand(cl, h);
 	}
