@@ -196,7 +196,7 @@ static const jukeboxTrack_t kJukeboxTracks[] = {
 	{ "Reactor", "music/mb2_cmp_reactor", "Maps", 309 },
 	{ "Rescue", "music/mb2_cmp_rescue", "Maps", 343 },
 	{ "Sabh", "music/mb2_sabh", "Maps", 300 },
-	{ "Sandy", "music/sandy", "Maps", 303 },
+	{ "Sandbarge", "music/sandy", "Star Wars", 303 },
 	{ "Smile", "music/smile", "Maps", 8 },
 	{ "Syndicate", "music/syndicate", "Maps", 150 },
 	{ "Tfed", "Music/tfed", "Maps", 210 },
