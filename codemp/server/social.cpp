@@ -1479,6 +1479,7 @@ typedef struct {
 	int base, perPlayer, max;     // how many: base + perPlayer * players, up to max
 	const char* music;            // plays while it's on
 	float spacing;                // how far apart they arrive - beasts are big
+	const char* leader;           // arrives first, once (NULL = none)
 } barFightKind_t;
 
 // Only types MBII spawns as NPCs: most armed TEAM_FREE ones (droideka,
@@ -1489,6 +1490,11 @@ static const barFightKind_t kBarFights[] = {
 	{ "Rancor",  "A rancor's got loose in the bar!",   { "rancor", NULL },                  1, 0, 1, BARFIGHT_MUSIC, 0.0f },
 	{ "Wampas",  "Wampas want a drink!",               { "wampa", NULL },                   2, 0, 3, BARFIGHT_MUSIC, 110.0f },
 	{ "Horrors", "Horrors crawl out of the swamp!",    { "selkath_zombie", "ice_spider", "acklaymb", NULL }, 3, 0, 3, BARFIGHT_MUSIC, 120.0f },
+	// Our own NPC types (ext_data/NPCs/ca_cantina.npc in the instance's MBII
+	// folder - server-side; players have the models as playable classes).
+	{ "Droid Attack", "Roger roger - battle droids roll in!", { "CA_B1", "CA_B1", "CA_B2", NULL }, 3, 1, 10, BARFIGHT_MUSIC, 64.0f, "CA_Magna" },
+	{ "Clone Raid: 212th", "The 212th Attack Battalion storms the bar!", { "CA_212", NULL },     3, 1, 10, BARFIGHT_MUSIC, 64.0f, "CA_Cody" },
+	{ "Clone Raid: 501st", "The 501st Legion kicks the door in!",       { "CA_501", NULL },     3, 1, 10, BARFIGHT_MUSIC, 64.0f, "CA_Rex" },
 };
 
 static struct {
@@ -1623,7 +1629,8 @@ static void Social_BarFightFrame(void)
 			const float savedYaw = pps->viewangles[YAW];
 			pps->viewangles[YAW] = gBarFight.yaw;
 			void* old = GVM_BeginNative();
-			sharedEntity_t* e = (sharedEntity_t*)gNPCSpawnType(spawner->gentity, (char*)k->types[n % types], NULL, 0, 0, 0);
+			const char* type = (n == 0 && k->leader) ? k->leader : k->types[(k->leader ? n - 1 : n) % types];
+			sharedEntity_t* e = (sharedEntity_t*)gNPCSpawnType(spawner->gentity, (char*)type, NULL, 0, 0, 0);
 			GVM_EndNative(old);
 			pps->viewangles[YAW] = savedYaw;
 
@@ -1649,9 +1656,9 @@ static void Social_BarFightFrame(void)
 					}
 				}
 				gBarFight.ents[gBarFight.count++] = e->s.number;
-				Com_Printf("Social mode: bar fight - %s (entity %d)\n", k->types[n % types], e->s.number);
+				Com_Printf("Social mode: bar fight - %s (entity %d)\n", type, e->s.number);
 			} else {
-				Com_Printf("Social mode: bar fight - couldn't spawn %s\n", k->types[n % types]);
+				Com_Printf("Social mode: bar fight - couldn't spawn %s\n", type);
 			}
 			gBarFight.spawned++;
 			gBarFight.toSpawn--;
