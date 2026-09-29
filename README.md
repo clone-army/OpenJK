@@ -379,6 +379,8 @@ A hang-out mode on top of whatever MBII mode the server runs (e.g. Legends, with
 | `g_socialAutoSpawn` | `0` | Seconds after joining to put a player who isn't in the game in automatically, as `!spawn` does (once; not anyone who chose to spectate; `0` = off). `!spawn` and `!kill` work either way |
 | `g_barFightEnable` | `0` | Allow `!barfight` (admins only; `!barfight 1`-`7`: thugs, a rancor, a droid attack, 212th and 501st clone raids, Death Watch, the Pyke Syndicate - all but the rancor our own NPC types in `ca_cantina.npc`, which the engine writes into the instance's `MBII/ext_data/NPCs`; `!barfight stop`). Hostile TEAM_FREE NPCs go for everyone; they and players can hurt each other, players still can't hurt each other; the regulars leave while it's on |
 | `g_barFightSeconds` | `180` | Longest a bar fight lasts |
+| `g_barFightAutoMinutes` | `0` | A random bar fight this many minutes after the last one ended, when enough players are in (0 = only `!barfight`) |
+| `g_barFightAutoPlayers` | `2` | Players needed (in for 2 minutes) before a timed bar fight starts |
 | `g_barFightSpawn` | `""` | Where bar fight NPCs arrive, `x y z yaw`, a point on the floor |
 | `g_barFightRally` | `""` | Where bar fight NPCs walk to first, `x y z yaw`; they start hunting players once there (or after 10s) |
 | `g_barFightRoutes` | `""` | `!wp` routes bar fight NPCs walk in on, handed out in turn (e.g. `main bar`); each breaks off to fight when a player's within 350 units or its route's done. Used instead of `g_barFightRally` when set |

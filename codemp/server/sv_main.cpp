@@ -122,6 +122,8 @@ cvar_t* g_socialNpcs4;
 cvar_t* g_socialAutoSpawn;
 cvar_t* g_barFightEnable;
 cvar_t* g_barFightSeconds;
+cvar_t* g_barFightAutoMinutes;
+cvar_t* g_barFightAutoPlayers;
 cvar_t* g_barFightSpawn;
 cvar_t* g_barFightRally;
 cvar_t* g_socialAdmins;

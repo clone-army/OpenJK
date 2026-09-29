@@ -1128,6 +1128,10 @@ void SV_Init (void) {
 	g_barFightEnable->flags &= ~CVAR_ARCHIVE;
 	g_barFightSeconds = Cvar_Get("g_barFightSeconds", "180", CVAR_TEMP, "Social mode: how long a bar fight lasts at most");
 	g_barFightSeconds->flags &= ~CVAR_ARCHIVE;
+	g_barFightAutoMinutes = Cvar_Get("g_barFightAutoMinutes", "0", CVAR_TEMP, "Social mode: a random bar fight this many minutes after the last one (0 = only !barfight)");
+	g_barFightAutoMinutes->flags &= ~CVAR_ARCHIVE;
+	g_barFightAutoPlayers = Cvar_Get("g_barFightAutoPlayers", "2", CVAR_TEMP, "Social mode: players needed in the server for a timed bar fight");
+	g_barFightAutoPlayers->flags &= ~CVAR_ARCHIVE;
 	g_barFightSpawn = Cvar_Get("g_barFightSpawn", "", CVAR_TEMP, "Social mode: where bar fight NPCs arrive, \"x y z yaw\" (a point on the floor)");
 	g_barFightSpawn->flags &= ~CVAR_ARCHIVE;
 	g_barFightRally = Cvar_Get("g_barFightRally", "", CVAR_TEMP, "Social mode: where bar fight NPCs head first, \"x y z yaw\" (empty = straight at the players)");

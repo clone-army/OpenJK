@@ -1700,6 +1700,8 @@ static client_t* Social_AnyPlayer(void)
 	return NULL;
 }
 
+static int gBarFightAutoNext = 0; // svs.time the next timed fight is due (0 = not counting yet)
+
 static void Social_BarFightEnd(const char* how)
 {
 	int down = 0;
@@ -1726,6 +1728,7 @@ static void Social_BarFightEnd(const char* how)
 	gBarFight.count = 0;
 	gBarFight.cooldownUntil = svs.time + 15000;
 	SV_JukeboxFightEnd();
+	gBarFightAutoNext = 0; // the next timed one is a full interval from now
 }
 
 static void Social_BarFightFrame(void)
@@ -1959,6 +1962,116 @@ static void Social_BarFightFrame(void)
 	}
 }
 
+// Starts bar fight kBarFights[pick] - for !barfight (cl: who asked, told
+// if it can't) or the hourly timer (cl NULL). Checks for one already on
+// and the cooldown are the caller's.
+static qboolean Social_BarFightBegin(int pick, client_t* cl)
+{
+	vec3_t org;
+	float yaw = 0.0f;
+	const qboolean haveSpawnRoute = (g_barFightSpawnRoute && g_barFightSpawnRoute->string[0] &&
+		Social_FindRoute(g_barFightSpawnRoute->string, qfalse)) ? qtrue : qfalse;
+	if (!g_barFightSpawn || sscanf(g_barFightSpawn->string, "%f %f %f %f", &org[0], &org[1], &org[2], &yaw) < 3) {
+		if (!haveSpawnRoute) {
+			if (cl) {
+				SV_SendServerCommand(cl, "chat \"^1[Bar fight]^7 No spawn point set (g_barFightSpawn or g_barFightSpawnRoute).\"\n");
+			}
+			return qfalse;
+		}
+		VectorClear(org);
+	}
+	org[2] += 24.0f; // a point on the floor: drop them in above it
+
+	vec3_t rally;
+	float rallyYaw = 0.0f;
+	const qboolean haveRally = (g_barFightRally &&
+		sscanf(g_barFightRally->string, "%f %f %f %f", &rally[0], &rally[1], &rally[2], &rallyYaw) >= 3) ? qtrue : qfalse;
+
+	int players = 0;
+	for (int i = 0; i < sv_maxclients->integer; i++) {
+		players += (svs.clients[i].state == CS_ACTIVE && svs.clients[i].netchan.remoteAddress.type != NA_BOT);
+	}
+	const barFightKind_t* k = &kBarFights[pick];
+	memset(&gBarFight, 0, sizeof(gBarFight));
+	gBarFight.kind = pick;
+	// More players, more of them - with a little randomness for the ones
+	// that scale (soldiers: 3 to 20); creatures keep their few.
+	gBarFight.toSpawn = k->base + k->perPlayer * players + (k->perPlayer ? Q_irand(-1, 2) : 0);
+	gBarFight.toSpawn = Q_max(k->perPlayer ? 3 : 1, Q_min(k->max, gBarFight.toSpawn));
+	gBarFight.toSpawn = Q_min(gBarFight.toSpawn, BARFIGHT_MAX);
+	gBarFight.nextSpawn = svs.time + 1500; // the regulars clear out first
+	gBarFight.ends = svs.time + 1000 * Q_max(30, g_barFightSeconds ? g_barFightSeconds->integer : 180);
+	VectorCopy(org, gBarFight.origin);
+	gBarFight.yaw = yaw;
+	gBarFight.spawnStart = Q_irand(0, 63);
+	gBarFight.haveRally = haveRally;
+	if (haveRally) {
+		VectorCopy(rally, gBarFight.rally);
+	}
+	gBarFightActive = qtrue;
+
+	SV_JukeboxFightStart(k->music);
+	SV_SendServerCommand(NULL, "cp \"^1BAR FIGHT!\n^7%s\"\n", k->intro);
+	if (cl) {
+		SV_SendServerCommand(NULL, "chat \"^1[Bar fight] ^7%s ^7started a bar fight: ^1%s^7! They can hurt you and you can hurt them.\"\n",
+			cl->name, k->name);
+	} else {
+		SV_SendServerCommand(NULL, "chat \"^1[Bar fight] ^7A bar fight breaks out: ^1%s^7! They can hurt you and you can hurt them.\"\n",
+			k->name);
+	}
+	if (k->quote) {
+		SV_SendServerCommand(NULL, "chat \"%s\"\n", k->quote);
+	}
+	int shouts = 0;
+	while (shouts < (int)ARRAY_LEN(k->shouts) && k->shouts[shouts]) {
+		shouts++;
+	}
+	if (shouts) {
+		Social_ShoutToAll(k->shouts[Q_irand(0, shouts - 1)]);
+	}
+	Com_Printf("Social mode: %s started a bar fight (%s, %d)\n", cl ? cl->name : "the timer", k->name, gBarFight.toSpawn);
+	gBarFightAutoNext = 0; // the timer counts from this one's end
+	return qtrue;
+}
+
+// g_barFightAutoMinutes: a random bar fight that long after the last one
+// ended (or the server started), once at least g_barFightAutoPlayers are in
+// and have been for 2 minutes - so it doesn't go off in someone's face the
+// moment they join.
+static void Social_BarFightAutoFrame(void)
+{
+	static int enoughSince = 0;
+	if (!g_barFightEnable || !g_barFightEnable->integer || !g_barFightAutoMinutes || g_barFightAutoMinutes->integer <= 0) {
+		gBarFightAutoNext = 0;
+		return;
+	}
+	if (gBarFightActive) {
+		return;
+	}
+	const int interval = 60000 * g_barFightAutoMinutes->integer;
+	if (!gBarFightAutoNext || gBarFightAutoNext - svs.time > interval) {
+		gBarFightAutoNext = svs.time + interval;
+	}
+	int players = 0;
+	for (int i = 0; i < sv_maxclients->integer; i++) {
+		players += (svs.clients[i].state == CS_ACTIVE && svs.clients[i].netchan.remoteAddress.type != NA_BOT);
+	}
+	const int need = Q_max(1, g_barFightAutoPlayers ? g_barFightAutoPlayers->integer : 2);
+	if (players < need) {
+		enoughSince = 0;
+		return;
+	}
+	if (!enoughSince) {
+		enoughSince = svs.time ? svs.time : 1;
+	}
+	if (svs.time < gBarFightAutoNext || svs.time - enoughSince < 120000 || svs.time < gBarFight.cooldownUntil) {
+		return;
+	}
+	if (!Social_BarFightBegin(Q_irand(0, (int)ARRAY_LEN(kBarFights) - 1), NULL)) {
+		gBarFightAutoNext = svs.time + interval; // no spawn point: try again next time round
+	}
+}
+
 // "!barfight", "!barfight <n>", "!barfight stop".
 qboolean SV_SocialBarFightCommand(client_t* cl, const char* args)
 {
@@ -2003,62 +2116,7 @@ qboolean SV_SocialBarFightCommand(client_t* cl, const char* args)
 		return qtrue;
 	}
 
-	vec3_t org;
-	float yaw = 0.0f;
-	const qboolean haveSpawnRoute = (g_barFightSpawnRoute && g_barFightSpawnRoute->string[0] &&
-		Social_FindRoute(g_barFightSpawnRoute->string, qfalse)) ? qtrue : qfalse;
-	if (!g_barFightSpawn || sscanf(g_barFightSpawn->string, "%f %f %f %f", &org[0], &org[1], &org[2], &yaw) < 3) {
-		if (!haveSpawnRoute) {
-			SV_SendServerCommand(cl, "chat \"^1[Bar fight]^7 No spawn point set (g_barFightSpawn or g_barFightSpawnRoute).\"\n");
-			return qtrue;
-		}
-		VectorClear(org);
-	}
-	org[2] += 24.0f; // a point on the floor: drop them in above it
-
-	vec3_t rally;
-	float rallyYaw = 0.0f;
-	const qboolean haveRally = (g_barFightRally &&
-		sscanf(g_barFightRally->string, "%f %f %f %f", &rally[0], &rally[1], &rally[2], &rallyYaw) >= 3) ? qtrue : qfalse;
-
-	int players = 0;
-	for (int i = 0; i < sv_maxclients->integer; i++) {
-		players += (svs.clients[i].state == CS_ACTIVE && svs.clients[i].netchan.remoteAddress.type != NA_BOT);
-	}
-	const barFightKind_t* k = &kBarFights[pick];
-	memset(&gBarFight, 0, sizeof(gBarFight));
-	gBarFight.kind = pick;
-	// More players, more of them - with a little randomness for the ones
-	// that scale (soldiers: 3 to 20); creatures keep their few.
-	gBarFight.toSpawn = k->base + k->perPlayer * players + (k->perPlayer ? Q_irand(-1, 2) : 0);
-	gBarFight.toSpawn = Q_max(k->perPlayer ? 3 : 1, Q_min(k->max, gBarFight.toSpawn));
-	gBarFight.toSpawn = Q_min(gBarFight.toSpawn, BARFIGHT_MAX);
-	gBarFight.nextSpawn = svs.time + 1500; // the regulars clear out first
-	gBarFight.ends = svs.time + 1000 * Q_max(30, g_barFightSeconds ? g_barFightSeconds->integer : 180);
-	VectorCopy(org, gBarFight.origin);
-	gBarFight.yaw = yaw;
-	gBarFight.spawnStart = Q_irand(0, 63);
-	gBarFight.haveRally = haveRally;
-	if (haveRally) {
-		VectorCopy(rally, gBarFight.rally);
-	}
-	gBarFightActive = qtrue;
-
-	SV_JukeboxFightStart(k->music);
-	SV_SendServerCommand(NULL, "cp \"^1BAR FIGHT!\n^7%s\"\n", k->intro);
-	SV_SendServerCommand(NULL, "chat \"^1[Bar fight] ^7%s ^7started a bar fight: ^1%s^7! They can hurt you and you can hurt them.\"\n",
-		cl->name, k->name);
-	if (k->quote) {
-		SV_SendServerCommand(NULL, "chat \"%s\"\n", k->quote);
-	}
-	int shouts = 0;
-	while (shouts < 5 && k->shouts[shouts]) {
-		shouts++;
-	}
-	if (shouts) {
-		Social_ShoutToAll(k->shouts[Q_irand(0, shouts - 1)]);
-	}
-	Com_Printf("Social mode: %s started a bar fight (%s, %d)\n", cl->name, k->name, gBarFight.toSpawn);
+	Social_BarFightBegin(pick, cl);
 	return qtrue;
 }
 
@@ -2220,6 +2278,7 @@ void SV_SocialFrame(void)
 		Social_CheckDuels();
 		Social_NpcFrame();
 		Social_BarFightFrame();
+		Social_BarFightAutoFrame();
 	}
 	if (Social_Enabled() || (g_socialBots && g_socialBots->integer)) {
 		Social_RescueStuckJoiners();
