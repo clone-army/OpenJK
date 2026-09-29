@@ -2483,7 +2483,9 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 			return qtrue;
 		}
 
-		if ( SV_EconomyCategoryExists( firstArg ) ) {
+		// An item's exact name wins over a category of the same name: "ammo"
+		// is both, and !buy ammo should buy ammo, not list the category.
+		if ( SV_EconomyFindItemByName( firstArg ) < 0 && SV_EconomyCategoryExists( firstArg ) ) {
 			char line[ECONOMY_MENU_LINE_SIZE];
 
 			SV_EconomyMenuBegin( cl );
