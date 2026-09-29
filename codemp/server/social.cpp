@@ -154,6 +154,10 @@ static void* (*gNPCSpawnType)(void* ent, char* type, char* targetname, int isVeh
 static void (*gFreeEntity)(void* ent) = NULL;
 static void (*gSetEnemy)(void* self, void* enemy) = NULL;
 static void (*gSetMoveGoal)(void* ent, float* point, int radius, int isNavGoal, int combatPoint, void* targetEnt) = NULL;
+static void (*gSaveNPCGlobals)(void) = NULL;
+static void (*gRestoreNPCGlobals)(void) = NULL;
+static void (*gSetNPCGlobals)(void* ent) = NULL;
+static int (*gNPCFacePosition)(float* position, int doPitch) = NULL;
 static vmCvar_t* gAuthenticity = NULL;
 static int* gRebelTimeLimit = NULL;
 static int* gImperialTimeLimit = NULL;
@@ -1217,8 +1221,23 @@ static void Social_NpcPatrol(socialNpc_t* n, sharedEntity_t* e)
 	playerState_t* ps = e->playerState;
 	const qboolean pace = (n->pose == SOCIAL_POSE_PACE) ? qtrue : qfalse;
 
-	// Pacing and stood at an end: now and then a gesture, till it's time.
+	// Pacing and stood at an end: facing its own way (its entry's yaw -
+	// otherwise it'd face wherever it walked from), now and then a gesture,
+	// till it's time. NPC_FacePosition works on MBII's "current NPC", so
+	// that's set for the call and put back.
 	if (pace && svs.time < n->pauseUntil) {
+		if (gSaveNPCGlobals && gRestoreNPCGlobals && gSetNPCGlobals && gNPCFacePosition) {
+			vec3_t look;
+			VectorCopy(ps->origin, look);
+			look[0] += cosf(DEG2RAD(n->yaw)) * 64.0f;
+			look[1] += sinf(DEG2RAD(n->yaw)) * 64.0f;
+			void* old = GVM_BeginNative();
+			gSaveNPCGlobals();
+			gSetNPCGlobals(e);
+			gNPCFacePosition(look, 0);
+			gRestoreNPCGlobals();
+			GVM_EndNative(old);
+		}
 		if (svs.time >= n->nextAnim) {
 			SV_EntitySetAnim(e, kNpcBartendAnims[Q_irand(0, ARRAY_LEN(kNpcBartendAnims) - 1)], qfalse);
 			n->nextAnim = svs.time + Q_irand(4000, 8000);
@@ -1946,6 +1965,10 @@ void SV_SocialGameInit(void)
 		gFreeEntity = (void (*)(void*))Sys_LoadFunction(dll, "G_FreeEntity");
 		gSetEnemy = (void (*)(void*, void*))Sys_LoadFunction(dll, "G_SetEnemy");
 		gSetMoveGoal = (void (*)(void*, float*, int, int, int, void*))Sys_LoadFunction(dll, "NPC_SetMoveGoal");
+		gSaveNPCGlobals = (void (*)(void))Sys_LoadFunction(dll, "SaveNPCGlobals");
+		gRestoreNPCGlobals = (void (*)(void))Sys_LoadFunction(dll, "RestoreNPCGlobals");
+		gSetNPCGlobals = (void (*)(void*))Sys_LoadFunction(dll, "SetNPCGlobals");
+		gNPCFacePosition = (int (*)(float*, int))Sys_LoadFunction(dll, "NPC_FacePosition");
 		gAuthenticity = (vmCvar_t*)Sys_LoadFunction(dll, "g_Authenticity");
 		gRebelTimeLimit = (int*)Sys_LoadFunction(dll, "rebel_time_limit");
 		gImperialTimeLimit = (int*)Sys_LoadFunction(dll, "imperial_time_limit");
