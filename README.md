@@ -377,6 +377,9 @@ A hang-out mode on top of whatever MBII mode the server runs (e.g. Legends, with
 | `g_socialMode` | `0` | Turn Social Mode on |
 | `g_socialNpcs` | `""` | NPCs on the map, `type x y z yaw [pose]` separated by `;` (continued in `g_socialNpcs2`..`4`). Pose: `sit`, `idle` (stands, now and then gesturing), `bartend` (idle more often, gestures when `!bartender` answers), `roam` (wanders), or none. Spawned each round, held on their spot (except `roam`), can't be hurt, brought back if killed |
 | `g_socialAutoSpawn` | `0` | Seconds after joining to put a player who isn't in the game in automatically, as `!spawn` does (once; not anyone who chose to spectate; `0` = off). `!spawn` and `!kill` work either way |
+| `g_barFightEnable` | `0` | Allow `!barfight` (`!barfight 1`-`4`: thugs, beasts, a rancor, droids; `!barfight stop`). Hostile TEAM_FREE NPCs go for everyone; they and players can hurt each other, players still can't hurt each other; the regulars leave while it's on |
+| `g_barFightSeconds` | `180` | Longest a bar fight lasts |
+| `g_barFightSpawn` | `""` | Where bar fight NPCs arrive, `x y z yaw`, a point on the floor |
 | `g_socialRespawnTime` | `3` | Respawn wait in seconds |
 | `g_socialDuels` | `1` | Allow duels (bow to challenge / accept) |
 | `g_socialRoundTime` | `0` | Round length in seconds; `0` keeps the map's own |

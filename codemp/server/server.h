@@ -454,6 +454,9 @@ extern	cvar_t* g_socialNpcs2;
 extern	cvar_t* g_socialNpcs3;
 extern	cvar_t* g_socialNpcs4;
 extern	cvar_t* g_socialAutoSpawn;
+extern	cvar_t* g_barFightEnable;
+extern	cvar_t* g_barFightSeconds;
+extern	cvar_t* g_barFightSpawn;
 extern	cvar_t* g_socialRespawnTime;
 extern	cvar_t* g_socialDuels;
 extern	cvar_t* g_socialRoundTime;
@@ -653,6 +656,7 @@ qboolean SV_EmoteCommand(client_t* cl, const char* command);
 qboolean SV_EntitySetAnim(sharedEntity_t* ent, const char* anim, qboolean torsoOnly);
 void SV_SocialNpcGesture(const char* type, const char* anim);
 qboolean SV_SocialSpawnCommand(client_t* cl, const char* command);
+qboolean SV_SocialBarFightCommand(client_t* cl, const char* args);
 void SV_EmoteTrigger(client_t* cl, const char* command);
 void SV_EmotesFrame(void);
 

@@ -2343,6 +2343,10 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 	}
 
 	// Emotes (social servers) aren't part of the economy either.
+	if ( !Q_stricmp( commandName, "barfight" ) && g_socialMode && g_socialMode->integer ) {
+		return SV_SocialBarFightCommand( cl, chatCursor );
+	}
+
 	if ( SV_SocialSpawnCommand( cl, commandName ) ) {
 		return qtrue;
 	}

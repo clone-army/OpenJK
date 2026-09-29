@@ -280,8 +280,14 @@ static qboolean Social_AllowPlayerDamage(int damage, int mod)
 	}
 }
 
+static qboolean Social_BarFightHit(void* targ, void* attacker);
+
 static void Social_GDamageHook(void* targ, void* inflictor, void* attacker, float* dir, float* point, int damage, int dflags, int mod)
 {
+	if (Social_Enabled() && Social_BarFightHit(targ, attacker)) {
+		((GDamageFn)gTrampoline)(targ, inflictor, attacker, dir, point, damage, dflags | SOCIAL_DAMAGE_NO_TKPOINTS, mod);
+		return;
+	}
 	if (Social_Enabled()) {
 		if (Social_IsPlayerEntity(targ) && !Social_AllowPlayerDamage(damage, mod) && !Social_IsDuelDamage(targ, attacker)) {
 			return;
@@ -961,10 +967,28 @@ static qboolean Social_SpotOccupied(const vec3_t spot, int npcEnt)
 	return qfalse;
 }
 
+static qboolean gBarFightActive = qfalse;
+
 static void Social_NpcFrame(void)
 {
 	Social_ParseNpcs();
 	if (!gSocialNpcCount || !gNPCSpawnType) {
+		return;
+	}
+	// A bar fight's on: the regulars keep out of it (a fight's FREE-team
+	// NPCs would go for them too), and are back once it's over.
+	if (gBarFightActive) {
+		for (int i = 0; i < gSocialNpcCount; i++) {
+			socialNpc_t* n = &gSocialNpcs[i];
+			if (Social_NpcAlive(n) && gFreeEntity) {
+				void* old = GVM_BeginNative();
+				gFreeEntity(SV_GentityNum(n->ent));
+				GVM_EndNative(old);
+			}
+			n->ent = -1;
+			n->nextTry = 0;
+			n->deadAt = 0;
+		}
 		return;
 	}
 
@@ -1071,8 +1095,264 @@ static void Social_NpcFrame(void)
 	}
 }
 
+// --- Bar fights -----------------------------------------------------------
+//
+// "!barfight <n>" starts one: hostile NPCs arrive at g_barFightSpawn ("x y
+// z yaw", a point on the floor - they're dropped in 24 units above it) and
+// they and the players can hurt each other - players still can't hurt
+// each other. MBII's NPC_ValidEnemy has an NPC on NPCTEAM_FREE attack anyone
+// who isn't (and players are always on NPCTEAM_ENEMY or NPCTEAM_PLAYER,
+// g_client.c), so the fights use NPC types whose .npc files put them on
+// TEAM_FREE: they go for both teams alike. The regulars leave while it's on
+// (Social_NpcFrame). It ends when they're all down, after g_barFightSeconds,
+// or on "!barfight stop"; anything left is removed. g_barFightEnable.
+#define BARFIGHT_MAX 12
+
+typedef struct {
+	const char* name;
+	const char* intro;
+	const char* types[4];
+	int base, perPlayer, max;     // how many: base + perPlayer * players, up to max
+} barFightKind_t;
+
+static const barFightKind_t kBarFights[] = {
+	{ "Thugs",  "Thugs storm the cantina!",       { "noghri", "espo", NULL },               2, 1, 8 },
+	{ "Beasts", "Something's escaped from the cellar!", { "nexu", "howler", "BomaBeast", NULL }, 3, 0, 3 },
+	{ "Rancor", "A rancor's got loose in the bar!", { "rancor", NULL },                     1, 0, 1 },
+	{ "Droids", "Rogue droids crash the party!",  { "droideka", "dxun_g0t0", NULL },        2, 1, 6 },
+};
+
+static struct {
+	int    kind;
+	int    ends;
+	int    toSpawn;
+	int    spawned;
+	int    nextSpawn;
+	int    ents[BARFIGHT_MAX];
+	int    count;
+	vec3_t origin;
+	float  yaw;
+	int    cooldownUntil;
+} gBarFight;
+
+static qboolean Social_IsFightNpc(void* ent)
+{
+	if (!gBarFightActive || !ent || !sv.gentities || sv.gentitySize <= 0) {
+		return qfalse;
+	}
+	const intptr_t delta = (byte*)ent - (byte*)sv.gentities;
+	if (delta < 0 || delta % sv.gentitySize) {
+		return qfalse;
+	}
+	const int num = (int)(delta / sv.gentitySize);
+	for (int i = 0; i < gBarFight.count; i++) {
+		if (gBarFight.ents[i] == num) {
+			return qtrue;
+		}
+	}
+	return qfalse;
+}
+
+static qboolean Social_BarFightHit(void* targ, void* attacker)
+{
+	if (!gBarFightActive) {
+		return qfalse;
+	}
+	return ((Social_IsPlayerEntity(targ) && Social_IsFightNpc(attacker)) ||
+		(Social_IsFightNpc(targ) && Social_IsPlayerEntity(attacker))) ? qtrue : qfalse;
+}
+
+static qboolean Social_FightNpcUp(int num)
+{
+	if (num < MAX_CLIENTS || num >= sv.num_entities) {
+		return qfalse;
+	}
+	const sharedEntity_t* e = SV_GentityNum(num);
+	return (e->r.linked && e->playerState && e->s.number == num && e->s.eType == ET_NPC &&
+		e->playerState->stats[STAT_HEALTH] > 0 && e->playerState->pm_type != MB2_PM_DEAD) ? qtrue : qfalse;
+}
+
+static client_t* Social_AnyPlayer(void)
+{
+	for (int i = 0; i < sv_maxclients->integer; i++) {
+		client_t* cl = &svs.clients[i];
+		if (cl->state == CS_ACTIVE && cl->gentity && cl->gentity->playerState && cl->netchan.remoteAddress.type != NA_BOT) {
+			return cl;
+		}
+	}
+	return NULL;
+}
+
+static void Social_BarFightEnd(const char* how)
+{
+	int down = 0;
+	for (int i = 0; i < gBarFight.count; i++) {
+		const int num = gBarFight.ents[i];
+		if (!Social_FightNpcUp(num)) {
+			down++;
+		}
+		// Whatever's left of it - the fighter, or its body - goes.
+		if (num >= MAX_CLIENTS && num < sv.num_entities && gFreeEntity) {
+			sharedEntity_t* e = SV_GentityNum(num);
+			if (e->r.linked && e->s.eType == ET_NPC) {
+				void* old = GVM_BeginNative();
+				gFreeEntity(e);
+				GVM_EndNative(old);
+			}
+		}
+	}
+	SV_SendServerCommand(NULL, "cp \"^3%s\n^7%d of %d down\"\n", how, down, gBarFight.spawned);
+	SV_SendServerCommand(NULL, "chat \"^1[Bar fight] ^7%s - %d of %d down. The regulars are back.\"\n",
+		how, down, gBarFight.spawned);
+	Com_Printf("Social mode: bar fight over (%s), %d of %d down\n", how, down, gBarFight.spawned);
+	gBarFightActive = qfalse;
+	gBarFight.count = 0;
+	gBarFight.cooldownUntil = svs.time + 15000;
+}
+
+static void Social_BarFightFrame(void)
+{
+	if (!gBarFightActive) {
+		return;
+	}
+	if (!Social_Enabled()) {
+		Social_BarFightEnd("The fight's called off");
+		return;
+	}
+
+	if (gBarFight.toSpawn > 0 && svs.time >= gBarFight.nextSpawn && gNPCSpawnType) {
+		client_t* spawner = Social_AnyPlayer();
+		if (spawner && gBarFight.count < BARFIGHT_MAX) {
+			const barFightKind_t* k = &kBarFights[gBarFight.kind];
+			int types = 0;
+			while (types < 4 && k->types[types]) {
+				types++;
+			}
+			// A spread around the spawn point, so they don't land in each other.
+			const int n = gBarFight.spawned;
+			vec3_t org;
+			VectorCopy(gBarFight.origin, org);
+			org[0] += ((n % 3) - 1) * 48.0f;
+			org[1] += (((n / 3) % 3) - 1) * 48.0f;
+
+			playerState_t* pps = spawner->gentity->playerState;
+			const float savedYaw = pps->viewangles[YAW];
+			pps->viewangles[YAW] = gBarFight.yaw;
+			void* old = GVM_BeginNative();
+			sharedEntity_t* e = (sharedEntity_t*)gNPCSpawnType(spawner->gentity, (char*)k->types[n % types], NULL, 0, 0, 0);
+			GVM_EndNative(old);
+			pps->viewangles[YAW] = savedYaw;
+
+			if (e) {
+				if (e->playerState) {
+					VectorCopy(org, e->playerState->origin);
+				}
+				VectorCopy(org, e->s.origin);
+				VectorCopy(org, e->s.pos.trBase);
+				VectorCopy(org, e->r.currentOrigin);
+				gBarFight.ents[gBarFight.count++] = e->s.number;
+				Com_Printf("Social mode: bar fight - %s (entity %d)\n", k->types[n % types], e->s.number);
+			} else {
+				Com_Printf("Social mode: bar fight - couldn't spawn %s\n", k->types[n % types]);
+			}
+			gBarFight.spawned++;
+			gBarFight.toSpawn--;
+		}
+		gBarFight.nextSpawn = svs.time + 700;
+		return;
+	}
+
+	if (gBarFight.toSpawn <= 0) {
+		qboolean anyUp = qfalse;
+		for (int i = 0; i < gBarFight.count && !anyUp; i++) {
+			anyUp = Social_FightNpcUp(gBarFight.ents[i]);
+		}
+		if (!anyUp) {
+			Social_BarFightEnd("^2The bar is cleared!");
+			return;
+		}
+	}
+	if (svs.time >= gBarFight.ends) {
+		Social_BarFightEnd("Last orders - the fight's over");
+	}
+}
+
+// "!barfight", "!barfight <n>", "!barfight stop".
+qboolean SV_SocialBarFightCommand(client_t* cl, const char* args)
+{
+	char arg[32] = "";
+	sscanf(args, "%31s", arg);
+
+	if (!Social_Enabled() || !g_barFightEnable || !g_barFightEnable->integer) {
+		SV_SendServerCommand(cl, "chat \"^1[Bar fight]^7 No bar fights on this server.\"\n");
+		return qtrue;
+	}
+	if (!Q_stricmp(arg, "stop")) {
+		if (gBarFightActive) {
+			Social_BarFightEnd(va("%s ^7broke it up", cl->name));
+		}
+		return qtrue;
+	}
+	if (!arg[0]) {
+		SV_SendServerCommand(cl, "chat \"^1[Bar fight]^7 %s\"\n", gBarFightActive ?
+			"A fight's on! ^5!barfight stop ^7ends it." : "Start one - they can hurt you and you can hurt them:");
+		for (int i = 0; i < (int)ARRAY_LEN(kBarFights); i++) {
+			SV_SendServerCommand(cl, "chat \"^5!barfight %d ^7- %s\"\n", i + 1, kBarFights[i].name);
+		}
+		return qtrue;
+	}
+
+	const int pick = atoi(arg) - 1;
+	if (pick < 0 || pick >= (int)ARRAY_LEN(kBarFights)) {
+		SV_SendServerCommand(cl, "chat \"^1[Bar fight]^7 Pick 1 to %d - ^5!barfight ^7lists them.\"\n", (int)ARRAY_LEN(kBarFights));
+		return qtrue;
+	}
+	if (gBarFightActive) {
+		SV_SendServerCommand(cl, "chat \"^1[Bar fight]^7 One's already on!\"\n");
+		return qtrue;
+	}
+	if (svs.time < gBarFight.cooldownUntil) {
+		SV_SendServerCommand(cl, "chat \"^1[Bar fight]^7 Let the dust settle - try again in %ds.\"\n",
+			(gBarFight.cooldownUntil - svs.time + 999) / 1000);
+		return qtrue;
+	}
+
+	vec3_t org;
+	float yaw = 0.0f;
+	if (!g_barFightSpawn || sscanf(g_barFightSpawn->string, "%f %f %f %f", &org[0], &org[1], &org[2], &yaw) < 3) {
+		SV_SendServerCommand(cl, "chat \"^1[Bar fight]^7 No spawn point set (g_barFightSpawn).\"\n");
+		return qtrue;
+	}
+	org[2] += 24.0f; // a point on the floor: drop them in above it
+
+	int players = 0;
+	for (int i = 0; i < sv_maxclients->integer; i++) {
+		players += (svs.clients[i].state == CS_ACTIVE && svs.clients[i].netchan.remoteAddress.type != NA_BOT);
+	}
+	const barFightKind_t* k = &kBarFights[pick];
+	memset(&gBarFight, 0, sizeof(gBarFight));
+	gBarFight.kind = pick;
+	gBarFight.toSpawn = Q_min(k->max, k->base + k->perPlayer * players);
+	gBarFight.toSpawn = Q_min(gBarFight.toSpawn, BARFIGHT_MAX);
+	gBarFight.nextSpawn = svs.time + 1500; // the regulars clear out first
+	gBarFight.ends = svs.time + 1000 * Q_max(30, g_barFightSeconds ? g_barFightSeconds->integer : 180);
+	VectorCopy(org, gBarFight.origin);
+	gBarFight.yaw = yaw;
+	gBarFightActive = qtrue;
+
+	SV_SendServerCommand(NULL, "cp \"^1BAR FIGHT!\n^7%s\"\n", k->intro);
+	SV_SendServerCommand(NULL, "chat \"^1[Bar fight] ^7%s ^7started a bar fight: ^1%s^7! They can hurt you and you can hurt them.\"\n",
+		cl->name, k->name);
+	Com_Printf("Social mode: %s started a bar fight (%s, %d)\n", cl->name, k->name, gBarFight.toSpawn);
+	return qtrue;
+}
+
 void SV_SocialGameInit(void)
 {
+	// A new round or map frees every entity, fights included.
+	gBarFightActive = qfalse;
+	gBarFight.count = 0;
+
 	// A new round or map frees every entity: spawn the NPCs again.
 	for (int i = 0; i < SOCIAL_MAX_NPCS; i++) {
 		gSocialNpcs[i].ent = -1;
@@ -1167,6 +1447,7 @@ void SV_SocialFrame(void)
 		}
 		Social_CheckDuels();
 		Social_NpcFrame();
+		Social_BarFightFrame();
 	}
 	if (Social_Enabled() || (g_socialBots && g_socialBots->integer)) {
 		Social_RescueStuckJoiners();
