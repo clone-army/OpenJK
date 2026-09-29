@@ -177,6 +177,14 @@ typedef struct {
 #define ECONOMY_MENU_LINES_MAX		28
 #define ECONOMY_MENU_LINE_SIZE		160
 
+// One backer's share of a bounty: refunded to that account if the bounty
+// can't be collected (its target leaves, or the server shuts down).
+#define ECONOMY_BOUNTY_BACKERS 8
+typedef struct {
+	char	handle[24];
+	int		amount;
+} bountyStake_t;
+
 typedef struct client_s {
 	clientState_t	state;
 	char			userinfo[MAX_INFO_STRING];		// name, etc
@@ -281,6 +289,7 @@ typedef struct client_s {
 	// zero-initialized and an empty name can never be a real placer.
 	int				economyBountyPlacerNum;
 	char			economyBountyPlacerName[MAX_NAME_LENGTH];
+	bountyStake_t	economyBountyStakes[ECONOMY_BOUNTY_BACKERS];	// who put up economyBounty
 
 	// Paced multi-line menu delivery ("!buy" category/item listings) - lines
 	// arrive one at a time on a short delay instead of all at once, so a long
@@ -597,6 +606,8 @@ void SV_GunGameClampWeaponSelect(client_t* cl, usercmd_t* cmd);
 void SV_EconomyShopInitCvars( void );
 void SV_EconomyPrint( client_t *cl, const char *text );
 qboolean SV_EconomyAddCreditsToAccount( const char *handle, int amount );
+void SV_EconomyBountyRefund( client_t *target, const char *why );
+void SV_EconomyRefundAllBounties( const char *why );
 client_t *SV_EconomyFindPlayer( client_t *asker, const char *query );
 int SV_FuzzyNameScore( const char *name, const char *query );
 void SV_EconomyMenuBegin( client_t *cl );
