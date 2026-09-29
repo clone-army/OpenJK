@@ -843,9 +843,16 @@ typedef struct {
 	int    nextAnim;   // idle/bartend: next gesture
 	int    offSince;   // first seen off its spot (0 = on it)
 	int    failures;   // spawns MBII refused, in a row
+	char   route[32];  // patrol: the route it walks
+	int    wp;         // ...the point it's heading for
+	int    nextPatrol;
+	int    goalAt;     // when its move goal was last given
+	float  bestDist;   // closest it's got to that point
+	int    stuckSince; // since when it's not got any closer
+	int    stuckCount;
 } socialNpc_t;
 
-enum { SOCIAL_POSE_STAND, SOCIAL_POSE_SIT, SOCIAL_POSE_IDLE, SOCIAL_POSE_BARTEND, SOCIAL_POSE_ROAM };
+enum { SOCIAL_POSE_STAND, SOCIAL_POSE_SIT, SOCIAL_POSE_IDLE, SOCIAL_POSE_BARTEND, SOCIAL_POSE_ROAM, SOCIAL_POSE_PATROL };
 
 static const char* const kNpcIdleAnims[] = {
 	"BOTH_GUARD_LOOKAROUND1", "BOTH_HEADNOD", "BOTH_TALK1", "BOTH_HEADSHAKE", "BOTH_GUARD_LOOKAROUND1",
@@ -886,11 +893,16 @@ static void Social_ParseNpcs(void)
 	for (char* entry = strtok(buf, ";"); entry && gSocialNpcCount < SOCIAL_MAX_NPCS; entry = strtok(NULL, ";")) {
 		socialNpc_t* n = &gSocialNpcs[gSocialNpcCount];
 		memset(n, 0, sizeof(*n));
-		char flag[16] = "";
-		if (sscanf(entry, "%31s %f %f %f %f %15s", n->type, &n->origin[0], &n->origin[1], &n->origin[2], &n->yaw, flag) >= 5) {
+		char flag[48] = "";
+		if (sscanf(entry, "%31s %f %f %f %f %47s", n->type, &n->origin[0], &n->origin[1], &n->origin[2], &n->yaw, flag) >= 5) {
 			n->ent = -1;
 			n->roam = !Q_stricmp(flag, "roam") ? qtrue : qfalse;
-			n->pose = n->roam ? SOCIAL_POSE_ROAM :
+			if (!Q_stricmpn(flag, "patrol:", 7) && flag[7]) {
+				Q_strncpyz(n->route, flag + 7, sizeof(n->route));
+				n->roam = qtrue; // never held on its spot
+			}
+			n->pose = n->route[0] ? SOCIAL_POSE_PATROL :
+				n->roam ? SOCIAL_POSE_ROAM :
 				!Q_stricmp(flag, "sit") ? SOCIAL_POSE_SIT :
 				!Q_stricmp(flag, "idle") ? SOCIAL_POSE_IDLE :
 				!Q_stricmp(flag, "bartend") ? SOCIAL_POSE_BARTEND : SOCIAL_POSE_STAND;
@@ -949,6 +961,270 @@ void SV_SocialNpcGesture(const char* type, const char* anim)
 			SV_EntitySetAnim(SV_GentityNum(n->ent), anim, qfalse);
 			n->nextAnim = svs.time + Q_irand(6000, 12000);
 		}
+	}
+}
+
+// --- Patrol routes ---------------------------------------------------------
+//
+// An admin (an economy account listed in g_socialAdmins) walks a loop and
+// types "!wp add <route>" at each point; they're kept in order, in
+// social_routes.txt in the instance's own MBII folder, one "route x y z"
+// line per point. An NPC entry with the pose "patrol:<route>" walks them
+// round and round: MBII's NPC_SetMoveGoal gives it each point in turn (its
+// default AI walks to a move goal while it has no enemy, facing where it's
+// going). Every half second: a point within 40 units is reached; one it
+// hasn't got any closer to in 8s is skipped, and three skips in a row put
+// it straight on the point, so it can't stay stuck.
+#define SOCIAL_MAX_ROUTES      8
+#define SOCIAL_ROUTE_POINTS    32
+
+typedef struct {
+	char   name[32];
+	vec3_t pts[SOCIAL_ROUTE_POINTS];
+	int    count;
+} socialRoute_t;
+
+static socialRoute_t gRoutes[SOCIAL_MAX_ROUTES];
+static int gRouteCount = 0;
+static qboolean gRoutesLoaded = qfalse;
+
+static const char* Social_RoutesPath(void)
+{
+	return va("%s/%s/social_routes.txt", Cvar_VariableString("fs_homepath"), Cvar_VariableString("fs_game"));
+}
+
+static void Social_LoadRoutes(void)
+{
+	gRoutesLoaded = qtrue;
+	gRouteCount = 0;
+	FILE* f = fopen(Social_RoutesPath(), "r");
+	if (!f) {
+		return;
+	}
+	char line[256], name[32];
+	vec3_t p;
+	while (fgets(line, sizeof(line), f)) {
+		if (sscanf(line, "%31s %f %f %f", name, &p[0], &p[1], &p[2]) != 4) {
+			continue;
+		}
+		socialRoute_t* r = NULL;
+		for (int i = 0; i < gRouteCount && !r; i++) {
+			if (!Q_stricmp(gRoutes[i].name, name)) {
+				r = &gRoutes[i];
+			}
+		}
+		if (!r && gRouteCount < SOCIAL_MAX_ROUTES) {
+			r = &gRoutes[gRouteCount++];
+			memset(r, 0, sizeof(*r));
+			Q_strncpyz(r->name, name, sizeof(r->name));
+		}
+		if (r && r->count < SOCIAL_ROUTE_POINTS) {
+			VectorCopy(p, r->pts[r->count++]);
+		}
+	}
+	fclose(f);
+}
+
+static void Social_SaveRoutes(void)
+{
+	FILE* f = fopen(Social_RoutesPath(), "w");
+	if (!f) {
+		Com_Printf("Social mode: couldn't write %s\n", Social_RoutesPath());
+		return;
+	}
+	for (int i = 0; i < gRouteCount; i++) {
+		for (int p = 0; p < gRoutes[i].count; p++) {
+			fprintf(f, "%s %.0f %.0f %.0f\n", gRoutes[i].name, gRoutes[i].pts[p][0], gRoutes[i].pts[p][1], gRoutes[i].pts[p][2]);
+		}
+	}
+	fclose(f);
+}
+
+static socialRoute_t* Social_FindRoute(const char* name, qboolean create)
+{
+	if (!gRoutesLoaded) {
+		Social_LoadRoutes();
+	}
+	for (int i = 0; i < gRouteCount; i++) {
+		if (!Q_stricmp(gRoutes[i].name, name)) {
+			return &gRoutes[i];
+		}
+	}
+	if (!create || gRouteCount >= SOCIAL_MAX_ROUTES) {
+		return NULL;
+	}
+	socialRoute_t* r = &gRoutes[gRouteCount++];
+	memset(r, 0, sizeof(*r));
+	Q_strncpyz(r->name, name, sizeof(r->name));
+	return r;
+}
+
+static void Social_Tell(client_t* cl, const char* text)
+{
+	SV_SendServerCommand(cl, "chat \"^5[Social]^7 %s\"\n", text);
+}
+
+// Logged into an account listed in g_socialAdmins (space separated).
+static qboolean Social_IsAdmin(client_t* cl)
+{
+	if (!cl->economyHandle[0] || !g_socialAdmins) {
+		return qfalse;
+	}
+	char buf[MAX_CVAR_VALUE_STRING];
+	Q_strncpyz(buf, g_socialAdmins->string, sizeof(buf));
+	for (char* w = strtok(buf, " ,"); w; w = strtok(NULL, " ,")) {
+		if (!Q_stricmp(w, cl->economyHandle)) {
+			return qtrue;
+		}
+	}
+	return qfalse;
+}
+
+// "x y z : yaw", origin (a standing player's, 24 above the floor - the
+// height an NPC spot wants) rather than /viewpos's eye height.
+static const char* Social_PositionText(const playerState_t* ps)
+{
+	return va("%.0f %.0f %.0f : %.0f", ps->origin[0], ps->origin[1], ps->origin[2], AngleNormalize360(ps->viewangles[YAW]));
+}
+
+qboolean SV_SocialWhereCommand(client_t* cl)
+{
+	if (!cl->gentity || !cl->gentity->playerState) {
+		return qtrue;
+	}
+	const char* pos = Social_PositionText(cl->gentity->playerState);
+	Social_Tell(cl, va("You're at ^3%s ^7(x y z : facing - use it for an NPC spot as x y z yaw).", pos));
+	Com_Printf("Social mode: %s is at %s\n", cl->name, pos);
+	return qtrue;
+}
+
+// rcon "where <player>"
+void SV_SocialWhere_f(void)
+{
+	if (Cmd_Argc() < 2) {
+		Com_Printf("Usage: where <player>\n");
+		return;
+	}
+	client_t* cl = SV_BetterGetPlayerByHandle(Cmd_Argv(1));
+	if (!cl || cl->state != CS_ACTIVE || !cl->gentity || !cl->gentity->playerState) {
+		Com_Printf("No such player: %s\n", Cmd_Argv(1));
+		return;
+	}
+	Com_Printf("%s^7: %s\n", cl->name, Social_PositionText(cl->gentity->playerState));
+}
+
+// "!wp add <route>", "!wp undo <route>", "!wp clear <route>", "!wp list"
+qboolean SV_SocialWaypointCommand(client_t* cl, const char* args)
+{
+	char verb[16] = "", name[32] = "";
+	sscanf(args, "%15s %31s", verb, name);
+
+	if (!Social_IsAdmin(cl)) {
+		Social_Tell(cl, "Only admins can edit NPC routes (log in with an admin account).");
+		return qtrue;
+	}
+	if (!Q_stricmp(verb, "list") || !verb[0]) {
+		if (!gRoutesLoaded) {
+			Social_LoadRoutes();
+		}
+		if (!gRouteCount) {
+			Social_Tell(cl, "No routes yet. Walk the loop and ^5!wp add <route> ^7at each point.");
+		}
+		for (int i = 0; i < gRouteCount; i++) {
+			Social_Tell(cl, va("^3%s^7: %d points - use ^5patrol:%s ^7as an NPC's pose.", gRoutes[i].name, gRoutes[i].count, gRoutes[i].name));
+		}
+		return qtrue;
+	}
+	if (!name[0]) {
+		Social_Tell(cl, "Usage: ^5!wp add <route>^7, ^5!wp undo <route>^7, ^5!wp clear <route>^7, ^5!wp list");
+		return qtrue;
+	}
+	if (!Q_stricmp(verb, "add")) {
+		socialRoute_t* r = Social_FindRoute(name, qtrue);
+		if (!r || !cl->gentity || !cl->gentity->playerState) {
+			Social_Tell(cl, "No room for another route.");
+		} else if (r->count >= SOCIAL_ROUTE_POINTS) {
+			Social_Tell(cl, va("^3%s ^7already has %d points.", r->name, SOCIAL_ROUTE_POINTS));
+		} else {
+			VectorCopy(cl->gentity->playerState->origin, r->pts[r->count++]);
+			Social_SaveRoutes();
+			Social_Tell(cl, va("Point %d added to ^3%s ^7at %s.", r->count, r->name, Social_PositionText(cl->gentity->playerState)));
+		}
+	} else if (!Q_stricmp(verb, "undo")) {
+		socialRoute_t* r = Social_FindRoute(name, qfalse);
+		if (r && r->count) {
+			r->count--;
+			Social_SaveRoutes();
+			Social_Tell(cl, va("Removed the last point of ^3%s ^7(%d left).", r->name, r->count));
+		} else {
+			Social_Tell(cl, "Nothing to undo.");
+		}
+	} else if (!Q_stricmp(verb, "clear")) {
+		socialRoute_t* r = Social_FindRoute(name, qfalse);
+		if (r) {
+			r->count = 0;
+			Social_SaveRoutes();
+			Social_Tell(cl, va("Cleared ^3%s^7.", name));
+		}
+	} else {
+		Social_Tell(cl, "Usage: ^5!wp add <route>^7, ^5!wp undo <route>^7, ^5!wp clear <route>^7, ^5!wp list");
+	}
+	return qtrue;
+}
+
+static void Social_NpcPatrol(socialNpc_t* n, sharedEntity_t* e)
+{
+	socialRoute_t* r = Social_FindRoute(n->route, qfalse);
+	if (!r || r->count < 1 || !gSetMoveGoal || svs.time < n->nextPatrol) {
+		return;
+	}
+	n->nextPatrol = svs.time + 500;
+	if (n->wp >= r->count) {
+		n->wp = 0;
+	}
+
+	playerState_t* ps = e->playerState;
+	const float* p = r->pts[n->wp];
+	const float dx = ps->origin[0] - p[0], dy = ps->origin[1] - p[1];
+	const float d = sqrtf(dx * dx + dy * dy);
+
+	if (d < 40.0f) {
+		n->wp = (n->wp + 1) % r->count;
+		n->goalAt = 0;
+		n->bestDist = 1e9f;
+		n->stuckSince = svs.time;
+		n->stuckCount = 0;
+		return;
+	}
+	if (d < n->bestDist - 16.0f) {
+		n->bestDist = d;
+		n->stuckSince = svs.time;
+	} else if (n->stuckSince && svs.time - n->stuckSince > 8000) {
+		// Not getting any closer: on to the next point - and after three
+		// of those, straight onto this one.
+		if (++n->stuckCount >= 3) {
+			VectorCopy(p, ps->origin);
+			VectorClear(ps->velocity);
+			n->stuckCount = 0;
+		}
+		n->wp = (n->wp + 1) % r->count;
+		n->goalAt = 0;
+		n->bestDist = 1e9f;
+		n->stuckSince = svs.time;
+		return;
+	}
+	if (!n->stuckSince) {
+		n->stuckSince = svs.time;
+		n->bestDist = d;
+	}
+	// Given again every few seconds, in case its AI let go of it.
+	if (!n->goalAt || svs.time - n->goalAt > 4000) {
+		vec3_t goal;
+		VectorCopy(p, goal);
+		void* old = GVM_BeginNative();
+		gSetMoveGoal(e, goal, 24, 0, -1, NULL);
+		GVM_EndNative(old);
+		n->goalAt = svs.time;
 	}
 }
 
@@ -1027,6 +1303,10 @@ static void Social_NpcFrame(void)
 				continue;
 			}
 			n->deadAt = 0;
+			if (n->pose == SOCIAL_POSE_PATROL) {
+				Social_NpcPatrol(n, SV_GentityNum(n->ent));
+				continue;
+			}
 			if (n->roam) {
 				continue;
 			}
@@ -1086,6 +1366,11 @@ static void Social_NpcFrame(void)
 		}
 		n->failures = 0;
 		n->ent = e->s.number;
+		n->wp = 0;
+		n->goalAt = 0;
+		n->stuckSince = 0;
+		n->stuckCount = 0;
+		n->nextPatrol = svs.time + 1500; // let it begin first
 		if (e->playerState) {
 			VectorCopy(n->origin, e->playerState->origin); // NPC_Begin spawns it here
 		}

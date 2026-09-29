@@ -2899,6 +2899,7 @@ void SV_AddOperatorCommands( void ) {
 	Cmd_AddCommand ("sv_exceptdel", SV_ExceptDel_f, "Removes a ban exception" );
 	Cmd_AddCommand("givecredits", SV_GiveCredits_f, "Give credits to a player: givecredits <player> <amount>");
 	Cmd_AddCommand("economywho", SV_EconomyWho_f, "List who's logged into which economy account");
+	Cmd_AddCommand("where", SV_SocialWhere_f, "A player's position and facing: where <player>");
 	Cmd_AddCommand("bartenderpoll", SV_BartenderPoll_f, "For the bartender plugin: list waiting !bartender questions");
 	Cmd_AddCommand("bartenderreply", SV_BartenderReply_f, "For the bartender plugin: bartenderreply <id> <answer | !fail>");
 	Cmd_AddCommand("dumpplayercs", SV_DumpPlayerCS_f, "TEMP DEBUG: dump a client's CS_PLAYERS configstring: dumpplayercs <clientnum>");
