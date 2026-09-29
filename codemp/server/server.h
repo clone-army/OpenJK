@@ -648,6 +648,8 @@ void SV_BarClientThink(client_t* cl, usercmd_t* cmd);
 //
 qboolean SV_JukeboxCommand(client_t* cl, const char* args);
 void SV_JukeboxFrame(void);
+void SV_JukeboxFightStart(const char* music);
+void SV_JukeboxFightEnd(void);
 
 //
 // emotes.cpp

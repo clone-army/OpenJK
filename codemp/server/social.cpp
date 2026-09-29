@@ -1113,13 +1113,14 @@ typedef struct {
 	const char* intro;
 	const char* types[4];
 	int base, perPlayer, max;     // how many: base + perPlayer * players, up to max
+	const char* music;            // plays while it's on (jukebox_tracks.h paths)
 } barFightKind_t;
 
 static const barFightKind_t kBarFights[] = {
-	{ "Thugs",  "Thugs storm the cantina!",       { "noghri", "espo", NULL },               2, 1, 8 },
-	{ "Beasts", "Something's escaped from the cellar!", { "nexu", "howler", "BomaBeast", NULL }, 3, 0, 3 },
-	{ "Rancor", "A rancor's got loose in the bar!", { "rancor", NULL },                     1, 0, 1 },
-	{ "Droids", "Rogue droids crash the party!",  { "droideka", "dxun_g0t0", NULL },        2, 1, 6 },
+	{ "Thugs",  "Thugs storm the cantina!",       { "noghri", "espo", NULL },               2, 1, 8, "Music/mk" },
+	{ "Beasts", "Something's escaped from the cellar!", { "nexu", "howler", "BomaBeast", NULL }, 3, 0, 3, "music/mb2_dotf/dotf" },
+	{ "Rancor", "A rancor's got loose in the bar!", { "rancor", NULL },                     1, 0, 1, "music/mustafarduel/mustafarduel" },
+	{ "Droids", "Rogue droids crash the party!",  { "droideka", "dxun_g0t0", NULL },        2, 1, 6, "Music/ultimate_showdown" },
 };
 
 static struct {
@@ -1208,6 +1209,7 @@ static void Social_BarFightEnd(const char* how)
 	gBarFightActive = qfalse;
 	gBarFight.count = 0;
 	gBarFight.cooldownUntil = svs.time + 15000;
+	SV_JukeboxFightEnd();
 }
 
 static void Social_BarFightFrame(void)
@@ -1340,6 +1342,7 @@ qboolean SV_SocialBarFightCommand(client_t* cl, const char* args)
 	gBarFight.yaw = yaw;
 	gBarFightActive = qtrue;
 
+	SV_JukeboxFightStart(k->music);
 	SV_SendServerCommand(NULL, "cp \"^1BAR FIGHT!\n^7%s\"\n", k->intro);
 	SV_SendServerCommand(NULL, "chat \"^1[Bar fight] ^7%s ^7started a bar fight: ^1%s^7! They can hurt you and you can hurt them.\"\n",
 		cl->name, k->name);
@@ -1352,6 +1355,7 @@ void SV_SocialGameInit(void)
 	// A new round or map frees every entity, fights included.
 	gBarFightActive = qfalse;
 	gBarFight.count = 0;
+	SV_JukeboxFightEnd();
 
 	// A new round or map frees every entity: spawn the NPCs again.
 	for (int i = 0; i < SOCIAL_MAX_NPCS; i++) {
