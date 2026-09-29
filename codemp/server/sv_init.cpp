@@ -1130,6 +1130,8 @@ void SV_Init (void) {
 	g_barFightSeconds->flags &= ~CVAR_ARCHIVE;
 	g_barFightSpawn = Cvar_Get("g_barFightSpawn", "", CVAR_TEMP, "Social mode: where bar fight NPCs arrive, \"x y z yaw\" (a point on the floor)");
 	g_barFightSpawn->flags &= ~CVAR_ARCHIVE;
+	g_barFightRally = Cvar_Get("g_barFightRally", "", CVAR_TEMP, "Social mode: where bar fight NPCs head first, \"x y z yaw\" (empty = straight at the players)");
+	g_barFightRally->flags &= ~CVAR_ARCHIVE;
 	g_socialBots->flags &= ~CVAR_ARCHIVE;
 	g_socialDuels->flags &= ~CVAR_ARCHIVE;
 	g_socialRoundTime->flags &= ~CVAR_ARCHIVE;
