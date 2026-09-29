@@ -182,6 +182,7 @@ static void Bar_Puff(client_t* cl, const char* fx, int where)
 }
 
 #define BAR_MB2_PW_COUNT   32
+#define BAR_MAX_FX         10       // effects one player can have going at once
 
 // MBII's powerup numbers (bg_public.h), which differ from base JKA's: these
 // are what MBII's cgame checks in entityState_t.powerups to draw each one.
@@ -268,9 +269,14 @@ typedef struct {
 	int nextTrip;
 	int lastFrameTime;
 	int visualUntil[BAR_MB2_PW_COUNT];
-	const barDrink_t* fxDrink; // playing its effect until fxUntil
-	int fxUntil;
-	int nextPuff;
+	// Effects playing, one slot per distinct effect: a drink used to take
+	// over a single slot, so a second drink's effect replaced the first's
+	// (spice then a whiskey lost the smoke) and Doctor Vodka showed one.
+	struct {
+		const barDrink_t* drink;
+		int until;
+		int nextPuff;
+	} fx[BAR_MAX_FX];
 	int hazeUntil;          // Spice: grey view until then
 } barState_t;
 
@@ -429,9 +435,31 @@ static void Bar_Apply(client_t* cl, int drink)
 		st->visualUntil[d->glow] = until;
 	}
 	if (d->fx) {
-		st->fxDrink = d;
-		st->fxUntil = until;
-		st->nextPuff = svs.time;
+		// The same effect already going just runs longer; otherwise a free
+		// slot, or the one closest to ending.
+		int slot = -1, soonest = -1;
+		for (int f = 0; f < BAR_MAX_FX; f++) {
+			if (st->fx[f].until > svs.time && st->fx[f].drink &&
+				!Q_stricmp(st->fx[f].drink->fx, d->fx) && st->fx[f].drink->fxWhere == d->fxWhere) {
+				slot = f;
+				break;
+			}
+			if (st->fx[f].until <= svs.time) {
+				if (slot < 0) {
+					slot = f;
+				}
+			} else if (soonest < 0 || st->fx[f].until < st->fx[soonest].until) {
+				soonest = f;
+			}
+		}
+		if (slot < 0) {
+			slot = soonest;
+		}
+		if (st->fx[slot].until <= svs.time || st->fx[slot].drink != d) {
+			st->fx[slot].nextPuff = svs.time;
+		}
+		st->fx[slot].drink = d;
+		st->fx[slot].until = Q_max(st->fx[slot].until, until);
 	}
 	if (!Q_stricmp(d->id, "spice")) {
 		st->hazeUntil = until;
@@ -734,7 +762,12 @@ static qboolean Bar_AnythingActive(const barState_t* st)
 			return qtrue;
 		}
 	}
-	return (st->fxUntil > svs.time || st->hazeUntil > svs.time) ? qtrue : qfalse;
+	for (int f = 0; f < BAR_MAX_FX; f++) {
+		if (st->fx[f].until > svs.time) {
+			return qtrue;
+		}
+	}
+	return (st->hazeUntil > svs.time) ? qtrue : qfalse;
 }
 
 // Tells everyone what killed them once it actually does.
@@ -829,9 +862,11 @@ void SV_BarFrame(void)
 			ps->fd.forceRageRecoveryTime = sv.time + 250;
 		}
 
-		if (st->fxDrink && st->fxUntil > svs.time && svs.time >= st->nextPuff) {
-			Bar_Puff(cl, st->fxDrink->fx, st->fxDrink->fxWhere);
-			st->nextPuff = svs.time + st->fxDrink->fxEveryMs;
+		for (int f = 0; f < BAR_MAX_FX; f++) {
+			if (st->fx[f].drink && st->fx[f].until > svs.time && svs.time >= st->fx[f].nextPuff) {
+				Bar_Puff(cl, st->fx[f].drink->fx, st->fx[f].drink->fxWhere);
+				st->fx[f].nextPuff = svs.time + st->fx[f].drink->fxEveryMs;
+			}
 		}
 	}
 }
