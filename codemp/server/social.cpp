@@ -803,9 +803,12 @@ qboolean SV_SocialSpawnCommand(client_t* cl, const char* command)
 
 // --- Cantina NPCs -----------------------------------------------------------
 //
-// g_socialNpcs lists NPCs to stand about the map, "type x y z yaw" each
-// (add "roam" to let one wander instead of holding its spot), separated by
-// ';' - e.g. "bartender 4008 -550 -1769 169" (MBII ships a
+// g_socialNpcs (continued in g_socialNpcs2..4, since one cvar holds 255
+// characters) lists NPCs to stand about the map, "type x y z yaw [pose]"
+// each, separated by ';'. The pose: "sit" (sits there), "idle" (stands
+// there, now and then looking about or gesturing), "bartend" (idle, more
+// often, and gestures when !bartender answers), "roam" (wanders freely -
+// MBII's droids have their own wander), or nothing (just stands). - e.g. "bartender 4008 -550 -1769 169" (MBII ships a
 // neutral, unarmed "bartender", the JKO one). x y z is where a player's
 // origin would be (a /viewpos reading, minus 36 for eye height).
 //
@@ -818,7 +821,7 @@ qboolean SV_SocialSpawnCommand(client_t* cl, const char* command)
 // round's G_InitGame clears every entity, so they're spawned again; and
 // they're held on their spot, since their AI may wander. Damage to NPCs is
 // already blocked on social servers (Social_GDamageHook).
-#define SOCIAL_MAX_NPCS 8
+#define SOCIAL_MAX_NPCS 16
 
 typedef struct {
 	char   type[32];
@@ -828,22 +831,37 @@ typedef struct {
 	int    nextTry;
 	int    deadAt;     // when it was seen dead (0 = alive)
 	qboolean roam;     // free to wander, not held on its spot
+	int    pose;       // SOCIAL_POSE_*
+	int    nextAnim;   // idle/bartend: next gesture
+	int    offSince;   // first seen off its spot (0 = on it)
 } socialNpc_t;
+
+enum { SOCIAL_POSE_STAND, SOCIAL_POSE_SIT, SOCIAL_POSE_IDLE, SOCIAL_POSE_BARTEND, SOCIAL_POSE_ROAM };
+
+static const char* const kNpcIdleAnims[] = {
+	"BOTH_GUARD_LOOKAROUND1", "BOTH_HEADNOD", "BOTH_TALK1", "BOTH_HEADSHAKE", "BOTH_GUARD_LOOKAROUND1",
+};
+static const char* const kNpcBartendAnims[] = {
+	"BOTH_TALK1", "BOTH_HEADNOD", "BOTH_GUARD_LOOKAROUND1", "BOTH_TALK1", "BOTH_HEADSHAKE",
+};
 
 static socialNpc_t gSocialNpcs[SOCIAL_MAX_NPCS];
 static int gSocialNpcCount = 0;
-static char gSocialNpcsParsed[MAX_CVAR_VALUE_STRING] = "\x01"; // never a real value, so the first frame parses
+static char gSocialNpcsParsed[MAX_CVAR_VALUE_STRING * 4 + 4] = "\x01"; // never a real value, so the first frame parses
 
 static void Social_ParseNpcs(void)
 {
-	const char* want = g_socialNpcs ? g_socialNpcs->string : "";
+	char want[MAX_CVAR_VALUE_STRING * 4 + 4];
+	Com_sprintf(want, sizeof(want), "%s;%s;%s;%s",
+		g_socialNpcs ? g_socialNpcs->string : "", g_socialNpcs2 ? g_socialNpcs2->string : "",
+		g_socialNpcs3 ? g_socialNpcs3->string : "", g_socialNpcs4 ? g_socialNpcs4->string : "");
 	if (!strcmp(want, gSocialNpcsParsed)) {
 		return;
 	}
 	Q_strncpyz(gSocialNpcsParsed, want, sizeof(gSocialNpcsParsed));
 	gSocialNpcCount = 0;
 
-	char buf[MAX_CVAR_VALUE_STRING];
+	char buf[MAX_CVAR_VALUE_STRING * 4 + 4];
 	Q_strncpyz(buf, want, sizeof(buf));
 	for (char* entry = strtok(buf, ";"); entry && gSocialNpcCount < SOCIAL_MAX_NPCS; entry = strtok(NULL, ";")) {
 		socialNpc_t* n = &gSocialNpcs[gSocialNpcCount];
@@ -852,6 +870,10 @@ static void Social_ParseNpcs(void)
 		if (sscanf(entry, "%31s %f %f %f %f %15s", n->type, &n->origin[0], &n->origin[1], &n->origin[2], &n->yaw, flag) >= 5) {
 			n->ent = -1;
 			n->roam = !Q_stricmp(flag, "roam") ? qtrue : qfalse;
+			n->pose = n->roam ? SOCIAL_POSE_ROAM :
+				!Q_stricmp(flag, "sit") ? SOCIAL_POSE_SIT :
+				!Q_stricmp(flag, "idle") ? SOCIAL_POSE_IDLE :
+				!Q_stricmp(flag, "bartend") ? SOCIAL_POSE_BARTEND : SOCIAL_POSE_STAND;
 			gSocialNpcCount++;
 		} else if (entry[strspn(entry, " ")]) {
 			Com_Printf("Social mode: g_socialNpcs entry \"%s\" isn't \"type x y z yaw\" - skipped\n", entry);
@@ -866,6 +888,48 @@ static qboolean Social_NpcAlive(const socialNpc_t* n)
 	}
 	const sharedEntity_t* e = SV_GentityNum(n->ent);
 	return (e->r.linked && e->playerState && e->s.number == n->ent) ? qtrue : qfalse;
+}
+
+// Keeps a seated NPC seated, and gives idle ones something to do now and then.
+static void Social_NpcAnimate(socialNpc_t* n, sharedEntity_t* e)
+{
+	const playerState_t* ps = e->playerState;
+
+	if (n->pose == SOCIAL_POSE_SIT) {
+		if (ps->legsTimer < 300 || ps->torsoTimer < 300) {
+			SV_EntitySetAnim(e, "BOTH_SIT1", qfalse);
+		}
+		return;
+	}
+	if (n->pose != SOCIAL_POSE_IDLE && n->pose != SOCIAL_POSE_BARTEND) {
+		return;
+	}
+	if (!n->nextAnim) {
+		n->nextAnim = svs.time + Q_irand(2000, 8000); // don't all start at once
+		return;
+	}
+	if (svs.time < n->nextAnim) {
+		return;
+	}
+	if (n->pose == SOCIAL_POSE_BARTEND) {
+		SV_EntitySetAnim(e, kNpcBartendAnims[Q_irand(0, ARRAY_LEN(kNpcBartendAnims) - 1)], qfalse);
+		n->nextAnim = svs.time + Q_irand(6000, 12000);
+	} else {
+		SV_EntitySetAnim(e, kNpcIdleAnims[Q_irand(0, ARRAY_LEN(kNpcIdleAnims) - 1)], qfalse);
+		n->nextAnim = svs.time + Q_irand(12000, 25000);
+	}
+}
+
+// A gesture from every live NPC of a type (the bartender, as he answers).
+void SV_SocialNpcGesture(const char* type, const char* anim)
+{
+	for (int i = 0; i < gSocialNpcCount; i++) {
+		socialNpc_t* n = &gSocialNpcs[i];
+		if (!Q_stricmp(n->type, type) && Social_NpcAlive(n)) {
+			SV_EntitySetAnim(SV_GentityNum(n->ent), anim, qfalse);
+			n->nextAnim = svs.time + Q_irand(6000, 12000);
+		}
+	}
 }
 
 // Someone standing on (or next to) an NPC's spot.
@@ -935,11 +999,18 @@ static void Social_NpcFrame(void)
 			// nobody's standing there, or it's put back inside them.
 			playerState_t* ps = SV_GentityNum(n->ent)->playerState;
 			const float dx = ps->origin[0] - n->origin[0], dy = ps->origin[1] - n->origin[1];
-			if (dx * dx + dy * dy > 32.0f * 32.0f && !Social_SpotOccupied(n->origin, n->ent)) {
+			const qboolean off = (dx * dx + dy * dy > 32.0f * 32.0f) ? qtrue : qfalse;
+			if (!off || ps->groundEntityNum == ENTITYNUM_NONE) {
+				n->offSince = 0;
+			} else if (!n->offSince) {
+				n->offSince = svs.time;
+			} else if (svs.time - n->offSince > 2000 && !Social_SpotOccupied(n->origin, n->ent)) {
 				ps->origin[0] = n->origin[0];
 				ps->origin[1] = n->origin[1];
 				ps->velocity[0] = ps->velocity[1] = 0.0f;
+				n->offSince = 0;
 			}
+			Social_NpcAnimate(n, SV_GentityNum(n->ent));
 			continue;
 		}
 		if (!spawner || svs.time < n->nextTry) {

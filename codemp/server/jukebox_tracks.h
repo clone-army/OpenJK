@@ -32,7 +32,7 @@ static const jukeboxTrack_t kJukeboxTracks[] = {
 	{ "Mortal Kombat", "Music/mk", "Games & Films", 202 },
 	{ "Lord of the Rings", "Music/lotr_hd", "Games & Films", 353 },
 	{ "Alderaan", "music/alderaan", "Star Wars", 247 },
-	{ "Arctic", "music/Arctic", "Star Wars", 117 },
+	{ "Terminator Theme", "music/Arctic", "Games & Films", 117 },
 	{ "Artus Detention", "music/artus_detention/impbasec_action", "Star Wars", 73 },
 	{ "Asteroid Field", "music/asteroids", "Star Wars", 256 },
 	{ "Auralnauts: Dark Side Mix", "music/assaultv2/auralnauts_darksideEP_mix", "Star Wars", 301 },

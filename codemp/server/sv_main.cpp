@@ -116,6 +116,9 @@ cvar_t* g_statsEnable;
 cvar_t* g_chatFloodEnable;
 cvar_t* g_socialMode;
 cvar_t* g_socialNpcs;
+cvar_t* g_socialNpcs2;
+cvar_t* g_socialNpcs3;
+cvar_t* g_socialNpcs4;
 cvar_t* g_socialAutoSpawn;
 cvar_t* g_socialRespawnTime;
 cvar_t* g_socialDuels;
@@ -1364,7 +1367,9 @@ void SV_Frame( int msec ) {
 	SV_CheckTimeouts();
 
 	// send messages back to the clients
+	SV_BarPreSnapshot();
 	SV_SendClientMessages();
+	SV_BarPostSnapshot();
 
 	SV_CheckCvars();
 

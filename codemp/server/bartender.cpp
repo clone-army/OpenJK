@@ -116,6 +116,7 @@ static void Bartender_Deliver(btRequest_t* req, const char* answer)
 		return;
 	}
 
+	SV_SocialNpcGesture("bartender", "BOTH_TALK1");
 	Com_sprintf(text, sizeof(text), "%s^7: %s", req->name, answer);
 	Bartender_Clean(text);
 

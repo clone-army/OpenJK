@@ -450,6 +450,9 @@ extern	cvar_t* g_statsEnable;
 extern	cvar_t* g_chatFloodEnable;
 extern	cvar_t* g_socialMode;
 extern	cvar_t* g_socialNpcs;
+extern	cvar_t* g_socialNpcs2;
+extern	cvar_t* g_socialNpcs3;
+extern	cvar_t* g_socialNpcs4;
 extern	cvar_t* g_socialAutoSpawn;
 extern	cvar_t* g_socialRespawnTime;
 extern	cvar_t* g_socialDuels;
@@ -633,6 +636,8 @@ void SV_EconomyMenuPump( client_t *cl );
 void SV_BarInitCvars(void);
 qboolean SV_BarCommand(client_t* cl, const char* args);
 void SV_BarFrame(void);
+void SV_BarPreSnapshot(void);
+void SV_BarPostSnapshot(void);
 void SV_BarClientThink(client_t* cl, usercmd_t* cmd);
 
 //
@@ -645,6 +650,8 @@ void SV_JukeboxFrame(void);
 // emotes.cpp
 //
 qboolean SV_EmoteCommand(client_t* cl, const char* command);
+qboolean SV_EntitySetAnim(sharedEntity_t* ent, const char* anim, qboolean torsoOnly);
+void SV_SocialNpcGesture(const char* type, const char* anim);
 qboolean SV_SocialSpawnCommand(client_t* cl, const char* command);
 void SV_EmoteTrigger(client_t* cl, const char* command);
 void SV_EmotesFrame(void);
