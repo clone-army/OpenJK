@@ -1011,16 +1011,29 @@ static void Social_NpcFrame(void)
 			// nobody's standing there, or it's put back inside them.
 			playerState_t* ps = SV_GentityNum(n->ent)->playerState;
 			const float dx = ps->origin[0] - n->origin[0], dy = ps->origin[1] - n->origin[1];
-			const qboolean off = (dx * dx + dy * dy > 32.0f * 32.0f) ? qtrue : qfalse;
-			if (!off || ps->groundEntityNum == ENTITYNUM_NONE) {
-				n->offSince = 0;
-			} else if (!n->offSince) {
-				n->offSince = svs.time;
-			} else if (svs.time - n->offSince > 2000 && !Social_SpotOccupied(n->origin, n->ent)) {
+			// Seated ones stay put: their AI shuffling them off the chair is
+			// undone at once, not after the grace standing ones get.
+			const float slack = (n->pose == SOCIAL_POSE_SIT) ? 4.0f : 32.0f;
+			const int graceMs = (n->pose == SOCIAL_POSE_SIT) ? 0 : 2000;
+			const qboolean off = (dx * dx + dy * dy > slack * slack) ? qtrue : qfalse;
+			if (off && ps->groundEntityNum != ENTITYNUM_NONE && graceMs == 0 &&
+				!Social_SpotOccupied(n->origin, n->ent)) {
 				ps->origin[0] = n->origin[0];
 				ps->origin[1] = n->origin[1];
 				ps->velocity[0] = ps->velocity[1] = 0.0f;
 				n->offSince = 0;
+			} else if (!off || ps->groundEntityNum == ENTITYNUM_NONE) {
+				n->offSince = 0;
+			} else if (!n->offSince) {
+				n->offSince = svs.time;
+			} else if (svs.time - n->offSince > graceMs && !Social_SpotOccupied(n->origin, n->ent)) {
+				ps->origin[0] = n->origin[0];
+				ps->origin[1] = n->origin[1];
+				ps->velocity[0] = ps->velocity[1] = 0.0f;
+				n->offSince = 0;
+			}
+			if (n->pose == SOCIAL_POSE_SIT && ps->groundEntityNum != ENTITYNUM_NONE) {
+				ps->velocity[0] = ps->velocity[1] = 0.0f;
 			}
 			Social_NpcAnimate(n, SV_GentityNum(n->ent));
 			continue;
