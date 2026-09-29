@@ -2370,6 +2370,9 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 	if ( !Q_stricmp( commandName, "where" ) && g_socialMode && g_socialMode->integer ) {
 		return SV_SocialWhereCommand( cl );
 	}
+	if ( !Q_stricmp( commandName, "playsound" ) && g_socialMode && g_socialMode->integer ) {
+		return SV_SocialPlaySoundCommand( cl, chatCursor );
+	}
 
 	if ( SV_SocialSpawnCommand( cl, commandName ) ) {
 		return qtrue;
