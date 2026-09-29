@@ -194,3 +194,277 @@ CA_Rex
 	dismemberProbHands	0
 	dismemberProbWaist	0
 }
+
+// --- Thugs: Jabba's heavies, mixed weapons, a Gamorrean boss ---
+
+CA_Trando
+{
+	playerModel	trandoshan
+	customSkin	default
+	weapon		WP_REPEATER
+	health		90
+	armor		20
+	reactions	3
+	aim		2
+	move		3
+	aggression	5
+	evasion		2
+	intelligence	3
+	rank		crewman
+	playerTeam	TEAM_FREE
+	enemyTeam	TEAM_PLAYER
+	class		CLASS_STORMTROOPER
+	yawspeed	70
+	walkSpeed	55
+	runSpeed	200
+}
+
+CA_Weequay
+{
+	playerModel	weequay
+	customSkin	default
+	weapon		WP_BLASTER
+	health		60
+	armor		10
+	reactions	3
+	aim		2
+	move		3
+	aggression	4
+	evasion		2
+	intelligence	3
+	rank		crewman
+	playerTeam	TEAM_FREE
+	enemyTeam	TEAM_PLAYER
+	class		CLASS_STORMTROOPER
+	yawspeed	70
+	walkSpeed	55
+	runSpeed	200
+}
+
+CA_Nikto
+{
+	playerModel	weequay
+	customSkin	nikto
+	weapon		WP_BRYAR_PISTOL
+	health		50
+	armor		10
+	reactions	4
+	aim		3
+	move		4
+	aggression	4
+	evasion		3
+	intelligence	3
+	rank		crewman
+	playerTeam	TEAM_FREE
+	enemyTeam	TEAM_PLAYER
+	class		CLASS_STORMTROOPER
+	yawspeed	80
+	walkSpeed	55
+	runSpeed	210
+}
+
+CA_Klatoo
+{
+	playerModel	weequay
+	customSkin	klatoonian
+	weapon		WP_BOWCASTER
+	health		60
+	armor		10
+	reactions	3
+	aim		2
+	move		3
+	aggression	4
+	evasion		2
+	intelligence	3
+	rank		crewman
+	playerTeam	TEAM_FREE
+	enemyTeam	TEAM_PLAYER
+	class		CLASS_STORMTROOPER
+	yawspeed	70
+	walkSpeed	55
+	runSpeed	200
+}
+
+CA_Rodian
+{
+	playerModel	rodian
+	customSkin	rgb
+	weapon		WP_BLASTER
+	health		50
+	armor		0
+	reactions	4
+	aim		3
+	move		4
+	aggression	3
+	evasion		3
+	intelligence	4
+	rank		crewman
+	playerTeam	TEAM_FREE
+	enemyTeam	TEAM_PLAYER
+	class		CLASS_STORMTROOPER
+	yawspeed	80
+	walkSpeed	55
+	runSpeed	210
+}
+
+CA_Gamorrean
+{
+	playerModel	gamorrean
+	customSkin	default
+	weapon		WP_MELEE
+	health		250
+	armor		50
+	reactions	3
+	aim		3
+	move		3
+	aggression	5
+	evasion		1
+	intelligence	2
+	rank		ensign
+	scale		110
+	playerTeam	TEAM_FREE
+	enemyTeam	TEAM_PLAYER
+	class		CLASS_STORMTROOPER
+	yawspeed	70
+	walkSpeed	50
+	runSpeed	190
+}
+
+// --- Pyke Syndicate: blasters, repeater gunners, a boss ---
+
+CA_Pyke
+{
+	playerModel	pyke2
+	customSkin	default
+	weapon		WP_BLASTER
+	health		60
+	armor		10
+	reactions	4
+	aim		3
+	move		4
+	aggression	4
+	evasion		3
+	intelligence	4
+	rank		crewman
+	playerTeam	TEAM_FREE
+	enemyTeam	TEAM_PLAYER
+	class		CLASS_STORMTROOPER
+	yawspeed	80
+	walkSpeed	55
+	runSpeed	210
+}
+
+CA_PykeGunner
+{
+	playerModel	pyke2
+	customSkin	default3
+	weapon		WP_REPEATER
+	health		90
+	armor		20
+	reactions	3
+	aim		2
+	move		3
+	aggression	5
+	evasion		2
+	intelligence	4
+	rank		crewman
+	playerTeam	TEAM_FREE
+	enemyTeam	TEAM_PLAYER
+	class		CLASS_STORMTROOPER
+	yawspeed	70
+	walkSpeed	50
+	runSpeed	190
+}
+
+CA_PykeBoss
+{
+	playerModel	pyke2
+	customSkin	default3
+	weapon		WP_BLASTER
+	altFire		1
+	health		150
+	armor		40
+	reactions	5
+	aim		5
+	move		4
+	aggression	5
+	evasion		4
+	intelligence	5
+	rank		ensign
+	scale		108
+	playerTeam	TEAM_FREE
+	enemyTeam	TEAM_PLAYER
+	class		CLASS_STORMTROOPER
+	yawspeed	100
+	walkSpeed	55
+	runSpeed	210
+}
+
+// --- Death Watch: Mandalorian pistols and blasters, Pre Vizsla leads ---
+
+CA_DeathWatch
+{
+	playerModel	deathwatch
+	customSkin	default
+	weapon		WP_MANDO_PISTOL
+	health		80
+	armor		40
+	reactions	5
+	aim		4
+	move		5
+	aggression	5
+	evasion		4
+	intelligence	5
+	rank		crewman
+	playerTeam	TEAM_FREE
+	enemyTeam	TEAM_PLAYER
+	class		CLASS_STORMTROOPER
+	yawspeed	100
+	walkSpeed	60
+	runSpeed	230
+}
+
+CA_DeathWatchRed
+{
+	playerModel	deathwatch
+	customSkin	red
+	weapon		WP_BLASTER
+	health		80
+	armor		40
+	reactions	5
+	aim		4
+	move		5
+	aggression	5
+	evasion		4
+	intelligence	5
+	rank		crewman
+	playerTeam	TEAM_FREE
+	enemyTeam	TEAM_PLAYER
+	class		CLASS_STORMTROOPER
+	yawspeed	100
+	walkSpeed	60
+	runSpeed	230
+}
+
+CA_Vizsla
+{
+	playerModel	deathwatch
+	customSkin	vizsla
+	weapon		WP_MANDO_PISTOL
+	health		200
+	armor		60
+	reactions	5
+	aim		5
+	move		5
+	aggression	5
+	evasion		5
+	intelligence	5
+	rank		ensign
+	scale		105
+	playerTeam	TEAM_FREE
+	enemyTeam	TEAM_PLAYER
+	class		CLASS_STORMTROOPER
+	yawspeed	120
+	walkSpeed	60
+	runSpeed	240
+}
