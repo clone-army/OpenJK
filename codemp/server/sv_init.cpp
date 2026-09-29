@@ -1029,6 +1029,10 @@ void SV_Init (void) {
 	g_raffleMinEntrants = Cvar_Get("g_raffleMinEntrants", "5", CVAR_TEMP, "Different players who must enter for a raffle draw to happen (otherwise refunded)");
 	g_economyChanceEnable = Cvar_Get("g_economyChanceEnable", "0", CVAR_TEMP, "Enable !chance red/blue challenges for credits (also requires g_creditSystemEnable 1)");
 	g_economyChanceEnable->flags &= ~CVAR_ARCHIVE;
+	g_economyBlackjackEnable = Cvar_Get("g_economyBlackjackEnable", "0", CVAR_TEMP, "Enable !blackjack against the house (also requires g_creditSystemEnable 1)");
+	g_economyBlackjackEnable->flags &= ~CVAR_ARCHIVE;
+	g_blackjackMaxBet = Cvar_Get("g_blackjackMaxBet", "50", CVAR_TEMP, "Most credits one !blackjack hand can bet");
+	g_blackjackMaxBet->flags &= ~CVAR_ARCHIVE;
 	g_economyBartenderEnable = Cvar_Get("g_economyBartenderEnable", "0", CVAR_TEMP, "Enable !bartender, the AI bartender (set by MBIIEZ's creditsystem plugin when it has an API key)");
 	g_economyBartenderEnable->flags &= ~CVAR_ARCHIVE;
 	g_bartenderCost = Cvar_Get("g_bartenderCost", "5", CVAR_TEMP, "Credits a !bartender question costs");

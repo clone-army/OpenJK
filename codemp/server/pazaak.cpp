@@ -367,7 +367,7 @@ static void Pz_Answer(client_t* cl, qboolean accept)
 		}
 	}
 
-	SV_SendServerCommand(NULL, "chat \"^3[Pazaak] ^7%s ^7and %s ^7sit down to play for ^2%d ^7credits.\"\n",
+	SV_SendServerCommand(NULL, "chat \"^3[Pazaak] ^7%s ^7and %s ^7are playing Pazaak for ^2%d ^7credits.\"\n",
 		challenger->name, cl->name, bet * 2);
 	Pz_StartSet(g, Q_irand(0, 1));
 }
@@ -447,8 +447,8 @@ qboolean SV_PazaakCommand(client_t* cl, const char* args)
 	}
 
 	if (argc < 1) {
-		Pz_Print(cl, "^5!pazaak <player> <credits> ^7to challenge someone. Closest to 20 without going over wins the set;");
-		Pz_Print(cl, "first to 2 sets wins the pot. In a game: ^5!pz play <n>^7, ^5!pz end^7, ^5!pz stand^7, ^5!pz auto ^7(it picks for you), ^5!pz forfeit^7.");
+		Pz_Print(cl, "^5!pazaak <player> <credits> ^7to challenge someone. Closest to 20 without going over wins the set, and the first to 2 sets wins the pot.");
+		Pz_Print(cl, "In a game: ^5!pz play <n>^7, ^5!pz end^7, ^5!pz stand^7, ^5!pz auto ^7(it picks for you), ^5!pz forfeit^7.");
 		Pz_Print(cl, "^5!pazaak ^7and ^5!pz ^7work the same for everything.");
 		return qtrue;
 	}

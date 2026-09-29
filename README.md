@@ -187,6 +187,19 @@ you get your stake back, plus a flat win bonus (`g_betWinBonus`, capped at your 
 stake. Losing bets are lost, though if nobody backed the winner they get `g_betLoserRefund` percent back; a duel with
 no clear winner (a fighter leaving) refunds everyone. See `codemp/server/betting.cpp`.
 
+### Blackjack
+
+`!blackjack <credits>` (or `!bj`) deals a hand against the dealer, from a freshly shuffled deck every hand, and
+tells the server who's playing. `!bj hit`, `!bj stand` and `!bj double` (first two cards only: double the bet, one
+more card) play it. Blackjack pays 3:2, a win 1:1, a tie returns the bet; the dealer draws to 16 and stands on all
+17s. A hand left for 30 seconds stands, as does the hand of anyone who leaves (paid into their account). It's played
+against the house, so lost bets leave the economy and wins are paid by the server.
+
+| Cvar | Default | Meaning |
+|---|---|---|
+| `g_economyBlackjackEnable` | `0` | On/off (needs the master switch too) |
+| `g_blackjackMaxBet` | `50` | Most credits one hand can bet |
+
 ### Chance
 
 `!chance <player> <credits>` challenges someone; they answer `!chance red`, `!chance blue` or `!chance random` (or `!chance decline`) within 60 seconds and the challenger gets the other colour. The server rolls red or blue, 50/50, and whoever's colour comes up takes both stakes, announced to everyone. See `codemp/server/chance.cpp`.

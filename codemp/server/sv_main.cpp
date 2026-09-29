@@ -86,6 +86,8 @@ cvar_t* g_jukeboxCost;
 cvar_t* g_jukeboxCooldown;
 cvar_t* g_economyPazaakEnable;
 cvar_t* g_economyChanceEnable;
+cvar_t* g_economyBlackjackEnable;
+cvar_t* g_blackjackMaxBet;
 cvar_t* g_economyBartenderEnable;
 cvar_t* g_bartenderCost;
 cvar_t* g_bartenderCooldown;
@@ -1309,6 +1311,7 @@ void SV_Frame( int msec ) {
 	SV_EmotesFrame();
 	SV_RaffleFrame();
 	SV_BartenderFrame();
+	SV_BlackjackFrame();
 
 	// gun game: kill-detection and weapon enforcement
 	SV_GunGameFrame();
