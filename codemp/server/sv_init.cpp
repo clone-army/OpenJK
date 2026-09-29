@@ -1029,6 +1029,16 @@ void SV_Init (void) {
 	g_raffleMinEntrants = Cvar_Get("g_raffleMinEntrants", "5", CVAR_TEMP, "Different players who must enter for a raffle draw to happen (otherwise refunded)");
 	g_economyChanceEnable = Cvar_Get("g_economyChanceEnable", "0", CVAR_TEMP, "Enable !chance red/blue challenges for credits (also requires g_creditSystemEnable 1)");
 	g_economyChanceEnable->flags &= ~CVAR_ARCHIVE;
+	g_economyBartenderEnable = Cvar_Get("g_economyBartenderEnable", "0", CVAR_TEMP, "Enable !bartender, the AI bartender (set by MBIIEZ's creditsystem plugin when it has an API key)");
+	g_economyBartenderEnable->flags &= ~CVAR_ARCHIVE;
+	g_bartenderCost = Cvar_Get("g_bartenderCost", "5", CVAR_TEMP, "Credits a !bartender question costs");
+	g_bartenderCost->flags &= ~CVAR_ARCHIVE;
+	g_bartenderCooldown = Cvar_Get("g_bartenderCooldown", "60", CVAR_TEMP, "Seconds between one player's !bartender questions");
+	g_bartenderCooldown->flags &= ~CVAR_ARCHIVE;
+	g_bartenderDailyCap = Cvar_Get("g_bartenderDailyCap", "300", CVAR_TEMP, "Most !bartender questions this server answers a day (0 = no cap)");
+	g_bartenderDailyCap->flags &= ~CVAR_ARCHIVE;
+	g_bartenderPublic = Cvar_Get("g_bartenderPublic", "1", CVAR_TEMP, "1 = everyone sees !bartender questions and answers, 0 = only the asker");
+	g_bartenderPublic->flags &= ~CVAR_ARCHIVE;
 	g_economyBetEnable = Cvar_Get("g_economyBetEnable", "0", CVAR_TEMP, "Enable !bet on duels (also requires g_creditSystemEnable 1)");
 	g_economyBetEnable->flags &= ~CVAR_ARCHIVE;
 	g_betWindowSeconds = Cvar_Get("g_betWindowSeconds", "30", CVAR_TEMP, "Seconds a duel opened to bets (!bets start) takes bets, with both fighters frozen");

@@ -2876,6 +2876,8 @@ void SV_AddOperatorCommands( void ) {
 	Cmd_AddCommand ("sv_bandel", SV_BanDel_f, "Removes a ban" );
 	Cmd_AddCommand ("sv_exceptdel", SV_ExceptDel_f, "Removes a ban exception" );
 	Cmd_AddCommand("givecredits", SV_GiveCredits_f, "Give credits to a player: givecredits <player> <amount>");
+	Cmd_AddCommand("bartenderpoll", SV_BartenderPoll_f, "For the bartender plugin: list waiting !bartender questions");
+	Cmd_AddCommand("bartenderreply", SV_BartenderReply_f, "For the bartender plugin: bartenderreply <id> <answer | !fail>");
 	Cmd_AddCommand("dumpplayercs", SV_DumpPlayerCS_f, "TEMP DEBUG: dump a client's CS_PLAYERS configstring: dumpplayercs <clientnum>");
 	Cmd_AddCommand("spawnvehicle", SV_SpawnVehicle_f, "Move a player to a clear spot, spawn a vehicle, and board them in: spawnvehicle <player> <vehicle>");
 	Cmd_AddCommand("givelives", SV_GiveLives_f, "Give lives to a player: givelives <player> <amount>");

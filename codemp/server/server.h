@@ -407,6 +407,11 @@ extern	cvar_t* g_jukeboxCost;
 extern	cvar_t* g_jukeboxCooldown;
 extern	cvar_t* g_economyPazaakEnable;
 extern	cvar_t* g_economyChanceEnable;
+extern	cvar_t* g_economyBartenderEnable;
+extern	cvar_t* g_bartenderCost;
+extern	cvar_t* g_bartenderCooldown;
+extern	cvar_t* g_bartenderDailyCap;
+extern	cvar_t* g_bartenderPublic;
 extern	cvar_t* g_economyBetEnable;
 extern	cvar_t* g_betWindowSeconds;
 extern	cvar_t* g_betMax;
@@ -627,6 +632,10 @@ qboolean SV_PazaakCommand(client_t* cl, const char* args);
 // chance.cpp
 //
 qboolean SV_ChanceCommand(client_t* cl, const char* args);
+qboolean SV_BartenderCommand(client_t* cl, const char* args);
+void SV_BartenderPoll_f(void);
+void SV_BartenderReply_f(void);
+void SV_BartenderFrame(void);
 
 //
 // betting.cpp
