@@ -63,6 +63,8 @@ static void Chance_Challenge(client_t* cl, const char* who, const char* amountSt
 	ch->bet = bet;
 	ch->expires = svs.time + CHANCE_CHALLENGE_MS;
 
+	SV_SendServerCommand(NULL, "chat \"^3[Chance] ^7%s ^7challenged %s ^7to Chance for ^2%d ^7credits each.\"\n",
+		cl->name, target->name, bet);
 	Chance_Print(cl, va("You challenged %s ^7to Chance for %d credits. They pick red or blue...", target->name, bet));
 	Chance_Print(target, va("%s ^7challenges you to Chance for ^2%d ^7credits each! Pick: ^1!chance red^7, ^4!chance blue^7, "
 		"^5!chance random ^7or ^5!chance decline ^7(60s).", cl->name, bet));

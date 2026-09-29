@@ -2342,6 +2342,8 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 		  !Q_stricmp( commandName, "raffle" ) ||
 		  !Q_stricmp( commandName, "gift" ) ||
 		  !Q_stricmp( commandName, "chance" ) ||
+		  !Q_stricmp( commandName, "blackjack" ) ||
+		  !Q_stricmp( commandName, "bj" ) ||
 		  !Q_stricmp( commandName, "bartender" ) ||
 		  !Q_stricmp( commandName, "barkeep" ) ||
 		  !Q_stricmp( commandName, "bet" ) ||
@@ -2366,6 +2368,8 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 		  !Q_stricmp( commandName, "raffle" ) ||
 		  !Q_stricmp( commandName, "gift" ) ||
 		  !Q_stricmp( commandName, "chance" ) ||
+		  !Q_stricmp( commandName, "blackjack" ) ||
+		  !Q_stricmp( commandName, "bj" ) ||
 		  !Q_stricmp( commandName, "bartender" ) ||
 		  !Q_stricmp( commandName, "barkeep" ) ||
 		  !Q_stricmp( commandName, "bet" ) ||
@@ -2411,6 +2415,10 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 
 	if ( !Q_stricmp( commandName, "chance" ) ) {
 		return SV_ChanceCommand( cl, chatCursor );
+	}
+
+	if ( !Q_stricmp( commandName, "blackjack" ) || !Q_stricmp( commandName, "bj" ) ) {
+		return SV_BlackjackCommand( cl, chatCursor );
 	}
 
 	if ( !Q_stricmp( commandName, "bartender" ) || !Q_stricmp( commandName, "barkeep" ) ) {
@@ -2898,6 +2906,11 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 
 			if ( g_economyChanceEnable && g_economyChanceEnable->integer ) {
 				SV_EconomyMenuAddLine( cl, "^2!chance <player> <credits> ^7- they pick red or blue, the server rolls, winning colour takes the pot." );
+			}
+
+			if ( g_economyBlackjackEnable && g_economyBlackjackEnable->integer ) {
+				SV_EconomyMenuAddLine( cl, va( "^2!blackjack <credits> ^7- a hand against the dealer (up to %d). ^5!bj hit^7, ^5!bj stand^7, ^5!bj double^7.",
+					g_blackjackMaxBet ? g_blackjackMaxBet->integer : 50 ) );
 			}
 
 			if ( g_economyBartenderEnable && g_economyBartenderEnable->integer ) {
