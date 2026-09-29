@@ -449,6 +449,7 @@ extern	cvar_t* g_killstreakEnable;
 extern	cvar_t* g_statsEnable;
 extern	cvar_t* g_chatFloodEnable;
 extern	cvar_t* g_socialMode;
+extern	cvar_t* g_socialNpcs;
 extern	cvar_t* g_socialRespawnTime;
 extern	cvar_t* g_socialDuels;
 extern	cvar_t* g_socialRoundTime;

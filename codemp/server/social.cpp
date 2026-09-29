@@ -149,6 +149,7 @@ static qboolean gHookAttempted = qfalse; // this game load; reset every G_InitGa
 static void (*gEngageDuel)(void* ent) = NULL;
 static void (*gCheckPrivateDuel)(void* ent) = NULL;
 static void (*gSetTeam)(void* ent, char* team) = NULL;
+static void* (*gNPCSpawnType)(void* ent, char* type, char* targetname, int isVehicle, int asIfPlayer, int siegeTeam) = NULL;
 static vmCvar_t* gAuthenticity = NULL;
 static int* gRebelTimeLimit = NULL;
 static int* gImperialTimeLimit = NULL;
@@ -736,8 +737,133 @@ qboolean SV_SocialSpawnCommand(client_t* cl, const char* command)
 	return qtrue;
 }
 
+// --- Cantina NPCs -----------------------------------------------------------
+//
+// g_socialNpcs lists NPCs to stand about the map, "type x y z yaw" each,
+// separated by ';' - e.g. "bartender 4008 -550 -1769 169" (MBII ships a
+// neutral, unarmed "bartender", the JKO one). x y z is where a player's
+// origin would be (a /viewpos reading, minus 36 for eye height).
+//
+// MBII's NPC_SpawnType puts a spawner 64 units in front of a player and
+// returns the new NPC before it has begun (NPC_Begin runs next frame, from
+// the NPC's playerState origin, facing the spawner's yaw - which comes from
+// that player's view). So: any player on, their view turned to the NPC's
+// yaw for the call, then the NPC's playerState origin set to its spot
+// before it begins. Only engine-known entity fields are touched. Each
+// round's G_InitGame clears every entity, so they're spawned again; and
+// they're held on their spot, since their AI may wander. Damage to NPCs is
+// already blocked on social servers (Social_GDamageHook).
+#define SOCIAL_MAX_NPCS 8
+
+typedef struct {
+	char   type[32];
+	vec3_t origin;
+	float  yaw;
+	int    ent;        // entity number once spawned, -1 before
+	int    nextTry;
+} socialNpc_t;
+
+static socialNpc_t gSocialNpcs[SOCIAL_MAX_NPCS];
+static int gSocialNpcCount = 0;
+static char gSocialNpcsParsed[MAX_CVAR_VALUE_STRING] = "\x01"; // never a real value, so the first frame parses
+
+static void Social_ParseNpcs(void)
+{
+	const char* want = g_socialNpcs ? g_socialNpcs->string : "";
+	if (!strcmp(want, gSocialNpcsParsed)) {
+		return;
+	}
+	Q_strncpyz(gSocialNpcsParsed, want, sizeof(gSocialNpcsParsed));
+	gSocialNpcCount = 0;
+
+	char buf[MAX_CVAR_VALUE_STRING];
+	Q_strncpyz(buf, want, sizeof(buf));
+	for (char* entry = strtok(buf, ";"); entry && gSocialNpcCount < SOCIAL_MAX_NPCS; entry = strtok(NULL, ";")) {
+		socialNpc_t* n = &gSocialNpcs[gSocialNpcCount];
+		memset(n, 0, sizeof(*n));
+		if (sscanf(entry, "%31s %f %f %f %f", n->type, &n->origin[0], &n->origin[1], &n->origin[2], &n->yaw) == 5) {
+			n->ent = -1;
+			gSocialNpcCount++;
+		} else if (entry[strspn(entry, " ")]) {
+			Com_Printf("Social mode: g_socialNpcs entry \"%s\" isn't \"type x y z yaw\" - skipped\n", entry);
+		}
+	}
+}
+
+static qboolean Social_NpcAlive(const socialNpc_t* n)
+{
+	if (n->ent < MAX_CLIENTS || n->ent >= sv.num_entities) {
+		return qfalse;
+	}
+	const sharedEntity_t* e = SV_GentityNum(n->ent);
+	return (e->r.linked && e->playerState && e->s.number == n->ent) ? qtrue : qfalse;
+}
+
+static void Social_NpcFrame(void)
+{
+	Social_ParseNpcs();
+	if (!gSocialNpcCount || !gNPCSpawnType) {
+		return;
+	}
+
+	client_t* spawner = NULL;
+	for (int i = 0; i < sv_maxclients->integer && !spawner; i++) {
+		client_t* cl = &svs.clients[i];
+		if (cl->state == CS_ACTIVE && cl->gentity && cl->gentity->playerState &&
+			cl->netchan.remoteAddress.type != NA_BOT) {
+			spawner = cl;
+		}
+	}
+
+	for (int i = 0; i < gSocialNpcCount; i++) {
+		socialNpc_t* n = &gSocialNpcs[i];
+
+		if (Social_NpcAlive(n)) {
+			// Held on the spot: back it goes if its AI walks it off.
+			playerState_t* ps = SV_GentityNum(n->ent)->playerState;
+			if (DistanceSquared(ps->origin, n->origin) > 16.0f * 16.0f) {
+				VectorCopy(n->origin, ps->origin);
+				VectorClear(ps->velocity);
+			}
+			continue;
+		}
+		if (!spawner || svs.time < n->nextTry) {
+			continue;
+		}
+		n->nextTry = svs.time + 10000;
+
+		playerState_t* pps = spawner->gentity->playerState;
+		const float savedYaw = pps->viewangles[YAW];
+		pps->viewangles[YAW] = n->yaw; // the new NPC faces where its spawner does
+		void* old = GVM_BeginNative();
+		sharedEntity_t* e = (sharedEntity_t*)gNPCSpawnType(spawner->gentity, n->type, NULL, 0, 0, 0);
+		GVM_EndNative(old);
+		pps->viewangles[YAW] = savedYaw;
+
+		if (!e) {
+			Com_Printf("Social mode: couldn't spawn NPC \"%s\" - retrying in 10s\n", n->type);
+			continue;
+		}
+		n->ent = e->s.number;
+		if (e->playerState) {
+			VectorCopy(n->origin, e->playerState->origin); // NPC_Begin spawns it here
+		}
+		VectorCopy(n->origin, e->s.origin);
+		VectorCopy(n->origin, e->s.pos.trBase);
+		VectorCopy(n->origin, e->r.currentOrigin);
+		Com_Printf("Social mode: NPC \"%s\" (entity %d) at %.0f %.0f %.0f facing %.0f\n",
+			n->type, n->ent, n->origin[0], n->origin[1], n->origin[2], n->yaw);
+	}
+}
+
 void SV_SocialGameInit(void)
 {
+	// A new round or map frees every entity: spawn the NPCs again.
+	for (int i = 0; i < SOCIAL_MAX_NPCS; i++) {
+		gSocialNpcs[i].ent = -1;
+		gSocialNpcs[i].nextTry = 0;
+	}
+
 	void* dll = GVM_GetDllHandle();
 	if (!dll) {
 		return; // legacy/QVM game, nothing to look up
@@ -751,6 +877,7 @@ void SV_SocialGameInit(void)
 		gEngageDuel = (void (*)(void*))Sys_LoadFunction(dll, "Cmd_EngageDuel_f");
 		gCheckPrivateDuel = (void (*)(void*))Sys_LoadFunction(dll, "G_CheckPrivateDuel");
 		gSetTeam = (void (*)(void*, char*))Sys_LoadFunction(dll, "SetTeam");
+		gNPCSpawnType = (void* (*)(void*, char*, char*, int, int, int))Sys_LoadFunction(dll, "NPC_SpawnType");
 		gAuthenticity = (vmCvar_t*)Sys_LoadFunction(dll, "g_Authenticity");
 		gRebelTimeLimit = (int*)Sys_LoadFunction(dll, "rebel_time_limit");
 		gImperialTimeLimit = (int*)Sys_LoadFunction(dll, "imperial_time_limit");
@@ -822,6 +949,7 @@ void SV_SocialFrame(void)
 			Social_InstallHook();
 		}
 		Social_CheckDuels();
+		Social_NpcFrame();
 	}
 	if (Social_Enabled() || (g_socialBots && g_socialBots->integer)) {
 		Social_RescueStuckJoiners();
