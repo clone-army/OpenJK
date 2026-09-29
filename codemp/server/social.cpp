@@ -148,6 +148,7 @@ static qboolean gHookInstalled = qfalse;
 static qboolean gHookAttempted = qfalse; // this game load; reset every G_InitGame
 static void (*gEngageDuel)(void* ent) = NULL;
 static void (*gCheckPrivateDuel)(void* ent) = NULL;
+static void (*gSetTeam)(void* ent, char* team) = NULL;
 static vmCvar_t* gAuthenticity = NULL;
 static int* gRebelTimeLimit = NULL;
 static int* gImperialTimeLimit = NULL;
@@ -166,6 +167,8 @@ struct socialJoinState_t {
 	int lastRescueAt;
 	int rescues;
 	int lastSpawnedAt;                    // last frame seen on a team
+	int lastSpawnCmdAt;                   // !spawn cooldown
+	int spawnCmdTries;                    // !spawn presses since last spawned
 	int botSide;                          // bots: pending side, TEAM_RED/TEAM_BLUE, 0 = none
 };
 
@@ -543,6 +546,8 @@ static void Social_ReplayClientCommand(client_t* cl, const char* line)
 	GVM_ClientCommand(cl - svs.clients);
 }
 
+// A Legends class on the emptier side, into js->siegeClassCmd (and
+// js->botSide) - for bots, and for players whose own pick won't take.
 static void Social_PickBotClass(int clientNum)
 {
 	int red = 0, blue = 0;
@@ -570,6 +575,38 @@ static void Social_PickBotClass(int clientNum)
 	js->botSide = hero ? TEAM_RED : TEAM_BLUE;
 }
 
+// Moves a client to spectator, then replays a class pick. MBII only spawns
+// someone from a class pick if they're a spectator at the time (anyone else
+// just has it queued for their next respawn), and a fresh joiner sits on
+// TEAM_FREE, which never respawns. Its "team spectator" command refuses to
+// switch mid-round, so the rescue used to replay picks that only ever
+// queued. SetTeam itself, called directly, has no such rule.
+static void Social_JoinWithClass(client_t* cl, const char* classCmd)
+{
+	char line[MAX_STRING_CHARS];
+	Q_strncpyz(line, classCmd, sizeof(line)); // the replay below re-records it
+
+	if (gSetTeam && cl->gentity) {
+		void* old = GVM_BeginNative();
+		gSetTeam(cl->gentity, (char*)"spectator");
+		GVM_EndNative(old);
+	} else {
+		Social_ReplayClientCommand(cl, "team spectator");
+	}
+	Social_ReplayClientCommand(cl, line);
+}
+
+// "h9_Anakin" -> "Anakin", for messages.
+static const char* Social_ClassDisplayName(const char* classCmd)
+{
+	static char name[64];
+	char cls[64] = "";
+	sscanf(classCmd, "%*s %63s", cls);
+	const char* underscore = strchr(cls, '_');
+	Q_strncpyz(name, underscore ? underscore + 1 : cls, sizeof(name));
+	return name;
+}
+
 static void Social_RescueStuckJoiners(void)
 {
 	if (!gSiegeRoundBegun) {
@@ -593,6 +630,7 @@ static void Social_RescueStuckJoiners(void)
 			js->siegeClassCmd[0] = '\0'; // spawned - job done
 			js->lastSpawnedAt = svs.time;
 			js->botSide = 0;
+			js->spawnCmdTries = 0;
 			continue;
 		}
 
@@ -622,8 +660,7 @@ static void Social_RescueStuckJoiners(void)
 			js->lastRescueAt = svs.time;
 			Com_Printf("Social mode: bot %d (%s) not spawned - joining as %s\n",
 				i, cl->name, js->siegeClassCmd + strlen("siegeclass "));
-			Social_ReplayClientCommand(cl, "team spectator");
-			Social_ReplayClientCommand(cl, js->siegeClassCmd);
+			Social_JoinWithClass(cl, js->siegeClassCmd);
 			continue;
 		}
 
@@ -642,14 +679,61 @@ static void Social_RescueStuckJoiners(void)
 
 		js->rescues++;
 		js->lastRescueAt = svs.time;
-		Com_Printf("Social mode: client %d (%s) picked a class %ds ago but hasn't spawned - re-joining them (try %d/%d)\n",
-			i, cl->name, (svs.time - js->pickedAt) / 1000, js->rescues, SOCIAL_STUCK_MAX_TRIES);
-
-		char line[MAX_STRING_CHARS];
-		Q_strncpyz(line, js->siegeClassCmd, sizeof(line)); // the replay below re-records it
-		Social_ReplayClientCommand(cl, "team spectator");
-		Social_ReplayClientCommand(cl, line);
+		// Their own class first; if that hasn't worked, it may be full.
+		if (js->rescues > 1) {
+			Social_PickBotClass(i);
+		}
+		Com_Printf("Social mode: client %d (%s) picked a class %ds ago but hasn't spawned - re-joining them as %s (try %d/%d)\n",
+			i, cl->name, (svs.time - js->pickedAt) / 1000, Social_ClassDisplayName(js->siegeClassCmd),
+			js->rescues, SOCIAL_STUCK_MAX_TRIES);
+		const int rescues = js->rescues;
+		Social_JoinWithClass(cl, js->siegeClassCmd);
+		js->rescues = rescues; // the replayed pick resets it
 	}
+}
+
+// "!spawn": gets a player stuck in spectator into the game - their own
+// class pick the first time, a class on the emptier side after that (or if
+// they never picked one). qfalse (pass through as chat) off social servers.
+qboolean SV_SocialSpawnCommand(client_t* cl, const char* command)
+{
+	if (Q_stricmp(command, "spawn") || !Social_Enabled()) {
+		return qfalse;
+	}
+	const int i = cl - svs.clients;
+	socialJoinState_t* js = &gJoinState[i];
+
+	if (!cl->gentity || !cl->gentity->playerState) {
+		return qtrue;
+	}
+	if (Social_IsSpawned(cl->gentity->playerState, i)) {
+		SV_SendServerCommand(cl, "chat \"^5[Social]^7 You're already in the game.\"\n");
+		return qtrue;
+	}
+	if (js->lastSpawnCmdAt && svs.time - js->lastSpawnCmdAt < 10000) {
+		SV_SendServerCommand(cl, "chat \"^5[Social]^7 Hang on - give it a few seconds to spawn you.\"\n");
+		return qtrue;
+	}
+	js->lastSpawnCmdAt = svs.time;
+
+	const qboolean ownPick = (js->siegeClassCmd[0] && js->spawnCmdTries == 0) ? qtrue : qfalse;
+	if (!ownPick) {
+		Social_PickBotClass(i);
+	}
+	js->spawnCmdTries++;
+	Com_Printf("Social mode: client %d (%s) used !spawn - joining as %s\n", i, cl->name, Social_ClassDisplayName(js->siegeClassCmd));
+
+	if (ownPick) {
+		SV_SendServerCommand(cl, "chat \"^5[Social]^7 Getting you in as ^3%s^7...\"\n", Social_ClassDisplayName(js->siegeClassCmd));
+	} else {
+		SV_SendServerCommand(cl, "chat \"^5[Social]^7 Getting you in as ^3%s^7 - pick your own class from the menu any time.\"\n",
+			Social_ClassDisplayName(js->siegeClassCmd));
+	}
+	Social_JoinWithClass(cl, js->siegeClassCmd);
+	if (gSiegeRoundBegun && !*gSiegeRoundBegun) {
+		SV_SendServerCommand(cl, "chat \"^5[Social]^7 The round's about to start - you'll spawn when it does.\"\n");
+	}
+	return qtrue;
 }
 
 void SV_SocialGameInit(void)
@@ -666,6 +750,7 @@ void SV_SocialGameInit(void)
 		gGDamage = (byte*)Sys_LoadFunction(dll, "G_Damage");
 		gEngageDuel = (void (*)(void*))Sys_LoadFunction(dll, "Cmd_EngageDuel_f");
 		gCheckPrivateDuel = (void (*)(void*))Sys_LoadFunction(dll, "G_CheckPrivateDuel");
+		gSetTeam = (void (*)(void*, char*))Sys_LoadFunction(dll, "SetTeam");
 		gAuthenticity = (vmCvar_t*)Sys_LoadFunction(dll, "g_Authenticity");
 		gRebelTimeLimit = (int*)Sys_LoadFunction(dll, "rebel_time_limit");
 		gImperialTimeLimit = (int*)Sys_LoadFunction(dll, "imperial_time_limit");

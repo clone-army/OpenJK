@@ -640,6 +640,7 @@ qboolean SV_JukeboxCommand(client_t* cl, const char* args);
 // emotes.cpp
 //
 qboolean SV_EmoteCommand(client_t* cl, const char* command);
+qboolean SV_SocialSpawnCommand(client_t* cl, const char* command);
 void SV_EmoteTrigger(client_t* cl, const char* command);
 void SV_EmotesFrame(void);
 
