@@ -803,8 +803,9 @@ qboolean SV_SocialSpawnCommand(client_t* cl, const char* command)
 
 // --- Cantina NPCs -----------------------------------------------------------
 //
-// g_socialNpcs lists NPCs to stand about the map, "type x y z yaw" each,
-// separated by ';' - e.g. "bartender 4008 -550 -1769 169" (MBII ships a
+// g_socialNpcs lists NPCs to stand about the map, "type x y z yaw" each
+// (add "roam" to let one wander instead of holding its spot), separated by
+// ';' - e.g. "bartender 4008 -550 -1769 169" (MBII ships a
 // neutral, unarmed "bartender", the JKO one). x y z is where a player's
 // origin would be (a /viewpos reading, minus 36 for eye height).
 //
@@ -826,6 +827,7 @@ typedef struct {
 	int    ent;        // entity number once spawned, -1 before
 	int    nextTry;
 	int    deadAt;     // when it was seen dead (0 = alive)
+	qboolean roam;     // free to wander, not held on its spot
 } socialNpc_t;
 
 static socialNpc_t gSocialNpcs[SOCIAL_MAX_NPCS];
@@ -846,8 +848,10 @@ static void Social_ParseNpcs(void)
 	for (char* entry = strtok(buf, ";"); entry && gSocialNpcCount < SOCIAL_MAX_NPCS; entry = strtok(NULL, ";")) {
 		socialNpc_t* n = &gSocialNpcs[gSocialNpcCount];
 		memset(n, 0, sizeof(*n));
-		if (sscanf(entry, "%31s %f %f %f %f", n->type, &n->origin[0], &n->origin[1], &n->origin[2], &n->yaw) == 5) {
+		char flag[16] = "";
+		if (sscanf(entry, "%31s %f %f %f %f %15s", n->type, &n->origin[0], &n->origin[1], &n->origin[2], &n->yaw, flag) >= 5) {
 			n->ent = -1;
+			n->roam = !Q_stricmp(flag, "roam") ? qtrue : qfalse;
 			gSocialNpcCount++;
 		} else if (entry[strspn(entry, " ")]) {
 			Com_Printf("Social mode: g_socialNpcs entry \"%s\" isn't \"type x y z yaw\" - skipped\n", entry);
@@ -921,6 +925,9 @@ static void Social_NpcFrame(void)
 				continue;
 			}
 			n->deadAt = 0;
+			if (n->roam) {
+				continue;
+			}
 
 			// Held on the spot across the floor only - height is left to
 			// gravity (pinning that too bounced it, dropping to the floor

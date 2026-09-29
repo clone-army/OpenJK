@@ -375,7 +375,7 @@ A hang-out mode on top of whatever MBII mode the server runs (e.g. Legends, with
 | Cvar | Default | Meaning |
 |---|---|---|
 | `g_socialMode` | `0` | Turn Social Mode on |
-| `g_socialNpcs` | `""` | NPCs to stand on the map, `type x y z yaw` separated by `;` (e.g. `bartender 4008 -550 -1769 169`): spawned each round, held on their spot, can't be hurt |
+| `g_socialNpcs` | `""` | NPCs to stand on the map, `type x y z yaw` (add `roam` to let one wander) separated by `;` (e.g. `bartender 4008 -550 -1769 169`): spawned each round, held on their spot, can't be hurt |
 | `g_socialAutoSpawn` | `0` | Seconds after joining to put a player who isn't in the game in automatically, as `!spawn` does (once; not anyone who chose to spectate; `0` = off). `!spawn` and `!kill` work either way |
 | `g_socialRespawnTime` | `3` | Respawn wait in seconds |
 | `g_socialDuels` | `1` | Allow duels (bow to challenge / accept) |
