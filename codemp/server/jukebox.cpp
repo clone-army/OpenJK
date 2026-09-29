@@ -65,6 +65,35 @@ static void Jukebox_SetMusic(const char* music)
 	SV_SetConfigstring(CS_MUSIC, gJukeboxLastSet);
 }
 
+// A bar fight's own music (social.cpp): the jukebox stands aside - no
+// autoplay changes, no paid picks - until it's over, then carries on
+// (autoplay: a fresh random track; otherwise what was playing before).
+static qboolean gJukeboxFight = qfalse;
+static char gJukeboxBeforeFight[MAX_STRING_CHARS];
+
+void SV_JukeboxFightStart(const char* music)
+{
+	if (!gJukeboxFight) {
+		Q_strncpyz(gJukeboxBeforeFight, sv.configstrings[CS_MUSIC] ? sv.configstrings[CS_MUSIC] : "",
+			sizeof(gJukeboxBeforeFight));
+	}
+	gJukeboxFight = qtrue;
+	Jukebox_SetMusic(music);
+}
+
+void SV_JukeboxFightEnd(void)
+{
+	if (!gJukeboxFight) {
+		return;
+	}
+	gJukeboxFight = qfalse;
+	if (Jukebox_Autoplay()) {
+		gJukeboxAutoNext = 0;
+	} else {
+		Jukebox_SetMusic(gJukeboxBeforeFight);
+	}
+}
+
 // If CS_MUSIC isn't what we last set, the map (or a new round) set it, so
 // that's the music to return to: its loop track, or its only track.
 static void Jukebox_NoteMapMusic(void)
@@ -144,6 +173,10 @@ static void Jukebox_Play(client_t* cl, int index)
 {
 	const int cost = Jukebox_Cost();
 
+	if (gJukeboxFight) {
+		SV_EconomyPrint(cl, "Not during a bar fight! The jukebox is back when it's over.");
+		return;
+	}
 	if (svs.time < gJukeboxNextChange) {
 		SV_EconomyPrint(cl, va("Let this one play - the jukebox is free again in %d seconds.",
 			(gJukeboxNextChange - svs.time + 999) / 1000));
@@ -175,6 +208,9 @@ static void Jukebox_Play(client_t* cl, int index)
 // Autoplay: a random track whenever the last one's over.
 void SV_JukeboxFrame(void)
 {
+	if (gJukeboxFight) {
+		return; // the fight's music plays until it's over
+	}
 	if (!Jukebox_Autoplay()) {
 		gJukeboxAutoNext = 0;
 		return;
