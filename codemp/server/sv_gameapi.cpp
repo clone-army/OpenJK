@@ -767,11 +767,16 @@ static int SV_ICARUS_GetVectorVariable( const char *name, const vec3_t value ) {
 	return Q3_GetVectorVariable( name, (float *)value );
 }
 
+// Social route points are in this graph already (SV_Nav_AddSocialRoutes).
+static qboolean svSocialNavAdded = qfalse;
+
 static void SV_Nav_Init( void ) {
+	svSocialNavAdded = qfalse;
 	navigator.Init();
 }
 
 static void SV_Nav_Free( void ) {
+	svSocialNavAdded = qfalse;
 	navigator.Free();
 }
 
@@ -787,7 +792,58 @@ static int SV_Nav_AddRawPoint( vec3_t point, int flags, int radius ) {
 	return navigator.AddRawPoint( point, flags, radius );
 }
 
+// Social servers: the NPC routes recorded with !wp (social.cpp) become part
+// of the map's NPC navigation graph, which MBII builds at game start from
+// the map's own waypoint entities (SP_waypoint -> Nav_AddRawPoint) before
+// asking for the paths to be calculated - many maps, uM_Cantina included,
+// have none. Each route point is a node, joined to the next (and the last
+// to the first), and nodes of any route within 256 units of each other are
+// joined too; HardConnect marks a join blocked when a wall's in the way.
+// Once per graph: MBII frees it at shutdown (NAV_Shutdown -> Nav_Free).
+static void SV_Nav_AddSocialRoutes( void ) {
+	if ( svSocialNavAdded || !g_socialMode || !g_socialMode->integer ) {
+		return;
+	}
+	svSocialNavAdded = qtrue;
+
+	enum { MAX_NAV_POINTS = 128 };
+	static vec3_t pos[MAX_NAV_POINTS];
+	static int ids[MAX_NAV_POINTS];
+	int total = 0;
+
+	for ( int r = 0; r < SV_SocialRouteCount() && total < MAX_NAV_POINTS; r++ ) {
+		vec3_t pts[32];
+		const int n = SV_SocialRoutePoints( r, pts, Q_min( 32, MAX_NAV_POINTS - total ) );
+		const int first = total;
+		for ( int i = 0; i < n; i++ ) {
+			VectorCopy( pts[i], pos[total] );
+			ids[total++] = navigator.AddRawPoint( pts[i], 0, 64 );
+		}
+		for ( int i = first; i + 1 < total; i++ ) {
+			navigator.HardConnect( ids[i], ids[i + 1] );
+		}
+		if ( n > 2 ) {
+			navigator.HardConnect( ids[total - 1], ids[first] );
+		}
+	}
+	// Close points of different routes (or a route's own, not next to each
+	// other) are joined too, so separate routes make one network.
+	for ( int a = 0; a < total; a++ ) {
+		for ( int b = a + 2; b < total; b++ ) {
+			if ( DistanceSquared( pos[a], pos[b] ) < 256.0f * 256.0f ) {
+				navigator.HardConnect( ids[a], ids[b] );
+			}
+		}
+	}
+	if ( total ) {
+		Com_Printf( "Social mode: added %d route points to the NPC navigation graph\n", total );
+	}
+}
+
 static void SV_Nav_CalculatePaths( qboolean recalc ) {
+	if ( !recalc ) {
+		SV_Nav_AddSocialRoutes();
+	}
 	navigator.CalculatePaths( recalc );
 }
 
@@ -2148,9 +2204,11 @@ intptr_t SV_GameSystemCalls( intptr_t *args ) {
 
 	//rww - BEGIN NPC NAV TRAPS
 	case G_NAV_INIT:
+		svSocialNavAdded = qfalse;
 		navigator.Init();
 		return 0;
 	case G_NAV_FREE:
+		svSocialNavAdded = qfalse;
 		navigator.Free();
 		return 0;
 	case G_NAV_LOAD:
@@ -2160,7 +2218,7 @@ intptr_t SV_GameSystemCalls( intptr_t *args ) {
 	case G_NAV_ADDRAWPOINT:
 		return navigator.AddRawPoint((float *)VMA(1), args[2], args[3]);
 	case G_NAV_CALCULATEPATHS:
-		navigator.CalculatePaths((qboolean)args[1]);
+		SV_Nav_CalculatePaths((qboolean)args[1]);
 		return 0;
 	case G_NAV_HARDCONNECT:
 		navigator.HardConnect(args[1], args[2]);

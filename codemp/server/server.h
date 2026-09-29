@@ -664,6 +664,8 @@ qboolean SV_SocialBarFightCommand(client_t* cl, const char* args);
 qboolean SV_SocialWaypointCommand(client_t* cl, const char* args);
 qboolean SV_SocialWhereCommand(client_t* cl);
 void SV_SocialWhere_f(void);
+int SV_SocialRouteCount(void);
+int SV_SocialRoutePoints(int route, vec3_t* out, int max);
 void SV_EmoteTrigger(client_t* cl, const char* command);
 void SV_EmotesFrame(void);
 

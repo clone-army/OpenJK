@@ -1172,6 +1172,25 @@ qboolean SV_SocialWaypointCommand(client_t* cl, const char* args)
 	return qtrue;
 }
 
+// For the NPC navigation graph (sv_gameapi.cpp): the routes, freshly read.
+int SV_SocialRouteCount(void)
+{
+	Social_LoadRoutes();
+	return gRouteCount;
+}
+
+int SV_SocialRoutePoints(int route, vec3_t* out, int max)
+{
+	if (route < 0 || route >= gRouteCount) {
+		return 0;
+	}
+	const int n = Q_min(gRoutes[route].count, max);
+	for (int i = 0; i < n; i++) {
+		VectorCopy(gRoutes[route].pts[i], out[i]);
+	}
+	return n;
+}
+
 static void Social_NpcPatrol(socialNpc_t* n, sharedEntity_t* e)
 {
 	socialRoute_t* r = Social_FindRoute(n->route, qfalse);
