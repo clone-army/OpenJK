@@ -852,6 +852,8 @@ typedef struct {
 	char   route[32];  // patrol: the route it walks
 	int    wp;         // ...the point it's heading for
 	vec3_t lastPos;    // where it was last frame (walking legs only if it really moved)
+	float  lookYaw;    // patrol: the way it's looking while stood at a point
+	int    nextLook;   // ...and when it looks somewhere else
 	int    nextPatrol;
 	int    goalAt;     // when its move goal was last given
 	float  bestDist;   // closest it's got to that point
@@ -865,6 +867,12 @@ enum { SOCIAL_POSE_STAND, SOCIAL_POSE_SIT, SOCIAL_POSE_IDLE, SOCIAL_POSE_BARTEND
 
 static const char* const kNpcIdleAnims[] = {
 	"BOTH_GUARD_LOOKAROUND1", "BOTH_HEADNOD", "BOTH_TALK1", "BOTH_HEADSHAKE", "BOTH_GUARD_LOOKAROUND1",
+};
+// Patrollers stood at a point: something every few seconds, so they look
+// alive (the look-around twice, so it's the commonest).
+static const char* const kNpcPatrolAnims[] = {
+	"BOTH_GUARD_LOOKAROUND1", "BOTH_GUARD_LOOKAROUND1", "BOTH_HEADNOD", "BOTH_TALK1", "BOTH_TALK1",
+	"BOTH_HEADSHAKE", "BOTH_HAN_TAUNT", "BOTH_ENGAGETAUNT",
 };
 static const char* const kNpcBartendAnims[] = {
 	"BOTH_TALK1", "BOTH_HEADNOD", "BOTH_GUARD_LOOKAROUND1", "BOTH_TALK1", "BOTH_HEADSHAKE",
@@ -1278,9 +1286,47 @@ static void Social_NpcPatrol(socialNpc_t* n, sharedEntity_t* e)
 	playerState_t* ps = e->playerState;
 	const qboolean pace = (n->pose == SOCIAL_POSE_PACE) ? qtrue : qfalse;
 
-	// Patrolling and stood at a point: just stand there till it's time.
+	// Patrolling and stood at a point: till it's time, it faces anyone
+	// close by (else a way it picks now and then) and does something every
+	// few seconds.
 	if (!pace && svs.time < n->pauseUntil) {
 		n->stuckSince = svs.time;
+		vec3_t look;
+		float nearest = 200.0f * 200.0f;
+		qboolean someone = qfalse;
+		for (int i = 0; i < sv_maxclients->integer; i++) {
+			const client_t* cl = &svs.clients[i];
+			if (cl->state != CS_ACTIVE || !cl->gentity || !cl->gentity->playerState) {
+				continue;
+			}
+			const float d2 = DistanceSquared(cl->gentity->playerState->origin, ps->origin);
+			if (d2 < nearest) {
+				nearest = d2;
+				VectorCopy(cl->gentity->playerState->origin, look);
+				someone = qtrue;
+			}
+		}
+		if (!someone) {
+			if (svs.time >= n->nextLook) {
+				n->lookYaw = (float)Q_irand(0, 359);
+				n->nextLook = svs.time + Q_irand(4000, 9000);
+			}
+			VectorCopy(ps->origin, look);
+			look[0] += cosf(DEG2RAD(n->lookYaw)) * 64.0f;
+			look[1] += sinf(DEG2RAD(n->lookYaw)) * 64.0f;
+		}
+		if (gSaveNPCGlobals && gRestoreNPCGlobals && gSetNPCGlobals && gNPCFacePosition) {
+			void* old = GVM_BeginNative();
+			gSaveNPCGlobals();
+			gSetNPCGlobals(e);
+			gNPCFacePosition(look, 0);
+			gRestoreNPCGlobals();
+			GVM_EndNative(old);
+		}
+		if (svs.time >= n->nextAnim) {
+			SV_EntitySetAnim(e, kNpcPatrolAnims[Q_irand(0, ARRAY_LEN(kNpcPatrolAnims) - 1)], qfalse);
+			n->nextAnim = svs.time + Q_irand(3000, 7000);
+		}
 		return;
 	}
 
@@ -1326,6 +1372,9 @@ static void Social_NpcPatrol(socialNpc_t* n, sharedEntity_t* e)
 		} else {
 			n->wp = (n->wp + 1) % r->count;
 			n->pauseUntil = svs.time + Q_irand(5000, 20000); // a look round, then on
+			n->nextAnim = svs.time + Q_irand(1000, 2500);
+			n->lookYaw = ps->viewangles[YAW]; // carries on the way it came, at first
+			n->nextLook = svs.time + Q_irand(2000, 5000);
 		}
 		SV_EntitySetLegsAnim(e, "BOTH_STAND1");
 		n->goalAt = 0;
