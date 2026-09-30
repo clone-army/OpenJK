@@ -666,6 +666,7 @@ qboolean SV_EntitySetLegsAnim(sharedEntity_t* ent, const char* anim);
 void SV_SocialNpcGesture(const char* type, const char* anim);
 qboolean SV_SocialSpawnCommand(client_t* cl, const char* command);
 qboolean SV_SocialBarFightCommand(client_t* cl, const char* args);
+qboolean SV_SocialHoloCommand(client_t* cl, const char* args);
 void SV_SocialEnsureNpcFiles(void);
 qboolean SV_SocialWaypointCommand(client_t* cl, const char* args);
 qboolean SV_SocialWhereCommand(client_t* cl);

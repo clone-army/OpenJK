@@ -289,6 +289,7 @@ static qboolean Social_AllowPlayerDamage(int damage, int mod)
 }
 
 static qboolean Social_BarFightHit(void* targ, void* attacker);
+static qboolean Holo_IsNpc(void* ent);
 
 static void Social_GDamageHook(void* targ, void* inflictor, void* attacker, float* dir, float* point, int damage, int dflags, int mod)
 {
@@ -1440,6 +1441,7 @@ static qboolean Social_SpotOccupied(const vec3_t spot, int npcEnt)
 }
 
 static qboolean gBarFightActive = qfalse;
+static qboolean Social_HoloRunning(void);
 
 static void Social_NpcFrame(void)
 {
@@ -1448,8 +1450,9 @@ static void Social_NpcFrame(void)
 		return;
 	}
 	// A bar fight's on: the regulars keep out of it (a fight's FREE-team
-	// NPCs would go for them too), and are back once it's over.
-	if (gBarFightActive) {
+	// NPCs would go for them too), and are back once it's over. Same for a
+	// Holotable scenario.
+	if (gBarFightActive || Social_HoloRunning()) {
 		for (int i = 0; i < gSocialNpcCount; i++) {
 			socialNpc_t* n = &gSocialNpcs[i];
 			if (Social_NpcAlive(n) && gFreeEntity) {
@@ -1721,6 +1724,11 @@ static qboolean Social_IsFightNpc(void* ent)
 
 static qboolean Social_BarFightHit(void* targ, void* attacker)
 {
+	// A Holotable scenario's NPCs: the same rules as a bar fight's.
+	if (Holo_IsNpc(targ) || Holo_IsNpc(attacker)) {
+		return ((Social_IsPlayerEntity(targ) && Holo_IsNpc(attacker)) ||
+			(Holo_IsNpc(targ) && Social_IsPlayerEntity(attacker))) ? qtrue : qfalse;
+	}
 	if (!gBarFightActive) {
 		return qfalse;
 	}
@@ -2120,7 +2128,7 @@ static void Social_BarFightAutoFrame(void)
 		gBarFightAutoNext = 0;
 		return;
 	}
-	if (gBarFightActive) {
+	if (gBarFightActive || Social_HoloRunning()) {
 		return;
 	}
 	const int interval = 60000 * g_barFightAutoMinutes->integer;
@@ -2185,6 +2193,10 @@ qboolean SV_SocialBarFightCommand(client_t* cl, const char* args)
 		SV_SendServerCommand(cl, "chat \"^1[Bar fight]^7 One's already on!\"\n");
 		return qtrue;
 	}
+	if (Social_HoloRunning()) {
+		SV_SendServerCommand(cl, "chat \"^1[Bar fight]^7 A Holotable scenario's running.\"\n");
+		return qtrue;
+	}
 	if (svs.time < gBarFight.cooldownUntil) {
 		SV_SendServerCommand(cl, "chat \"^1[Bar fight]^7 Let the dust settle - try again in %ds.\"\n",
 			(gBarFight.cooldownUntil - svs.time + 999) / 1000);
@@ -2193,6 +2205,881 @@ qboolean SV_SocialBarFightCommand(client_t* cl, const char* args)
 
 	Social_BarFightBegin(pick, cl);
 	return qtrue;
+}
+
+// --- Holotable scenarios ------------------------------------------------------
+//
+// Scenarios built on the Holotable web app (github.com/clone-army/holotable)
+// and saved as JSON in the game folder's holotable/ directory (any search
+// path - fs_basepath/fs_game/holotable, the instance's homepath, or a pk3).
+// Each names the map it's for; "!ht" lists the ones for the map that's on,
+// "!ht <n> play" (admins) runs one and "!ht stop" ends it. rcon "ht ..."
+// takes the same.
+//
+// A scenario is places (points, routes, areas), groups of NPCs (types, how
+// many, where they spawn, how they behave) and triggers - when something
+// happens (the start, a timer, a player entering an area, a group wiped
+// out, everyone down, another trigger), do things (spawn a group, a chat or
+// centre message, an NPC saying something (chat line and voice), a sound,
+// music, end it). It runs like a bar fight - its
+// NPCs and players can hurt each other, the regulars step out, and it's over
+// on an "end" action, its time limit or "!ht stop".
+#include "cJSON.h"
+
+#define HT_MAX_POINTS    64
+#define HT_MAX_ROUTES    16
+#define HT_MAX_ROUTE_PTS 64
+#define HT_MAX_AREAS     32
+#define HT_MAX_GROUPS    16
+#define HT_MAX_TYPES     8
+#define HT_MAX_TRIGGERS  32
+#define HT_MAX_ACTIONS   8
+#define HT_MAX_NPCS      32   // alive at once (slots of dead ones are reused)
+#define HT_MAX_LIST      32
+#define HT_DIR           "holotable"
+
+enum { HT_BEHAVE_HUNT, HT_BEHAVE_ROUTE, HT_BEHAVE_GUARD, HT_BEHAVE_IDLE };
+enum { HT_WHEN_START, HT_WHEN_TIMER, HT_WHEN_ENTER, HT_WHEN_GROUP_DEAD, HT_WHEN_ALL_DEAD, HT_WHEN_AFTER };
+enum { HT_DO_SPAWN, HT_DO_MESSAGE, HT_DO_CENTER, HT_DO_SOUND, HT_DO_MUSIC, HT_DO_END, HT_DO_SAY };
+
+typedef struct { char id[40]; vec3_t org; float yaw; } htPoint_t;
+typedef struct { char id[40]; int count; vec3_t pts[HT_MAX_ROUTE_PTS]; } htRoute_t;
+typedef struct { char id[40]; vec3_t org; float radius, height; } htArea_t;
+typedef struct {
+	char id[40];
+	char name[48];
+	char types[HT_MAX_TYPES][48];
+	int  numTypes;
+	char leader[48];
+	int  count, perPlayer, max;
+	int  spawnPoint, spawnRoute;  // one of them (-1 = not that)
+	int  behaviour;
+	int  route;                   // HT_BEHAVE_ROUTE: the route it walks
+	float engage;                 // how close a player comes before it goes for them
+	// running
+	int  queued;                  // still to spawn
+	int  spawned;
+	qboolean leaderDue;
+} htGroup_t;
+typedef struct { int type; int ref; char text[200]; char speaker[48]; char sound[128]; } htAction_t;
+typedef struct {
+	char id[40];
+	int  when;
+	int  ref;                     // area / group / trigger it's about (-1 = none)
+	float seconds;
+	htAction_t actions[HT_MAX_ACTIONS];
+	int  numActions;
+	qboolean fired;
+	int  firedAt;
+} htTrigger_t;
+typedef struct {
+	int  ent;                     // -1 = free slot
+	int  group;
+	int  spawnedAt;
+	vec3_t home;                  // where it arrived (guards go back there)
+	qboolean onRoute;
+	int  wp, wpGoalAt, wpSince;
+	float wpBest;
+	int  homeGoalAt;
+} htNpc_t;
+
+static qboolean gHoloActive = qfalse;
+static struct {
+	char file[64];
+	char name[64];
+	int  timeLimit;               // seconds
+	htPoint_t   points[HT_MAX_POINTS];     int numPoints;
+	htRoute_t   routes[HT_MAX_ROUTES];     int numRoutes;
+	htArea_t    areas[HT_MAX_AREAS];       int numAreas;
+	htGroup_t   groups[HT_MAX_GROUPS];     int numGroups;
+	htTrigger_t triggers[HT_MAX_TRIGGERS]; int numTriggers;
+	htNpc_t     npcs[HT_MAX_NPCS];
+	int  startedAt;
+	int  nextSpawn, nextThink, nextTriggers;
+	int  spawnTurn;
+	qboolean music;
+	int  down;                    // NPCs of it put down, for the end message
+} gHolo;
+
+typedef struct { char file[64]; char name[64]; char desc[96]; } htListEntry_t;
+static htListEntry_t gHoloList[HT_MAX_LIST];
+static int gHoloListCount = 0;
+
+static qboolean Holo_IsNpc(void* ent)
+{
+	if (!gHoloActive || !ent || !sv.gentities || sv.gentitySize <= 0) {
+		return qfalse;
+	}
+	const intptr_t delta = (byte*)ent - (byte*)sv.gentities;
+	if (delta < 0 || delta % sv.gentitySize) {
+		return qfalse;
+	}
+	const int num = (int)(delta / sv.gentitySize);
+	for (int i = 0; i < HT_MAX_NPCS; i++) {
+		if (gHolo.npcs[i].ent == num) {
+			return qtrue;
+		}
+	}
+	return qfalse;
+}
+
+static void Holo_Reply(client_t* cl, const char* text)
+{
+	if (cl) {
+		Social_Tell(cl, text);
+	} else {
+		Com_Printf("%s\n", text);
+	}
+}
+
+// Text from a scenario, made safe to put inside a quoted server command.
+static void Holo_Clean(char* out, const char* in, size_t size)
+{
+	size_t n = 0;
+	for (; *in && n + 1 < size; in++) {
+		out[n++] = (*in == '"') ? '\'' : (*in == '\r' ? ' ' : *in);
+	}
+	out[n] = '\0';
+}
+
+static const char* HtStr(const cJSON* o, const char* key, const char* def)
+{
+	const cJSON* v = cJSON_GetObjectItemCaseSensitive(o, key);
+	return (cJSON_IsString(v) && v->valuestring) ? v->valuestring : def;
+}
+
+static float HtNum(const cJSON* o, const char* key, float def)
+{
+	const cJSON* v = cJSON_GetObjectItemCaseSensitive(o, key);
+	return cJSON_IsNumber(v) ? (float)v->valuedouble : def;
+}
+
+static void HtVec(const cJSON* o, vec3_t out)
+{
+	out[0] = HtNum(o, "x", 0.0f);
+	out[1] = HtNum(o, "y", 0.0f);
+	out[2] = HtNum(o, "z", 0.0f);
+}
+
+static int HtFind(const char* id, const char* ids, int stride, int count)
+{
+	if (!id || !id[0]) {
+		return -1;
+	}
+	for (int i = 0; i < count; i++) {
+		if (!Q_stricmp(ids + i * stride, id)) {
+			return i;
+		}
+	}
+	return -1;
+}
+#define HT_FIND(arr, n, key) HtFind((key), (arr)[0].id, (int)sizeof((arr)[0]), (n))
+
+// A scenario file's JSON (NULL if it isn't one), and its map.
+static cJSON* Holo_ReadFile(const char* file)
+{
+	char* buf = NULL;
+	if (FS_ReadFile(va("%s/%s", HT_DIR, file), (void**)&buf) <= 0 || !buf) {
+		return NULL;
+	}
+	cJSON* root = cJSON_Parse(buf);
+	FS_FreeFile(buf);
+	if (root && !cJSON_IsObject(root)) {
+		cJSON_Delete(root);
+		root = NULL;
+	}
+	return root;
+}
+
+// The scenarios for the map that's on, in file-name order.
+static void Holo_RefreshList(void)
+{
+	gHoloListCount = 0;
+	int num = 0;
+	char** files = FS_ListFiles(HT_DIR, ".json", &num);
+	if (!files) {
+		return;
+	}
+	const char* map = Cvar_VariableString("mapname");
+	for (int i = 0; i < num && gHoloListCount < HT_MAX_LIST; i++) {
+		cJSON* root = Holo_ReadFile(files[i]);
+		if (!root) {
+			continue;
+		}
+		if (!Q_stricmp(HtStr(root, "map", ""), map)) {
+			htListEntry_t* e = &gHoloList[gHoloListCount++];
+			Q_strncpyz(e->file, files[i], sizeof(e->file));
+			Holo_Clean(e->name, HtStr(root, "name", files[i]), sizeof(e->name));
+			Holo_Clean(e->desc, HtStr(root, "description", ""), sizeof(e->desc));
+		}
+		cJSON_Delete(root);
+	}
+	FS_FreeFileList(files);
+	// FS_ListFiles order isn't fixed: sort by name, so the numbers hold.
+	for (int i = 1; i < gHoloListCount; i++) {
+		for (int j = i; j > 0 && Q_stricmp(gHoloList[j - 1].name, gHoloList[j].name) > 0; j--) {
+			htListEntry_t t = gHoloList[j];
+			gHoloList[j] = gHoloList[j - 1];
+			gHoloList[j - 1] = t;
+		}
+	}
+}
+
+static qboolean Holo_Load(const char* file, char* err, size_t errSize)
+{
+	cJSON* root = Holo_ReadFile(file);
+	if (!root) {
+		Q_strncpyz(err, "couldn't read it (is it valid JSON?)", errSize);
+		return qfalse;
+	}
+	memset(&gHolo, 0, sizeof(gHolo));
+	for (int i = 0; i < HT_MAX_NPCS; i++) {
+		gHolo.npcs[i].ent = -1;
+	}
+	Q_strncpyz(gHolo.file, file, sizeof(gHolo.file));
+	Holo_Clean(gHolo.name, HtStr(root, "name", file), sizeof(gHolo.name));
+	gHolo.timeLimit = (int)HtNum(root, "timeLimit", 900.0f);
+	gHolo.timeLimit = Q_max(30, Q_min(3600, gHolo.timeLimit));
+
+	const cJSON* it;
+	cJSON_ArrayForEach(it, cJSON_GetObjectItemCaseSensitive(root, "points")) {
+		if (gHolo.numPoints >= HT_MAX_POINTS) break;
+		htPoint_t* p = &gHolo.points[gHolo.numPoints++];
+		Q_strncpyz(p->id, HtStr(it, "id", ""), sizeof(p->id));
+		HtVec(it, p->org);
+		p->yaw = HtNum(it, "yaw", 0.0f);
+	}
+	cJSON_ArrayForEach(it, cJSON_GetObjectItemCaseSensitive(root, "routes")) {
+		if (gHolo.numRoutes >= HT_MAX_ROUTES) break;
+		htRoute_t* r = &gHolo.routes[gHolo.numRoutes++];
+		Q_strncpyz(r->id, HtStr(it, "id", ""), sizeof(r->id));
+		const cJSON* pt;
+		cJSON_ArrayForEach(pt, cJSON_GetObjectItemCaseSensitive(it, "points")) {
+			if (r->count >= HT_MAX_ROUTE_PTS) break;
+			HtVec(pt, r->pts[r->count++]);
+		}
+	}
+	cJSON_ArrayForEach(it, cJSON_GetObjectItemCaseSensitive(root, "areas")) {
+		if (gHolo.numAreas >= HT_MAX_AREAS) break;
+		htArea_t* a = &gHolo.areas[gHolo.numAreas++];
+		Q_strncpyz(a->id, HtStr(it, "id", ""), sizeof(a->id));
+		HtVec(it, a->org);
+		a->radius = Q_max(16.0f, HtNum(it, "radius", 128.0f));
+		a->height = Q_max(32.0f, HtNum(it, "height", 128.0f));
+	}
+	cJSON_ArrayForEach(it, cJSON_GetObjectItemCaseSensitive(root, "groups")) {
+		if (gHolo.numGroups >= HT_MAX_GROUPS) break;
+		htGroup_t* g = &gHolo.groups[gHolo.numGroups++];
+		Q_strncpyz(g->id, HtStr(it, "id", ""), sizeof(g->id));
+		Holo_Clean(g->name, HtStr(it, "name", g->id), sizeof(g->name));
+		const cJSON* t;
+		cJSON_ArrayForEach(t, cJSON_GetObjectItemCaseSensitive(it, "npcs")) {
+			if (g->numTypes < HT_MAX_TYPES && cJSON_IsString(t) && t->valuestring[0]) {
+				Q_strncpyz(g->types[g->numTypes++], t->valuestring, sizeof(g->types[0]));
+			}
+		}
+		Q_strncpyz(g->leader, HtStr(it, "leader", ""), sizeof(g->leader));
+		g->count = Q_max(0, (int)HtNum(it, "count", 1.0f));
+		g->perPlayer = Q_max(0, (int)HtNum(it, "perPlayer", 0.0f));
+		g->max = Q_max(1, Q_min(HT_MAX_NPCS, (int)HtNum(it, "max", 20.0f)));
+		g->engage = HtNum(it, "engage", 0.0f);
+		const char* b = HtStr(it, "behaviour", "hunt");
+		g->behaviour = !Q_stricmp(b, "route") ? HT_BEHAVE_ROUTE : !Q_stricmp(b, "guard") ? HT_BEHAVE_GUARD :
+			!Q_stricmp(b, "idle") ? HT_BEHAVE_IDLE : HT_BEHAVE_HUNT;
+		if (g->engage <= 0.0f) {
+			g->engage = (g->behaviour == HT_BEHAVE_GUARD) ? 600.0f : 350.0f;
+		}
+	}
+	// Triggers' ids first: one can be "after" another further down.
+	const cJSON* trigs = cJSON_GetObjectItemCaseSensitive(root, "triggers");
+	cJSON_ArrayForEach(it, trigs) {
+		if (gHolo.numTriggers >= HT_MAX_TRIGGERS) break;
+		Q_strncpyz(gHolo.triggers[gHolo.numTriggers++].id, HtStr(it, "id", ""), sizeof(gHolo.triggers[0].id));
+	}
+
+	// References, now everything has its id.
+	int gi = 0;
+	cJSON_ArrayForEach(it, cJSON_GetObjectItemCaseSensitive(root, "groups")) {
+		if (gi >= gHolo.numGroups) break;
+		htGroup_t* g = &gHolo.groups[gi++];
+		const char* spawn = HtStr(it, "spawn", "");
+		g->spawnPoint = HT_FIND(gHolo.points, gHolo.numPoints, spawn);
+		g->spawnRoute = (g->spawnPoint < 0) ? HT_FIND(gHolo.routes, gHolo.numRoutes, spawn) : -1;
+		g->route = HT_FIND(gHolo.routes, gHolo.numRoutes, HtStr(it, "route", ""));
+		if (g->spawnPoint < 0 && g->spawnRoute < 0) {
+			Com_sprintf(err, errSize, "group \"%s\" has no spawn point", g->name);
+			cJSON_Delete(root);
+			return qfalse;
+		}
+		if (!g->numTypes && !g->leader[0]) {
+			Com_sprintf(err, errSize, "group \"%s\" has no NPC types", g->name);
+			cJSON_Delete(root);
+			return qfalse;
+		}
+		if (g->behaviour == HT_BEHAVE_ROUTE && g->route < 0) {
+			g->behaviour = HT_BEHAVE_HUNT; // no route to walk: straight at them
+		}
+	}
+	int ti = 0;
+	cJSON_ArrayForEach(it, trigs) {
+		if (ti >= gHolo.numTriggers) break;
+		htTrigger_t* t = &gHolo.triggers[ti++];
+		const char* w = HtStr(it, "when", "start");
+		t->when = !Q_stricmp(w, "timer") ? HT_WHEN_TIMER : !Q_stricmp(w, "enter_area") ? HT_WHEN_ENTER :
+			!Q_stricmp(w, "group_dead") ? HT_WHEN_GROUP_DEAD : !Q_stricmp(w, "all_dead") ? HT_WHEN_ALL_DEAD :
+			!Q_stricmp(w, "after") ? HT_WHEN_AFTER : HT_WHEN_START;
+		t->seconds = Q_max(0.0f, HtNum(it, "seconds", 0.0f));
+		t->ref = (t->when == HT_WHEN_ENTER) ? HT_FIND(gHolo.areas, gHolo.numAreas, HtStr(it, "area", "")) :
+			(t->when == HT_WHEN_GROUP_DEAD) ? HT_FIND(gHolo.groups, gHolo.numGroups, HtStr(it, "group", "")) :
+			(t->when == HT_WHEN_AFTER) ? HT_FIND(gHolo.triggers, gHolo.numTriggers, HtStr(it, "trigger", "")) : -1;
+		const cJSON* a;
+		cJSON_ArrayForEach(a, cJSON_GetObjectItemCaseSensitive(it, "actions")) {
+			if (t->numActions >= HT_MAX_ACTIONS) break;
+			htAction_t* act = &t->actions[t->numActions];
+			const char* d = HtStr(a, "do", "");
+			act->ref = -1;
+			if (!Q_stricmp(d, "spawn")) {
+				act->type = HT_DO_SPAWN;
+				act->ref = HT_FIND(gHolo.groups, gHolo.numGroups, HtStr(a, "group", ""));
+				if (act->ref < 0) continue;
+			} else if (!Q_stricmp(d, "message") || !Q_stricmp(d, "center")) {
+				act->type = !Q_stricmp(d, "center") ? HT_DO_CENTER : HT_DO_MESSAGE;
+				Holo_Clean(act->text, HtStr(a, "text", ""), sizeof(act->text));
+			} else if (!Q_stricmp(d, "sound") || !Q_stricmp(d, "music")) {
+				act->type = !Q_stricmp(d, "music") ? HT_DO_MUSIC : HT_DO_SOUND;
+				Holo_Clean(act->text, HtStr(a, "path", ""), sizeof(act->text));
+				if (!act->text[0]) continue;
+			} else if (!Q_stricmp(d, "say")) {
+				// A line in chat as if an NPC said it, and its voice.
+				act->type = HT_DO_SAY;
+				Holo_Clean(act->speaker, HtStr(a, "speaker", ""), sizeof(act->speaker));
+				Holo_Clean(act->text, HtStr(a, "text", ""), sizeof(act->text));
+				Holo_Clean(act->sound, HtStr(a, "path", ""), sizeof(act->sound));
+				if (!act->text[0] && !act->sound[0]) continue;
+			} else if (!Q_stricmp(d, "end")) {
+				act->type = HT_DO_END;
+				Holo_Clean(act->text, HtStr(a, "text", ""), sizeof(act->text));
+			} else {
+				continue;
+			}
+			t->numActions++;
+		}
+	}
+	cJSON_Delete(root);
+	if (!gHolo.numTriggers) {
+		Q_strncpyz(err, "it has no triggers - nothing would happen", errSize);
+		return qfalse;
+	}
+	return qtrue;
+}
+
+static int Holo_Players(void)
+{
+	int players = 0;
+	for (int i = 0; i < sv_maxclients->integer; i++) {
+		players += (svs.clients[i].state == CS_ACTIVE && svs.clients[i].netchan.remoteAddress.type != NA_BOT);
+	}
+	return players;
+}
+
+static qboolean Holo_NpcUp(const htNpc_t* n)
+{
+	return (n->ent >= 0 && Social_FightNpcUp(n->ent)) ? qtrue : qfalse;
+}
+
+// Alive (or only just spawned - its health isn't set the moment it's made).
+static qboolean Holo_NpcCounts(const htNpc_t* n)
+{
+	return (n->ent >= 0 && (svs.time - n->spawnedAt < 4000 || Social_FightNpcUp(n->ent))) ? qtrue : qfalse;
+}
+
+static qboolean Holo_GroupDone(int g)
+{
+	const htGroup_t* grp = &gHolo.groups[g];
+	if (!grp->spawned || grp->queued > 0 || grp->leaderDue) {
+		return qfalse;
+	}
+	for (int i = 0; i < HT_MAX_NPCS; i++) {
+		if (gHolo.npcs[i].group == g && Holo_NpcCounts(&gHolo.npcs[i])) {
+			return qfalse;
+		}
+	}
+	return qtrue;
+}
+
+static void Holo_End(const char* how)
+{
+	if (!gHoloActive) {
+		return;
+	}
+	for (int i = 0; i < HT_MAX_NPCS; i++) {
+		const int num = gHolo.npcs[i].ent;
+		if (num >= MAX_CLIENTS && num < sv.num_entities && gFreeEntity) {
+			sharedEntity_t* e = SV_GentityNum(num);
+			if (e->r.linked && e->s.eType == ET_NPC) {
+				void* old = GVM_BeginNative();
+				gFreeEntity(e);
+				GVM_EndNative(old);
+			}
+		}
+		gHolo.npcs[i].ent = -1;
+	}
+	if (gHolo.music) {
+		SV_JukeboxFightEnd();
+	}
+	gHoloActive = qfalse;
+	SV_SendServerCommand(NULL, "chat \"^5[Holotable] ^7%s ^7- %s. The regulars are back.\"\n", gHolo.name, how);
+	Com_Printf("Holotable: %s over (%s)\n", gHolo.name, how);
+}
+
+static void Holo_RunActions(htTrigger_t* t)
+{
+	for (int a = 0; a < t->numActions && gHoloActive; a++) {
+		const htAction_t* act = &t->actions[a];
+		switch (act->type) {
+		case HT_DO_SPAWN: {
+			htGroup_t* g = &gHolo.groups[act->ref];
+			int n = g->count + g->perPlayer * Holo_Players();
+			n = Q_max(g->numTypes ? 1 : 0, Q_min(g->max, n));
+			g->queued += g->numTypes ? n : 0;
+			if (g->leader[0]) {
+				g->leaderDue = qtrue;
+			}
+			break;
+		}
+		case HT_DO_MESSAGE:
+			SV_SendServerCommand(NULL, "chat \"%s\"\n", act->text);
+			break;
+		case HT_DO_CENTER:
+			SV_SendServerCommand(NULL, "cp \"%s\"\n", act->text);
+			break;
+		case HT_DO_SOUND:
+			Social_ShoutToAll(act->text);
+			break;
+		case HT_DO_MUSIC:
+			SV_JukeboxFightStart(act->text);
+			gHolo.music = qtrue;
+			break;
+		case HT_DO_SAY:
+			if (act->text[0]) {
+				if (act->speaker[0]) {
+					SV_SendServerCommand(NULL, "chat \"^3[%s]^7 %s\"\n", act->speaker, act->text);
+				} else {
+					SV_SendServerCommand(NULL, "chat \"%s\"\n", act->text);
+				}
+			}
+			if (act->sound[0]) {
+				Social_ShoutToAll(act->sound);
+			}
+			break;
+		case HT_DO_END:
+			if (act->text[0]) {
+				SV_SendServerCommand(NULL, "cp \"%s\"\n", act->text);
+			}
+			Holo_End("finished");
+			break;
+		}
+	}
+}
+
+// One NPC from the next group with any waiting, in turn.
+static void Holo_SpawnOne(void)
+{
+	client_t* spawner = Social_AnyPlayer();
+	if (!spawner || !gNPCSpawnType) {
+		return;
+	}
+	int slot = -1;
+	for (int i = 0; i < HT_MAX_NPCS && slot < 0; i++) {
+		if (gHolo.npcs[i].ent < 0 || !Holo_NpcCounts(&gHolo.npcs[i])) {
+			slot = i;
+		}
+	}
+	if (slot < 0) {
+		return; // full: wait for some to go down
+	}
+	for (int k = 0; k < gHolo.numGroups; k++) {
+		const int gi = (gHolo.spawnTurn + k) % gHolo.numGroups;
+		htGroup_t* g = &gHolo.groups[gi];
+		if (!g->leaderDue && g->queued <= 0) {
+			continue;
+		}
+		gHolo.spawnTurn = gi + 1;
+
+		const char* type = g->leaderDue ? g->leader : g->types[g->spawned % g->numTypes];
+		const int n = g->spawned;
+		vec3_t org;
+		float yaw = 0.0f;
+		if (g->spawnPoint >= 0) {
+			// Around the point: a line going its way, staggered side to side.
+			const htPoint_t* p = &gHolo.points[g->spawnPoint];
+			yaw = p->yaw;
+			const float yr = DEG2RAD(yaw), fwd = 56.0f * (n / 2), side = (n % 2) ? 28.0f : -28.0f * (n > 0);
+			VectorCopy(p->org, org);
+			org[0] += cosf(yr) * fwd - sinf(yr) * side;
+			org[1] += sinf(yr) * fwd + cosf(yr) * side;
+		} else {
+			// The route's points in turn; once used, the next round beside them.
+			const htRoute_t* r = &gHolo.routes[g->spawnRoute];
+			if (!r->count) {
+				g->queued = 0;
+				g->leaderDue = qfalse;
+				continue;
+			}
+			VectorCopy(r->pts[n % r->count], org);
+			const vec3_t& nxt = r->pts[(n + 1) % r->count];
+			yaw = RAD2DEG(atan2f(nxt[1] - org[1], nxt[0] - org[0]));
+			org[0] += 40.0f * (n / r->count);
+		}
+		org[2] += 24.0f; // a point on the floor: drop them in just above it
+
+		playerState_t* pps = spawner->gentity->playerState;
+		const float savedYaw = pps->viewangles[YAW];
+		pps->viewangles[YAW] = yaw;
+		void* old = GVM_BeginNative();
+		sharedEntity_t* e = (sharedEntity_t*)gNPCSpawnType(spawner->gentity, (char*)type, NULL, 0, 0, 0);
+		GVM_EndNative(old);
+		pps->viewangles[YAW] = savedYaw;
+
+		if (g->leaderDue) {
+			g->leaderDue = qfalse;
+		} else {
+			g->queued--;
+		}
+		g->spawned++;
+		if (!e) {
+			Com_Printf("Holotable: couldn't spawn NPC \"%s\"\n", type);
+			return;
+		}
+		if (e->playerState) {
+			VectorCopy(org, e->playerState->origin);
+		}
+		VectorCopy(org, e->s.origin);
+		VectorCopy(org, e->s.pos.trBase);
+		VectorCopy(org, e->r.currentOrigin);
+		htNpc_t* h = &gHolo.npcs[slot];
+		memset(h, 0, sizeof(*h));
+		h->ent = e->s.number;
+		h->group = gi;
+		h->spawnedAt = svs.time;
+		VectorCopy(org, h->home);
+		if (g->behaviour == HT_BEHAVE_ROUTE) {
+			// Joins its route at the point nearest where it arrived.
+			const htRoute_t* r = &gHolo.routes[g->route];
+			float best = 0.0f;
+			for (int p = 0; p < r->count; p++) {
+				const float d = DistanceSquared(r->pts[p], org);
+				if (!p || d < best) {
+					best = d;
+					h->wp = p;
+				}
+			}
+			h->onRoute = (r->count > 0) ? qtrue : qfalse;
+		}
+		Com_Printf("Holotable: %s - %s (entity %d)\n", g->name, type, e->s.number);
+		return;
+	}
+}
+
+static client_t* Holo_NearestPlayer(const vec3_t from, float* distSq)
+{
+	client_t* nearest = NULL;
+	float best = 0.0f;
+	for (int c = 0; c < sv_maxclients->integer; c++) {
+		client_t* cl = &svs.clients[c];
+		if (cl->state != CS_ACTIVE || !cl->gentity || !cl->gentity->playerState ||
+			!Social_IsSpawned(cl->gentity->playerState, c) || cl->gentity->playerState->stats[STAT_HEALTH] <= 0 ||
+			cl->gentity->playerState->duelInProgress) {
+			continue;
+		}
+		const float d = DistanceSquared(cl->gentity->playerState->origin, from);
+		if (!nearest || d < best) {
+			nearest = cl;
+			best = d;
+		}
+	}
+	*distSq = best;
+	return nearest;
+}
+
+static void Holo_MoveTo(sharedEntity_t* npc, const vec3_t goal)
+{
+	if (!gSetMoveGoal) {
+		return;
+	}
+	vec3_t g;
+	VectorCopy(goal, g);
+	void* old = GVM_BeginNative();
+	gSetMoveGoal(npc, g, 24, 0, -1, NULL);
+	GVM_EndNative(old);
+}
+
+static void Holo_Think(void)
+{
+	for (int i = 0; i < HT_MAX_NPCS; i++) {
+		htNpc_t* h = &gHolo.npcs[i];
+		if (!Holo_NpcUp(h) || svs.time - h->spawnedAt < 800) {
+			continue;
+		}
+		const htGroup_t* g = &gHolo.groups[h->group];
+		sharedEntity_t* npc = SV_GentityNum(h->ent);
+		const float* at = npc->playerState->origin;
+		float d2 = 0.0f;
+		client_t* nearest = Holo_NearestPlayer(at, &d2);
+		const float engage2 = g->engage * g->engage;
+
+		switch (g->behaviour) {
+		case HT_BEHAVE_IDLE:
+			break;
+		case HT_BEHAVE_GUARD:
+			if (nearest && d2 < engage2) {
+				void* old = GVM_BeginNative();
+				gSetEnemy(npc, nearest->gentity);
+				GVM_EndNative(old);
+			} else if (DistanceSquared(at, h->home) > 96.0f * 96.0f && (!h->homeGoalAt || svs.time - h->homeGoalAt > 3000)) {
+				Holo_MoveTo(npc, h->home); // nobody near: back to its post
+				h->homeGoalAt = svs.time;
+			}
+			break;
+		case HT_BEHAVE_ROUTE: {
+			// Round its route till a player's within engage, then after them;
+			// back to the route when nobody's within engage + 150.
+			const htRoute_t* r = &gHolo.routes[g->route];
+			if (h->onRoute) {
+				if (nearest && d2 < engage2) {
+					h->onRoute = qfalse;
+				} else {
+					if (h->wp >= r->count) {
+						h->wp = 0;
+					}
+					const float* p = r->pts[h->wp];
+					const float dx = at[0] - p[0], dy = at[1] - p[1];
+					const float d = sqrtf(dx * dx + dy * dy);
+					if (d < 48.0f || (h->wpSince && svs.time - h->wpSince > 6000 && d > h->wpBest - 16.0f)) {
+						h->wp = (h->wp + 1) % r->count;
+						h->wpGoalAt = 0;
+						h->wpSince = 0;
+					} else {
+						if (!h->wpSince || d < h->wpBest - 16.0f) {
+							h->wpSince = svs.time;
+							h->wpBest = d;
+						}
+						if (!h->wpGoalAt || svs.time - h->wpGoalAt > 3000) {
+							Holo_MoveTo(npc, p);
+							h->wpGoalAt = svs.time;
+						}
+					}
+					break;
+				}
+			}
+			const float leave = g->engage + 150.0f;
+			if (!nearest || d2 > leave * leave) {
+				float best = 0.0f;
+				for (int p = 0; p < r->count; p++) {
+					const float d = DistanceSquared(r->pts[p], at);
+					if (!p || d < best) {
+						best = d;
+						h->wp = p;
+					}
+				}
+				h->onRoute = qtrue;
+				h->wpGoalAt = 0;
+				h->wpSince = 0;
+				break;
+			}
+		}
+			// fall through: after the nearest player
+		case HT_BEHAVE_HUNT:
+		default:
+			if (nearest && gSetEnemy) {
+				// G_SetEnemy only takes if it has no enemy yet.
+				void* old = GVM_BeginNative();
+				gSetEnemy(npc, nearest->gentity);
+				GVM_EndNative(old);
+			}
+			break;
+		}
+	}
+}
+
+static qboolean Holo_InArea(const htArea_t* a)
+{
+	for (int c = 0; c < sv_maxclients->integer; c++) {
+		const client_t* cl = &svs.clients[c];
+		if (cl->state != CS_ACTIVE || !cl->gentity || !cl->gentity->playerState ||
+			!Social_IsSpawned(cl->gentity->playerState, c) || cl->gentity->playerState->stats[STAT_HEALTH] <= 0) {
+			continue;
+		}
+		const float* o = cl->gentity->playerState->origin;
+		const float dx = o[0] - a->org[0], dy = o[1] - a->org[1];
+		if (dx * dx + dy * dy <= a->radius * a->radius && o[2] >= a->org[2] - 64.0f && o[2] <= a->org[2] + a->height) {
+			return qtrue;
+		}
+	}
+	return qfalse;
+}
+
+static void Holo_CheckTriggers(void)
+{
+	qboolean anySpawned = qfalse, allDone = qtrue;
+	for (int g = 0; g < gHolo.numGroups; g++) {
+		if (gHolo.groups[g].spawned || gHolo.groups[g].queued > 0) {
+			anySpawned = qtrue;
+			allDone = (allDone && Holo_GroupDone(g)) ? qtrue : qfalse;
+		}
+	}
+	for (int i = 0; i < gHolo.numTriggers && gHoloActive; i++) {
+		htTrigger_t* t = &gHolo.triggers[i];
+		if (t->fired) {
+			continue;
+		}
+		qboolean go = qfalse;
+		switch (t->when) {
+		case HT_WHEN_START:
+			go = qtrue;
+			break;
+		case HT_WHEN_TIMER:
+			go = (svs.time - gHolo.startedAt >= (int)(t->seconds * 1000.0f)) ? qtrue : qfalse;
+			break;
+		case HT_WHEN_ENTER:
+			go = (t->ref >= 0 && Holo_InArea(&gHolo.areas[t->ref])) ? qtrue : qfalse;
+			break;
+		case HT_WHEN_GROUP_DEAD:
+			go = (t->ref >= 0 && Holo_GroupDone(t->ref)) ? qtrue : qfalse;
+			break;
+		case HT_WHEN_ALL_DEAD:
+			go = (anySpawned && allDone) ? qtrue : qfalse;
+			break;
+		case HT_WHEN_AFTER:
+			go = (t->ref >= 0 && gHolo.triggers[t->ref].fired &&
+				svs.time - gHolo.triggers[t->ref].firedAt >= (int)(t->seconds * 1000.0f)) ? qtrue : qfalse;
+			break;
+		}
+		if (go) {
+			t->fired = qtrue;
+			t->firedAt = svs.time;
+			Com_Printf("Holotable: trigger %s\n", t->id);
+			Holo_RunActions(t);
+		}
+	}
+}
+
+static void Holo_Frame(void)
+{
+	if (!gHoloActive) {
+		return;
+	}
+	if (!Social_Enabled()) {
+		Holo_End("called off");
+		return;
+	}
+	if (svs.time - gHolo.startedAt > gHolo.timeLimit * 1000) {
+		Holo_End("time's up");
+		return;
+	}
+	if (svs.time >= gHolo.nextTriggers) {
+		gHolo.nextTriggers = svs.time + 250;
+		Holo_CheckTriggers();
+		if (!gHoloActive) {
+			return;
+		}
+	}
+	if (svs.time >= gHolo.nextSpawn) {
+		gHolo.nextSpawn = svs.time + 600;
+		Holo_SpawnOne();
+	}
+	if (svs.time >= gHolo.nextThink) {
+		gHolo.nextThink = svs.time + 1000;
+		Holo_Think();
+	}
+}
+
+// "!ht", "!ht <n>", "!ht <n> play" (or "!ht play <n>"), "!ht stop" - and
+// rcon "ht ..." (cl NULL: no login needed).
+qboolean SV_SocialHoloCommand(client_t* cl, const char* args)
+{
+	char a1[64] = "", a2[64] = "";
+	sscanf(args, "%63s %63s", a1, a2);
+	if (!Social_Enabled()) {
+		Holo_Reply(cl, "Holotable scenarios run on social servers.");
+		return qtrue;
+	}
+	if (cl && !cl->economyHandle[0]) {
+		Holo_Reply(cl, "Log in first - ^5!login <name> <password>");
+		return qtrue;
+	}
+	if (!Q_stricmp(a1, "stop")) {
+		if (cl && !Social_IsAdmin(cl)) {
+			Holo_Reply(cl, "Only admins can stop a scenario.");
+		} else if (!gHoloActive) {
+			Holo_Reply(cl, "No scenario is running.");
+		} else {
+			Holo_End(cl ? va("stopped by %s", cl->name) : "stopped");
+		}
+		return qtrue;
+	}
+
+	Holo_RefreshList();
+	const char* map = Cvar_VariableString("mapname");
+	if (!a1[0]) {
+		if (gHoloActive) {
+			Holo_Reply(cl, va("Running: ^5%s^7 - ^5!ht stop^7 ends it.", gHolo.name));
+		}
+		if (!gHoloListCount) {
+			Holo_Reply(cl, va("No Holotable scenarios for ^3%s^7 yet.", map));
+			return qtrue;
+		}
+		Holo_Reply(cl, va("Scenarios for ^3%s^7 (^5!ht <n> play^7):", map));
+		for (int i = 0; i < gHoloListCount; i++) {
+			Holo_Reply(cl, va("^5%d^7. %s%s%s", i + 1, gHoloList[i].name, gHoloList[i].desc[0] ? " ^9- " : "", gHoloList[i].desc));
+		}
+		return qtrue;
+	}
+
+	const char* which = !Q_stricmp(a1, "play") ? a2 : a1;
+	const qboolean play = (!Q_stricmp(a1, "play") || !Q_stricmp(a2, "play")) ? qtrue : qfalse;
+	int pick = atoi(which) - 1;
+	if (pick < 0 || pick >= gHoloListCount) {
+		pick = -1;
+		for (int i = 0; i < gHoloListCount && pick < 0; i++) {
+			if (!Q_stricmp(gHoloList[i].file, which) || !Q_stricmp(gHoloList[i].name, which)) {
+				pick = i;
+			}
+		}
+	}
+	if (pick < 0) {
+		Holo_Reply(cl, va("No scenario ^3%s^7 for this map - ^5!ht^7 lists them.", which));
+		return qtrue;
+	}
+	if (!play) {
+		Holo_Reply(cl, va("^5%d^7. %s%s%s - ^5!ht %d play^7 runs it.", pick + 1, gHoloList[pick].name,
+			gHoloList[pick].desc[0] ? " ^9- " : "", gHoloList[pick].desc, pick + 1));
+		return qtrue;
+	}
+	if (cl && !Social_IsAdmin(cl)) {
+		Holo_Reply(cl, "Only admins can run scenarios.");
+		return qtrue;
+	}
+	if (gHoloActive || gBarFightActive) {
+		Holo_Reply(cl, gHoloActive ? "A scenario's already running - ^5!ht stop^7 first." : "A bar fight's on - wait for it to end.");
+		return qtrue;
+	}
+	char err[128] = "";
+	if (!Holo_Load(gHoloList[pick].file, err, sizeof(err))) {
+		Holo_Reply(cl, va("^1Can't run %s^7: %s", gHoloList[pick].name, err));
+		return qtrue;
+	}
+	gHoloActive = qtrue;
+	gHolo.startedAt = svs.time;
+	gHolo.nextSpawn = svs.time + 1500; // the regulars clear out first
+	SV_SendServerCommand(NULL, "chat \"^5[Holotable] ^7%s ^7started ^5%s^7!\"\n", cl ? cl->name : "An admin", gHolo.name);
+	Com_Printf("Holotable: %s started %s (%s)\n", cl ? cl->name : "rcon", gHolo.name, gHolo.file);
+	return qtrue;
+}
+
+static qboolean Social_HoloRunning(void)
+{
+	return gHoloActive;
 }
 
 // --- Our NPC types, kept with the engine --------------------------------------
@@ -2247,6 +3134,12 @@ void SV_SocialEnsureNpcFiles(void)
 void SV_SocialGameInit(void)
 {
 	// A new round or map frees every entity, fights included.
+	if (gHoloActive) {
+		gHoloActive = qfalse;
+		for (int i = 0; i < HT_MAX_NPCS; i++) {
+			gHolo.npcs[i].ent = -1;
+		}
+	}
 	gBarFightActive = qfalse;
 	gBarFight.count = 0;
 	SV_JukeboxFightEnd();
@@ -2354,6 +3247,7 @@ void SV_SocialFrame(void)
 		Social_NpcFrame();
 		Social_BarFightFrame();
 		Social_BarFightAutoFrame();
+		Holo_Frame();
 	}
 	if (Social_Enabled() || (g_socialBots && g_socialBots->integer)) {
 		Social_RescueStuckJoiners();

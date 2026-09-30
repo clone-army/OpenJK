@@ -371,6 +371,11 @@ A hang-out mode on top of whatever MBII mode the server runs (e.g. Legends, with
 - **No team-kill points.** A teammate killing you (say, in a duel) counts as a suicide: no TK points, no
   punish/forgive prompt, no TK respawn penalty.
 - **Optional round length** that replaces the map's own round timer, with the on-screen clock kept in step.
+- **Holotable scenarios.** Scenarios built on [Holotable](https://github.com/clone-army/holotable) (a web app that draws
+  any map from above to place spawns, routes and trigger areas on) are JSON files in the game folder's . Logged in,
+   lists the ones for the map that's on;  runs one and  ends it (admins; rcon  too).
+  Groups of NPCs spawn, hunt, walk routes or guard; triggers (start, timers, areas, groups down, ...) spawn more, have NPCs
+  speak, play sounds and music, and end it. Its NPCs and players can hurt each other, as in a bar fight.
 
 | Cvar | Default | Meaning |
 |---|---|---|
