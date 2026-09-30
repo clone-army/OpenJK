@@ -6,7 +6,8 @@ adds server-side features on top of MBII without touching MBII itself:
 
 | Feature | Switched on by | Player commands |
 |---|---|---|
-| [Economy](#economy--credit-system): credits, shop, bounties, accounts | `g_creditSystemEnable`, `g_economyShopEnable`, `g_economyBountyEnable` | `!balance` `!gift` `!buy` `!bounty` `!register` `!login` `!help` |
+| [Economy](#economy--credit-system): credits, shop, bounties, accounts | `g_accountsEnable` | `0` | Accounts (`!register` / `!login`, the shared accounts file) without the credit system - for servers that only need logins (Holotable, admins). `g_creditSystemEnable 1` turns accounts on too. |
+| `g_creditSystemEnable`, `g_economyShopEnable`, `g_economyBountyEnable` | `!balance` `!gift` `!buy` `!bounty` `!register` `!login` `!help` |
 | [Chaos Mode](#chaos-mode): a random prize for everyone every few seconds | `g_chaosEnable`, `g_chaosCooldown` | |
 | [Gun Game](#gun-game): climb a weapon ladder one kill at a time | `g_gungame`, `g_gungameAnnounce` | |
 | [Social Mode](#social-mode): no damage, spawn any time, duels; bots that pick Legends classes | `g_socialMode`, `g_socialRespawnTime`, `g_socialDuels`, `g_socialRoundTime`, `g_socialBots` | |

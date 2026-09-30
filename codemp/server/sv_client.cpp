@@ -2077,6 +2077,13 @@ static qboolean SV_EconomyEnabled( void ) {
 	return (Cvar_VariableIntegerValue("g_creditSystemEnable") == 1) ? qtrue : qfalse;
 }
 
+// Accounts (!register / !login) on their own - g_accountsEnable, for a server
+// that wants logins (Holotable, admins) without credits - or as part of the
+// credit system, which can't work without them.
+static qboolean SV_AccountsEnabled( void ) {
+	return ( ( g_accountsEnable && g_accountsEnable->integer ) || SV_EconomyEnabled() ) ? qtrue : qfalse;
+}
+
 // Shop and bounty are independent sub-toggles on top of the master economy
 // switch above - a server can run the credit system for kill rewards and
 // !balance while keeping only one of !buy / !bounty (or neither) turned on.
@@ -2413,10 +2420,12 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 		  !Q_stricmp( commandName, "bet" ) ||
 		  !Q_stricmp( commandName, "bets" ) ||
 		  !Q_stricmp( commandName, "bounty" ) ||
-		  !Q_stricmp( commandName, "bountry" ) ||
-		  !Q_stricmp( commandName, "register" ) ||
-		  !Q_stricmp( commandName, "login" ) ) ) {
+		  !Q_stricmp( commandName, "bountry" ) ) ) {
 		SV_EconomyPrint( cl, "Credit system is disabled." );
+		return qtrue;
+	}
+	if ( !SV_AccountsEnabled() && ( !Q_stricmp( commandName, "register" ) || !Q_stricmp( commandName, "login" ) ) ) {
+		SV_EconomyPrint( cl, "Accounts are off on this server." );
 		return qtrue;
 	}
 
@@ -2792,7 +2801,7 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 		}
 
 		{
-			const int bonus = g_economyRegisterBonus ? Q_max( 0, g_economyRegisterBonus->integer ) : 0;
+			const int bonus = ( SV_EconomyEnabled() && g_economyRegisterBonus ) ? Q_max( 0, g_economyRegisterBonus->integer ) : 0;
 			economyAccount_t *acct = NULL;
 			const char *problem = NULL;
 			byte salt[ECONOMY_SALT_SIZE];
@@ -2828,7 +2837,7 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 			}
 
 			SV_EconomyPrint( cl, va( "Registered! Logged in as '%s'. Use !login %s <pin> on future connects.", cl->economyHandle, cl->economyHandle ) );
-			{
+			if ( SV_EconomyEnabled() ) {
 				// The welcome bonus is today's; the daily one starts tomorrow.
 				qboolean paid;
 				SV_EconomyDailyClaim( cl->economyHandle, qtrue, &paid );
@@ -2921,9 +2930,13 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 			}
 		}
 
-		SV_EconomyPrint( cl, va( "Logged in as '%s'. Balance: %d credits.", cl->economyHandle, cl->economyCredits ) );
+		if ( SV_EconomyEnabled() ) {
+			SV_EconomyPrint( cl, va( "Logged in as '%s'. Balance: %d credits.", cl->economyHandle, cl->economyCredits ) );
+		} else {
+			SV_EconomyPrint( cl, va( "Logged in as '%s'.", cl->economyHandle ) );
+		}
 
-		if ( g_economyDailyBonus && g_economyDailyBonus->integer > 0 ) {
+		if ( SV_EconomyEnabled() && g_economyDailyBonus && g_economyDailyBonus->integer > 0 ) {
 			qboolean paid;
 			const int wait = SV_EconomyDailyClaim( cl->economyHandle, qfalse, &paid );
 			if ( paid ) {
@@ -2999,6 +3012,9 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 			SV_EconomyMenuAddLine( cl, "^2!gift <player> <credits> ^7- give some of your credits to another player." );
 			SV_EconomyMenuAddLine( cl, "^2!register <handle> <pin> ^7- new account. ^2!login <handle> <pin> ^7- returning." );
 			SV_EconomyMenuAddLine( cl, "^3Credits are earned from kills while logged in." );
+		} else if ( SV_AccountsEnabled() ) {
+			anySection = qtrue;
+			SV_EconomyMenuAddLine( cl, "^2!register <handle> <pin> ^7- new account. ^2!login <handle> <pin> ^7- returning." );
 		}
 
 		if ( g_socialMode && g_socialMode->integer ) {
@@ -3397,14 +3413,16 @@ static void SV_EconomyLoginReminders( void ) {
 			continue;
 		}
 
-		const int bonus = g_economyRegisterBonus ? Q_max( 0, g_economyRegisterBonus->integer ) : 0;
+		const qboolean credits = SV_EconomyEnabled();
+		const int bonus = ( credits && g_economyRegisterBonus ) ? Q_max( 0, g_economyRegisterBonus->integer ) : 0;
 		if ( !cl->economySpawnBannerShown ) {
 			if ( !cl->economySpawnBannerAt ) {
 				if ( SV_ClientIsSpawned( cl ) ) {
 					cl->economySpawnBannerAt = svs.time + 1500;	// after MBII's own spawn messages
 				}
 			} else if ( svs.time >= cl->economySpawnBannerAt ) {
-				const char *use = ( g_socialMode && g_socialMode->integer ) ? "use the Cantina" : "earn and spend credits";
+				const char *use = ( g_socialMode && g_socialMode->integer ) ? "use the Cantina" :
+					credits ? "earn and spend credits" : "use this server's extras";
 				cl->economySpawnBannerShown = qtrue;
 				if ( bonus > 0 ) {
 					SV_SendServerCommand( cl, "cp \"^2!login ^7to %s\n^7or ^2!register ^7for ^2%d free credits\"\n", use, bonus );
@@ -3427,8 +3445,11 @@ static void SV_EconomyLoginReminders( void ) {
 
 		if ( bonus > 0 ) {
 			SV_SendServerCommand( cl, "chat \"^5Hey %s^7! ^2!register <name> <pin> ^7for ^2%d free credits^7 - or ^2!login ^7if you've played before.\"\n", cl->name, bonus );
-		} else {
+		} else if ( credits ) {
 			SV_SendServerCommand( cl, "chat \"^5Hey %s^7! ^2!register <name> <pin> ^7to start earning credits - or ^2!login ^7if you've played before.\"\n", cl->name );
+		} else {
+			SV_SendServerCommand( cl, "chat \"^5Hey %s^7! ^2!register <name> <pin> ^7to make an account - or ^2!login ^7if you've played before.\"\n", cl->name );
+			continue; // nothing to spend
 		}
 
 		// What they're for, from whatever's on here, most eye-catching first.
@@ -3475,11 +3496,12 @@ void SV_EconomyFrame( void ) {
 		}
 	}
 
+	if ( SV_AccountsEnabled() ) {
+		SV_EconomyLoginReminders();
+	}
 	if ( !SV_EconomyEnabled() ) {
 		return;
 	}
-
-	SV_EconomyLoginReminders();
 
 	// Pick up outside balance changes (web panel gifts, other servers)
 	// every few seconds - one fresh load of the shared file, then a merge

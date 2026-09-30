@@ -82,6 +82,7 @@ cvar_t* g_barSpiceOverdose;
 cvar_t* g_economyRegisterBonus;
 cvar_t* g_economyDailyBonus;
 cvar_t* g_economyLoginReminder;
+cvar_t* g_accountsEnable;
 cvar_t* g_economyJukeboxEnable;
 cvar_t* g_jukeboxAutoplay;
 cvar_t* g_jukeboxAutoplayMax;
