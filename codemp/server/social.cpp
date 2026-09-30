@@ -2280,7 +2280,8 @@ qboolean SV_SocialBarFightCommand(client_t* cl, const char* args)
 // path - fs_basepath/fs_game/holotable, the instance's homepath, or a pk3).
 // On any server with g_holotable 1 (MBIIEZ's Holotable plugin sets it).
 // Each names the map it's for; "!ht" lists the ones for the map that's on,
-// "!ht <n> play" (admins) runs one, "!ht restart" reloads it from its file
+// "!ht <n> play" (admins, and "scenario runners" ticked on Holotable's
+// Users page) runs one, "!ht restart" reloads it from its file
 // (after an edit) and "!ht stop" ends it. rcon "ht ..."
 // takes the same.
 //
@@ -3662,6 +3663,43 @@ static qboolean Holo_Start(client_t* cl, const char* file, const char* label, co
 	return qtrue;
 }
 
+// Scenario runners: accounts allowed to play, restart and stop scenarios
+// without being admins - holotable_runners.dat beside the accounts file,
+// one handle a line, kept by the Holotable web app (its Users page) and
+// re-read every few seconds.
+static qboolean Holo_RunnerFileHas(const char* handle)
+{
+	static char cache[4096];
+	static int loadedAt = -1000000;
+	if (svs.time - loadedAt > 5000 || svs.time < loadedAt) {
+		loadedAt = svs.time;
+		cache[0] = '\0';
+		FILE* f = fopen(va("%s/%s/holotable_runners.dat", Cvar_VariableString("fs_basepath"), Cvar_VariableString("fs_game")), "r");
+		if (f) {
+			const size_t n = fread(cache, 1, sizeof(cache) - 1, f);
+			cache[n] = '\0';
+			fclose(f);
+		}
+	}
+	char buf[sizeof(cache)];
+	Q_strncpyz(buf, cache, sizeof(buf));
+	for (char* w = strtok(buf, " \r\n\t"); w; w = strtok(NULL, " \r\n\t")) {
+		if (!Q_stricmp(w, handle)) {
+			return qtrue;
+		}
+	}
+	return qfalse;
+}
+
+// Who can play / restart / stop scenarios: rcon, admins, and runners.
+static qboolean Holo_CanRun(client_t* cl)
+{
+	if (!cl) {
+		return qtrue;
+	}
+	return (cl->economyHandle[0] && (Social_IsAdmin(cl) || Holo_RunnerFileHas(cl->economyHandle))) ? qtrue : qfalse;
+}
+
 // "!ht", "!ht <n>", "!ht <n> play" (or "!ht play <n>"), "!ht stop",
 // "!ht restart" (the running one again, from its file as it is now) - and
 // rcon "ht ..." (cl NULL: no login needed).
@@ -3678,8 +3716,8 @@ qboolean SV_SocialHoloCommand(client_t* cl, const char* args)
 		return qtrue;
 	}
 	if (!Q_stricmp(a1, "stop")) {
-		if (cl && !Social_IsAdmin(cl)) {
-			Holo_Reply(cl, "Only admins can stop a scenario.");
+		if (!Holo_CanRun(cl)) {
+			Holo_Reply(cl, "Only admins and scenario runners can stop a scenario.");
 		} else if (!gHoloActive) {
 			Holo_Reply(cl, "No scenario is running.");
 		} else {
@@ -3691,8 +3729,8 @@ qboolean SV_SocialHoloCommand(client_t* cl, const char* args)
 	if (!Q_stricmp(a1, "restart") || !Q_stricmp(a1, "reload")) {
 		// The running scenario, read from its file again - so a change saved
 		// in Holotable shows straight away. Its NPCs go and it starts over.
-		if (cl && !Social_IsAdmin(cl)) {
-			Holo_Reply(cl, "Only admins can restart a scenario.");
+		if (!Holo_CanRun(cl)) {
+			Holo_Reply(cl, "Only admins and scenario runners can restart a scenario.");
 			return qtrue;
 		}
 		if (!gHoloActive) {
@@ -3757,8 +3795,8 @@ qboolean SV_SocialHoloCommand(client_t* cl, const char* args)
 			gHoloList[pick].desc[0] ? " ^9- " : "", gHoloList[pick].desc, pick + 1));
 		return qtrue;
 	}
-	if (cl && !Social_IsAdmin(cl)) {
-		Holo_Reply(cl, "Only admins can run scenarios.");
+	if (!Holo_CanRun(cl)) {
+		Holo_Reply(cl, "Only admins and scenario runners can run scenarios.");
 		return qtrue;
 	}
 	if (gHoloActive || gBarFightActive) {
