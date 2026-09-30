@@ -1075,6 +1075,8 @@ void SV_Init (void) {
 	g_economyDailyBonus = Cvar_Get("g_economyDailyBonus", "25", CVAR_TEMP, "Credits for the first !login in any 24 hours, across every server (0 = off)");
 	g_economyDailyBonus->flags &= ~CVAR_ARCHIVE;
 	g_economyLoginReminder = Cvar_Get("g_economyLoginReminder", "0", CVAR_TEMP, "Seconds after joining to remind a player who hasn't logged in to !register or !login (0 = off)");
+	g_accountsEnable = Cvar_Get("g_accountsEnable", "0", CVAR_TEMP, "Accounts (!register / !login) without the credit system (g_creditSystemEnable turns them on too)");
+	g_accountsEnable->flags &= ~CVAR_ARCHIVE;
 	g_economyLoginReminder->flags &= ~CVAR_ARCHIVE;
 	g_economyJukeboxEnable->flags &= ~CVAR_ARCHIVE;
 	g_jukeboxAutoplay = Cvar_Get("g_jukeboxAutoplay", "0", CVAR_TEMP, "Jukebox plays random tracks whenever nobody's pick is playing");

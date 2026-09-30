@@ -416,6 +416,7 @@ extern	cvar_t* g_barSpiceOverdose;
 extern	cvar_t* g_economyRegisterBonus;
 extern	cvar_t* g_economyDailyBonus;
 extern	cvar_t* g_economyLoginReminder;
+extern	cvar_t* g_accountsEnable;
 extern	cvar_t* g_economyJukeboxEnable;
 extern	cvar_t* g_jukeboxAutoplay;
 extern	cvar_t* g_jukeboxAutoplayMax;
