@@ -1879,6 +1879,36 @@ int	FS_FileIsInPAK(const char *filename, int *pChecksum ) {
 }
 
 /*
+=====================
+FS_MapPak
+
+Finds the pk3 holding maps/<mapname>.bsp outside the base game, so the server
+can advertise just that pak for auto-download. False for base or loose maps.
+=====================
+*/
+qboolean FS_MapPak( const char *mapname, int *checksum, char *name, int nameSize ) {
+	searchpath_t	*search;
+	fileInPack_t	*pakFile;
+	const char		*filename = va( "maps/%s.bsp", mapname );
+
+	FS_AssertInitialised();
+
+	for ( search = fs_searchpaths ; search ; search = search->next ) {
+		if ( !search->pack || !Q_stricmpn( search->pack->pakGamename, BASEGAME, strlen( BASEGAME ) ) ) {
+			continue;
+		}
+		for ( pakFile = search->pack->hashTable[FS_HashFileName( filename, search->pack->hashSize )]; pakFile; pakFile = pakFile->next ) {
+			if ( !FS_FilenameCompare( pakFile->name, filename ) ) {
+				*checksum = search->pack->checksum;
+				Com_sprintf( name, nameSize, "%s/%s", search->pack->pakGamename, search->pack->pakBasename );
+				return qtrue;
+			}
+		}
+	}
+	return qfalse;
+}
+
+/*
 ============
 FS_ReadFile
 
