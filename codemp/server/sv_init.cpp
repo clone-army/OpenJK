@@ -717,10 +717,20 @@ Ghoul2 Insert End
 	}
 	// the server sends these to the clients so they can figure
 	// out which pk3s should be auto-downloaded
-	p = FS_ReferencedPakChecksums();
-	Cvar_Set( "sv_referencedPaks", p );
-	p = FS_ReferencedPakNames();
-	Cvar_Set( "sv_referencedPakNames", p );
+	// Advertise only the pk3 holding this map: every MBII pk3 would overflow the
+	// systeminfo string, and MBII's game module blanks these (see Cvar_VM_Set).
+	{
+		int mapPakChecksum;
+		char mapPakName[MAX_OSPATH];
+
+		if ( FS_MapPak( server, &mapPakChecksum, mapPakName, sizeof( mapPakName ) ) ) {
+			Cvar_Set( "sv_referencedPaks", va( "%i ", mapPakChecksum ) );
+			Cvar_Set( "sv_referencedPakNames", mapPakName );
+		} else {
+			Cvar_Set( "sv_referencedPaks", "" );
+			Cvar_Set( "sv_referencedPakNames", "" );
+		}
+	}
 
 	// save systeminfo and serverinfo strings
 	Q_strncpyz( systemInfo, Cvar_InfoString_Big( CVAR_SYSTEMINFO ), sizeof( systemInfo ) );
