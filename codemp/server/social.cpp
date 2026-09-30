@@ -1511,6 +1511,19 @@ static void Social_NpcFrame(void)
 		n->ent = e->s.number;
 		n->wp = 0;
 		n->dir = 1;
+		// Patrolling: join the loop at the point nearest where it stands,
+		// so several on one route start spread out, not all at point 0.
+		if (n->pose == SOCIAL_POSE_PATROL) {
+			socialRoute_t* r = Social_FindRoute(n->route, qfalse);
+			float best = 0.0f;
+			for (int p = 0; r && p < r->count; p++) {
+				const float d = DistanceSquared(r->pts[p], n->origin);
+				if (!p || d < best) {
+					best = d;
+					n->wp = p;
+				}
+			}
+		}
 		n->pauseUntil = 0;
 		n->goalAt = 0;
 		n->stuckSince = 0;
