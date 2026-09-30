@@ -374,6 +374,7 @@ A hang-out mode on top of whatever MBII mode the server runs (e.g. Legends, with
 - **Holotable scenarios.** Scenarios built on [Holotable](https://github.com/clone-army/holotable) (a web app that draws
   any map from above to place spawns, routes and trigger areas on) are JSON files in the game folder's `holotable/`. Logged in,
   `!ht` lists the ones for the map that's on; `!ht <n> play` runs one and `!ht stop` ends it (admins; rcon `ht ...` too).
+  Works on any server with `g_holotable 1` (MBIIEZ's Holotable plugin), not only social ones.
   Groups of NPCs spawn, hunt, walk routes or guard; triggers (start, timers, areas, groups down, ...) spawn more, have NPCs
   speak, play sounds and music, and end it. Its NPCs and players can hurt each other, as in a bar fight.
 
@@ -386,6 +387,7 @@ A hang-out mode on top of whatever MBII mode the server runs (e.g. Legends, with
 | `g_barFightSeconds` | `180` | Longest a bar fight lasts |
 | `g_barFightAutoMinutes` | `0` | A random bar fight this many minutes after the last one ended, when enough players are in (0 = only `!barfight`) |
 | `g_barFightAutoPlayers` | `2` | Players needed (in for 2 minutes) before a timed bar fight starts |
+| `g_holotable` | `0` | Allow Holotable scenarios (`!ht`) - on any server, social or not (MBIIEZ's Holotable plugin sets it) |
 | `g_barFightSpawn` | `""` | Where bar fight NPCs arrive, `x y z yaw`, a point on the floor |
 | `g_barFightRally` | `""` | Where bar fight NPCs walk to first, `x y z yaw`; they start hunting players once there (or after 10s) |
 | `g_barFightRoutes` | `""` | `!wp` routes bar fight NPCs walk in on, handed out in turn (e.g. `main bar`); each breaks off to fight when a player's within 350 units or its route's done. Used instead of `g_barFightRally` when set |
