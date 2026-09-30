@@ -851,6 +851,7 @@ typedef struct {
 	int    failures;   // spawns MBII refused, in a row
 	char   route[32];  // patrol: the route it walks
 	int    wp;         // ...the point it's heading for
+	vec3_t lastPos;    // where it was last frame (walking legs only if it really moved)
 	int    nextPatrol;
 	int    goalAt;     // when its move goal was last given
 	float  bestDist;   // closest it's got to that point
@@ -1277,6 +1278,12 @@ static void Social_NpcPatrol(socialNpc_t* n, sharedEntity_t* e)
 	playerState_t* ps = e->playerState;
 	const qboolean pace = (n->pose == SOCIAL_POSE_PACE) ? qtrue : qfalse;
 
+	// Patrolling and stood at a point: just stand there till it's time.
+	if (!pace && svs.time < n->pauseUntil) {
+		n->stuckSince = svs.time;
+		return;
+	}
+
 	// Pacing and stood at an end: facing its own way (its entry's yaw -
 	// otherwise it'd face wherever it walked from), now and then a gesture,
 	// till it's time. NPC_FacePosition works on MBII's "current NPC", so
@@ -1318,7 +1325,9 @@ static void Social_NpcPatrol(socialNpc_t* n, sharedEntity_t* e)
 			}
 		} else {
 			n->wp = (n->wp + 1) % r->count;
+			n->pauseUntil = svs.time + Q_irand(5000, 20000); // a look round, then on
 		}
+		SV_EntitySetLegsAnim(e, "BOTH_STAND1");
 		n->goalAt = 0;
 		n->bestDist = 1e9f;
 		n->stuckSince = svs.time;
@@ -1442,9 +1451,13 @@ static void Social_NpcFrame(void)
 			if (n->pose == SOCIAL_POSE_PATROL || n->pose == SOCIAL_POSE_PACE) {
 				// Walking legs while it moves: left to itself it glided
 				// along its route with its legs still.
-				const playerState_t* ps = SV_GentityNum(n->ent)->playerState;
-				const float speed2 = ps->velocity[0] * ps->velocity[0] + ps->velocity[1] * ps->velocity[1];
-				if (speed2 > 15.0f * 15.0f && ps->legsTimer < 200) {
+				playerState_t* ps = SV_GentityNum(n->ent)->playerState;
+				const float mdx = ps->origin[0] - n->lastPos[0], mdy = ps->origin[1] - n->lastPos[1];
+				const qboolean moved = (mdx * mdx + mdy * mdy > 1.0f) ? qtrue : qfalse;
+				VectorCopy(ps->origin, n->lastPos);
+				if (svs.time < n->pauseUntil) {
+					ps->velocity[0] = ps->velocity[1] = 0.0f;
+				} else if (moved && ps->legsTimer < 200) {
 					SV_EntitySetLegsAnim(SV_GentityNum(n->ent), "BOTH_WALK1");
 				}
 				Social_NpcPatrol(n, SV_GentityNum(n->ent));
