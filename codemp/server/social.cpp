@@ -2212,6 +2212,7 @@ qboolean SV_SocialBarFightCommand(client_t* cl, const char* args)
 // Scenarios built on the Holotable web app (github.com/clone-army/holotable)
 // and saved as JSON in the game folder's holotable/ directory (any search
 // path - fs_basepath/fs_game/holotable, the instance's homepath, or a pk3).
+// On any server with g_holotable 1 (MBIIEZ's Holotable plugin sets it).
 // Each names the map it's for; "!ht" lists the ones for the map that's on,
 // "!ht <n> play" (admins) runs one and "!ht stop" ends it. rcon "ht ..."
 // takes the same.
@@ -2223,7 +2224,9 @@ qboolean SV_SocialBarFightCommand(client_t* cl, const char* args)
 // centre message, an NPC saying something (chat line and voice), a sound,
 // music, end it). It runs like a bar fight - its
 // NPCs and players can hurt each other, the regulars step out, and it's over
-// on an "end" action, its time limit or "!ht stop".
+// on an "end" action, its time limit or "!ht stop". On a social server,
+// only its NPCs and players hurt each other (and the regulars step out);
+// elsewhere MBII's own damage rules apply as normal.
 #include "cJSON.h"
 
 #define HT_MAX_POINTS    64
@@ -2284,6 +2287,12 @@ typedef struct {
 } htNpc_t;
 
 static qboolean gHoloActive = qfalse;
+
+// g_holotable: on any server (set by MBIIEZ's Holotable plugin).
+static qboolean Holo_Enabled(void)
+{
+	return (g_holotable && g_holotable->integer) ? qtrue : qfalse;
+}
 static struct {
 	char file[64];
 	char name[64];
@@ -2969,7 +2978,7 @@ static void Holo_Frame(void)
 	if (!gHoloActive) {
 		return;
 	}
-	if (!Social_Enabled()) {
+	if (!Holo_Enabled()) {
 		Holo_End("called off");
 		return;
 	}
@@ -3000,8 +3009,8 @@ qboolean SV_SocialHoloCommand(client_t* cl, const char* args)
 {
 	char a1[64] = "", a2[64] = "";
 	sscanf(args, "%63s %63s", a1, a2);
-	if (!Social_Enabled()) {
-		Holo_Reply(cl, "Holotable scenarios run on social servers.");
+	if (!Holo_Enabled()) {
+		Holo_Reply(cl, "Holotable scenarios aren't on for this server.");
 		return qtrue;
 	}
 	if (cl && !cl->economyHandle[0]) {
@@ -3094,7 +3103,7 @@ static qboolean Social_HoloRunning(void)
 
 void SV_SocialEnsureNpcFiles(void)
 {
-	if (!g_socialMode || !g_socialMode->integer) {
+	if ((!g_socialMode || !g_socialMode->integer) && !Holo_Enabled()) {
 		return;
 	}
 	const char* dir = va("%s/%s/ext_data/NPCs", Cvar_VariableString("fs_homepath"), Cvar_VariableString("fs_game"));
@@ -3247,8 +3256,8 @@ void SV_SocialFrame(void)
 		Social_NpcFrame();
 		Social_BarFightFrame();
 		Social_BarFightAutoFrame();
-		Holo_Frame();
 	}
+	Holo_Frame(); // any server with g_holotable, not only social ones
 	if (Social_Enabled() || (g_socialBots && g_socialBots->integer)) {
 		Social_RescueStuckJoiners();
 	}
