@@ -824,6 +824,12 @@ void Cvar_VM_Set( const char *var_name, const char *value, vmSlots_t vmslot )
 		return;
 	}
 
+	// The server advertises the map pk3 for auto-download itself (SV_SpawnServer);
+	// don't let the game module blank it
+	if ( vmslot == VM_GAME && ( !Q_stricmp( var_name, "sv_referencedPaks" ) || !Q_stricmp( var_name, "sv_referencedPakNames" ) ) ) {
+		return;
+	}
+
 	if( flags != CVAR_NONEXISTENT && (flags & CVAR_PROTECTED) ) {
 		if( value )
 			Com_Error( ERR_DROP, "%s tried to set \"%s\" to \"%s\"", vmStrs[vmslot], var_name, value );
