@@ -2905,7 +2905,7 @@ void SV_AddOperatorCommands( void ) {
 	Cmd_AddCommand ("sv_exceptdel", SV_ExceptDel_f, "Removes a ban exception" );
 	Cmd_AddCommand("givecredits", SV_GiveCredits_f, "Give credits to a player: givecredits <player> <amount>");
 	Cmd_AddCommand("economywho", SV_EconomyWho_f, "List who's logged into which economy account");
-	Cmd_AddCommand("ht", SV_Holotable_f, "Holotable scenarios: ht, ht <n> play, ht stop");
+	Cmd_AddCommand("ht", SV_Holotable_f, "Holotable scenarios: ht, ht <n> play, ht restart, ht stop");
 	Cmd_AddCommand("where", SV_SocialWhere_f, "A player's position and facing: where <player>");
 	Cmd_AddCommand("bartenderpoll", SV_BartenderPoll_f, "For the bartender plugin: list waiting !bartender questions");
 	Cmd_AddCommand("bartenderreply", SV_BartenderReply_f, "For the bartender plugin: bartenderreply <id> <answer | !fail>");

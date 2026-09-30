@@ -374,7 +374,7 @@ A hang-out mode on top of whatever MBII mode the server runs (e.g. Legends, with
 - **Optional round length** that replaces the map's own round timer, with the on-screen clock kept in step.
 - **Holotable scenarios.** Scenarios built on [Holotable](https://github.com/clone-army/holotable) (a web app that draws
   any map from above to place spawns, routes and trigger areas on) are JSON files in the game folder's `holotable/`. Logged in,
-  `!ht` lists the ones for the map that's on; `!ht <n> play` runs one and `!ht stop` ends it (admins; rcon `ht ...` too).
+  `!ht` lists the ones for the map that's on; `!ht <n> play` runs one, `!ht restart` reloads it from its file (after an edit) and `!ht stop` ends it (admins; rcon `ht ...` too).
   Works on any server with `g_holotable 1` (MBIIEZ's Holotable plugin), not only social ones.
   Groups of NPCs spawn, hunt, walk routes or guard; triggers (start, timers, areas, groups down, ...) spawn more, have NPCs
   speak, play sounds and music, and end it. Its NPCs and players can hurt each other, as in a bar fight.

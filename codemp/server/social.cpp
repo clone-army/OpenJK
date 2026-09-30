@@ -2252,7 +2252,8 @@ qboolean SV_SocialBarFightCommand(client_t* cl, const char* args)
 // path - fs_basepath/fs_game/holotable, the instance's homepath, or a pk3).
 // On any server with g_holotable 1 (MBIIEZ's Holotable plugin sets it).
 // Each names the map it's for; "!ht" lists the ones for the map that's on,
-// "!ht <n> play" (admins) runs one and "!ht stop" ends it. rcon "ht ..."
+// "!ht <n> play" (admins) runs one, "!ht restart" reloads it from its file
+// (after an edit) and "!ht stop" ends it. rcon "ht ..."
 // takes the same.
 //
 // A scenario is places (points, routes, areas), groups of NPCs (types, how
@@ -3484,7 +3485,48 @@ static void Holo_Frame(void)
 	}
 }
 
-// "!ht", "!ht <n>", "!ht <n> play" (or "!ht play <n>"), "!ht stop" - and
+// Loads a scenario file and starts it ("started", or "restarted" by
+// !ht restart). qfalse, told to cl, if it won't load.
+static qboolean Holo_Start(client_t* cl, const char* file, const char* label, const char* verb)
+{
+	char err[128] = "";
+	if (!Holo_Load(file, err, sizeof(err))) {
+		Holo_Reply(cl, va("^1Can't run %s^7: %s", label, err));
+		return qfalse;
+	}
+	gHoloActive = qtrue;
+	gHolo.startedAt = svs.time;
+	gHolo.nextSpawn = svs.time + 1500; // the regulars clear out first
+	for (int i = 0; i < gHolo.numTriggers; i++) {
+		gHolo.triggers[i].nextAt = svs.time + (int)(gHolo.triggers[i].seconds * 1000.0f);
+	}
+	for (int c = 0; c < sv_maxclients->integer; c++) {
+		gHolo.playerUp[c] = Holo_PlayerIn(c);
+	}
+	Holo_ReadTeamNames();
+	if (gHolo.joinTeam) {
+		// One side only: MBII's team balance would refuse to stack it.
+		Q_strncpyz(gHolo.balanceWas, Cvar_VariableString("g_balance"), sizeof(gHolo.balanceWas));
+		Cvar_Set("g_balance", "0");
+		gHolo.balanceChanged = qtrue;
+	}
+	// The round clock runs on at least as long as the scenario can.
+	if (Holo_ShiftRound(gHolo.timeLimit * 1000)) {
+		gHolo.roundExtendMs = gHolo.timeLimit * 1000;
+	}
+	SV_SendServerCommand(NULL, "chat \"^5[Holotable] ^7%s ^7%s ^5%s^7!\"\n", cl ? cl->name : "An admin", verb, gHolo.name);
+	if (gHolo.joinTeam) {
+		SV_SendServerCommand(NULL, "chat \"^5[Holotable]^7 Co-op: everyone on the ^3%s^7 side%s.\"\n",
+			gHolo.teamNames[gHolo.joinTeam], gHolo.anytime ? va(", respawning after %ds", gHolo.respawnSecs) : "");
+	} else if (gHolo.anytime) {
+		SV_SendServerCommand(NULL, "chat \"^5[Holotable]^7 Anytime spawn: back in %ds after dying, and join any time.\"\n", gHolo.respawnSecs);
+	}
+	Com_Printf("Holotable: %s %s %s (%s)\n", cl ? cl->name : "rcon", verb, gHolo.name, gHolo.file);
+	return qtrue;
+}
+
+// "!ht", "!ht <n>", "!ht <n> play" (or "!ht play <n>"), "!ht stop",
+// "!ht restart" (the running one again, from its file as it is now) - and
 // rcon "ht ..." (cl NULL: no login needed).
 qboolean SV_SocialHoloCommand(client_t* cl, const char* args)
 {
@@ -3509,11 +3551,43 @@ qboolean SV_SocialHoloCommand(client_t* cl, const char* args)
 		return qtrue;
 	}
 
+	if (!Q_stricmp(a1, "restart") || !Q_stricmp(a1, "reload")) {
+		// The running scenario, read from its file again - so a change saved
+		// in Holotable shows straight away. Its NPCs go and it starts over.
+		if (cl && !Social_IsAdmin(cl)) {
+			Holo_Reply(cl, "Only admins can restart a scenario.");
+			return qtrue;
+		}
+		if (!gHoloActive) {
+			Holo_Reply(cl, "No scenario is running - ^5!ht <n> play^7 starts one.");
+			return qtrue;
+		}
+		char file[64], label[64];
+		Q_strncpyz(file, gHolo.file, sizeof(file));
+		Q_strncpyz(label, gHolo.name, sizeof(label));
+		// Only once the file's readable: a half-saved or broken file leaves
+		// the running one as it is.
+		cJSON* check = Holo_ReadFile(file);
+		if (!check) {
+			Holo_Reply(cl, va("^1Can't reload %s^7: its file isn't readable JSON right now - still running the old one.", label));
+			return qtrue;
+		}
+		const qboolean sameMap = !Q_stricmp(HtStr(check, "map", ""), Cvar_VariableString("mapname")) ? qtrue : qfalse;
+		cJSON_Delete(check);
+		if (!sameMap) {
+			Holo_Reply(cl, va("^1Can't reload %s^7: it's for another map now - still running the old one.", label));
+			return qtrue;
+		}
+		Holo_End(cl ? va("reloading (%s)", cl->name) : "reloading");
+		Holo_Start(cl, file, label, "restarted");
+		return qtrue;
+	}
+
 	Holo_RefreshList();
 	const char* map = Cvar_VariableString("mapname");
 	if (!a1[0]) {
 		if (gHoloActive) {
-			Holo_Reply(cl, va("Running: ^5%s^7 - ^5!ht stop^7 ends it.", gHolo.name));
+			Holo_Reply(cl, va("Running: ^5%s^7 - ^5!ht stop^7 ends it, ^5!ht restart^7 reloads it.", gHolo.name));
 		}
 		if (!gHoloListCount) {
 			Holo_Reply(cl, va("No Holotable scenarios for ^3%s^7 yet.", map));
@@ -3554,39 +3628,7 @@ qboolean SV_SocialHoloCommand(client_t* cl, const char* args)
 		Holo_Reply(cl, gHoloActive ? "A scenario's already running - ^5!ht stop^7 first." : "A bar fight's on - wait for it to end.");
 		return qtrue;
 	}
-	char err[128] = "";
-	if (!Holo_Load(gHoloList[pick].file, err, sizeof(err))) {
-		Holo_Reply(cl, va("^1Can't run %s^7: %s", gHoloList[pick].name, err));
-		return qtrue;
-	}
-	gHoloActive = qtrue;
-	gHolo.startedAt = svs.time;
-	gHolo.nextSpawn = svs.time + 1500; // the regulars clear out first
-	for (int i = 0; i < gHolo.numTriggers; i++) {
-		gHolo.triggers[i].nextAt = svs.time + (int)(gHolo.triggers[i].seconds * 1000.0f);
-	}
-	for (int c = 0; c < sv_maxclients->integer; c++) {
-		gHolo.playerUp[c] = Holo_PlayerIn(c);
-	}
-	Holo_ReadTeamNames();
-	if (gHolo.joinTeam) {
-		// One side only: MBII's team balance would refuse to stack it.
-		Q_strncpyz(gHolo.balanceWas, Cvar_VariableString("g_balance"), sizeof(gHolo.balanceWas));
-		Cvar_Set("g_balance", "0");
-		gHolo.balanceChanged = qtrue;
-	}
-	// The round clock runs on at least as long as the scenario can.
-	if (Holo_ShiftRound(gHolo.timeLimit * 1000)) {
-		gHolo.roundExtendMs = gHolo.timeLimit * 1000;
-	}
-	SV_SendServerCommand(NULL, "chat \"^5[Holotable] ^7%s ^7started ^5%s^7!\"\n", cl ? cl->name : "An admin", gHolo.name);
-	if (gHolo.joinTeam) {
-		SV_SendServerCommand(NULL, "chat \"^5[Holotable]^7 Co-op: everyone on the ^3%s^7 side%s.\"\n",
-			gHolo.teamNames[gHolo.joinTeam], gHolo.anytime ? va(", respawning after %ds", gHolo.respawnSecs) : "");
-	} else if (gHolo.anytime) {
-		SV_SendServerCommand(NULL, "chat \"^5[Holotable]^7 Anytime spawn: back in %ds after dying, and join any time.\"\n", gHolo.respawnSecs);
-	}
-	Com_Printf("Holotable: %s started %s (%s)\n", cl ? cl->name : "rcon", gHolo.name, gHolo.file);
+	Holo_Start(cl, gHoloList[pick].file, gHoloList[pick].name, "started");
 	return qtrue;
 }
 
