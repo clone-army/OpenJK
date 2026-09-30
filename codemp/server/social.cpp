@@ -298,6 +298,26 @@ static qboolean Social_AllowPlayerDamage(int damage, int mod)
 
 static qboolean Social_BarFightHit(void* targ, void* attacker);
 static qboolean Holo_IsNpc(void* ent);
+// Both on a side (PERS_TEAM 1/2), and the same / different ones.
+static int Holo_SideOf(void* ent)
+{
+	const sharedEntity_t* e = (const sharedEntity_t*)ent;
+	if (!e || !e->playerState) {
+		return 0;
+	}
+	const int t = e->playerState->persistant[PERS_TEAM];
+	return (t == TEAM_RED || t == TEAM_BLUE) ? t : 0;
+}
+static qboolean Holo_SameSide(void* a, void* b)
+{
+	const int sa = Holo_SideOf(a), sb = Holo_SideOf(b);
+	return (sa && sa == sb) ? qtrue : qfalse;
+}
+static qboolean Holo_OppositeSides(void* a, void* b)
+{
+	const int sa = Holo_SideOf(a), sb = Holo_SideOf(b);
+	return (sa && sb && sa != sb) ? qtrue : qfalse;
+}
 
 static void Social_GDamageHook(void* targ, void* inflictor, void* attacker, float* dir, float* point, int damage, int dflags, int mod)
 {
@@ -1762,8 +1782,16 @@ static qboolean Social_IsFightNpc(void* ent)
 
 static qboolean Social_BarFightHit(void* targ, void* attacker)
 {
-	// A Holotable scenario's NPCs: the same rules as a bar fight's.
+	// A Holotable scenario's NPCs: the same rules as a bar fight's - except
+	// that one on a side (it attacks only the other) doesn't hurt or get hurt
+	// by players on its own side, and fights scenario NPCs on the other one.
 	if (Holo_IsNpc(targ) || Holo_IsNpc(attacker)) {
+		if (Holo_SameSide(targ, attacker)) {
+			return qfalse;
+		}
+		if (Holo_IsNpc(targ) && Holo_IsNpc(attacker)) {
+			return Holo_OppositeSides(targ, attacker);
+		}
 		return ((Social_IsPlayerEntity(targ) && Holo_IsNpc(attacker)) ||
 			(Holo_IsNpc(targ) && Social_IsPlayerEntity(attacker))) ? qtrue : qfalse;
 	}
@@ -2301,6 +2329,7 @@ typedef struct {
 	int  behaviour;
 	int  route;                   // HT_BEHAVE_ROUTE: the route it walks
 	float engage;                 // how close a player comes before it goes for them
+	int  attacks;                 // 0 = everyone; TEAM_RED / TEAM_BLUE = only that side (it fights for the other)
 	// running
 	int  queued;                  // still to spawn
 	int  spawned;
@@ -2382,6 +2411,7 @@ static struct {
 	int  warnedAt[MAX_CLIENTS];
 	qboolean playerUp[MAX_CLIENTS];   // for "a player dies"
 	qboolean npcUp[HT_MAX_NPCS];      // for "an NPC is killed"
+	int  pointSpawns[HT_MAX_POINTS];  // NPCs spawned at each point so far (where the next one goes)
 } gHolo;
 
 static qboolean Holo_AnytimeSpawn(void)
@@ -2580,6 +2610,8 @@ static qboolean Holo_Load(const char* file, char* err, size_t errSize)
 		g->perPlayer = Q_max(0, (int)HtNum(it, "perPlayer", 0.0f));
 		g->max = Q_max(1, Q_min(HT_MAX_NPCS, (int)HtNum(it, "max", 20.0f)));
 		g->engage = HtNum(it, "engage", 0.0f);
+		const char* at = HtStr(it, "attacks", "all");
+		g->attacks = !Q_stricmp(at, "team1") ? TEAM_RED : !Q_stricmp(at, "team2") ? TEAM_BLUE : 0;
 		const char* b = HtStr(it, "behaviour", "hunt");
 		g->behaviour = !Q_stricmp(b, "route") ? HT_BEHAVE_ROUTE : !Q_stricmp(b, "guard") ? HT_BEHAVE_GUARD :
 			!Q_stricmp(b, "idle") ? HT_BEHAVE_IDLE : HT_BEHAVE_HUNT;
@@ -2846,6 +2878,67 @@ static void Holo_TeamFrame(void)
 	}
 }
 
+// Which side an NPC is on lives in MBII's gclient_t (which starts with its
+// playerState): playerTeam and enemyTeam, NPC teams where 1 is team1's side
+// and 2 team2's (0 = TEAM_FREE, hostile to all). Found by comparing NPCs of
+// known teams and players on each side - players carry the same fields, so
+// before writing, the layout is checked against one; if MBII ever moves
+// them, sides are switched off rather than guessed.
+#define HOLO_OFS_PLAYERTEAM 9888
+#define HOLO_OFS_ENEMYTEAM  9892
+static int gHoloSidesOk = -1;     // -1 not checked yet this map, 0 no, 1 yes
+
+static int* Holo_ClientInt(playerState_t* ps, int ofs)
+{
+	return (int*)((byte*)ps + ofs);
+}
+
+static qboolean Holo_SidesUsable(void)
+{
+	if (gHoloSidesOk >= 0) {
+		return gHoloSidesOk ? qtrue : qfalse;
+	}
+	for (int i = 0; i < sv_maxclients->integer; i++) {
+		client_t* cl = &svs.clients[i];
+		if (cl->state != CS_ACTIVE || !cl->gentity || !cl->gentity->playerState) {
+			continue;
+		}
+		playerState_t* ps = cl->gentity->playerState;
+		// Only someone in the game as themselves: a spectator following a
+		// player has that player's side in its playerState, but its own
+		// team fields.
+		if (!Social_IsSpawned(ps, i)) {
+			continue;
+		}
+		const int team = ps->persistant[PERS_TEAM];
+		const int other = (team == TEAM_RED) ? TEAM_BLUE : TEAM_RED;
+		gHoloSidesOk = (*Holo_ClientInt(ps, HOLO_OFS_PLAYERTEAM) == team && *Holo_ClientInt(ps, HOLO_OFS_ENEMYTEAM) == other) ? 1 : 0;
+		if (!gHoloSidesOk) {
+			Com_Printf(S_COLOR_YELLOW "Holotable: MBII's NPC team fields aren't where expected (MBII updated?) - groups attack everyone\n");
+		}
+		return gHoloSidesOk ? qtrue : qfalse;
+	}
+	return qfalse; // nobody on a side to check against yet: try again later
+}
+
+// Puts a spawned NPC on the side that fights `attacks` (TEAM_RED/BLUE).
+static void Holo_SetSide(sharedEntity_t* e, int attacks)
+{
+	if (!attacks || !e || !e->playerState || !Holo_SidesUsable()) {
+		return;
+	}
+	playerState_t* ps = e->playerState;
+	const int* pt = Holo_ClientInt(ps, HOLO_OFS_PLAYERTEAM);
+	const int* et = Holo_ClientInt(ps, HOLO_OFS_ENEMYTEAM);
+	if (*pt < 0 || *pt > 3 || *et < 0 || *et > 3) {
+		return; // not what an NPC's team looks like: leave it alone
+	}
+	const int side = (attacks == TEAM_RED) ? TEAM_BLUE : TEAM_RED;
+	*Holo_ClientInt(ps, HOLO_OFS_PLAYERTEAM) = side;
+	*Holo_ClientInt(ps, HOLO_OFS_ENEMYTEAM) = attacks;
+	ps->persistant[PERS_TEAM] = side;
+}
+
 static void Holo_End(const char* how)
 {
 	if (!gHoloActive) {
@@ -3093,7 +3186,14 @@ static void Holo_RunActions(htTrigger_t* t, client_t* who)
 // One NPC from the next group with any waiting, in turn.
 static void Holo_SpawnOne(void)
 {
+	// Anyone in the game to spawn from - MBII's NPC spawn takes a client;
+	// the NPC is moved to its spot straight after. Bots will do.
 	client_t* spawner = Social_AnyPlayer();
+	for (int i = 0; i < sv_maxclients->integer && !spawner; i++) {
+		if (svs.clients[i].state == CS_ACTIVE && svs.clients[i].gentity && svs.clients[i].gentity->playerState) {
+			spawner = &svs.clients[i];
+		}
+	}
 	if (!spawner || !gNPCSpawnType) {
 		return;
 	}
@@ -3119,10 +3219,14 @@ static void Holo_SpawnOne(void)
 		vec3_t org;
 		float yaw = 0.0f;
 		if (g->spawnPoint >= 0) {
-			// Around the point: a line going its way, staggered side to side.
+			// Around the point: a line going its way, staggered side to side,
+			// far enough apart that nobody lands in anyone (MBII kills an NPC
+			// spawned inside another). Counted per point, so groups sharing
+			// one lay out around each other too.
 			const htPoint_t* p = &gHolo.points[g->spawnPoint];
+			const int k = gHolo.pointSpawns[g->spawnPoint]++;
 			yaw = p->yaw;
-			const float yr = DEG2RAD(yaw), fwd = 56.0f * (n / 2), side = (n % 2) ? 28.0f : -28.0f * (n > 0);
+			const float yr = DEG2RAD(yaw), fwd = 64.0f * ((k + 1) / 2), side = (k == 0) ? 0.0f : ((k % 2) ? 48.0f : -48.0f);
 			VectorCopy(p->org, org);
 			org[0] += cosf(yr) * fwd - sinf(yr) * side;
 			org[1] += sinf(yr) * fwd + cosf(yr) * side;
@@ -3165,6 +3269,7 @@ static void Holo_SpawnOne(void)
 		VectorCopy(org, e->s.origin);
 		VectorCopy(org, e->s.pos.trBase);
 		VectorCopy(org, e->r.currentOrigin);
+		Holo_SetSide(e, g->attacks);
 		htNpc_t* h = &gHolo.npcs[slot];
 		memset(h, 0, sizeof(*h));
 		gHolo.npcUp[slot] = qtrue;
@@ -3190,7 +3295,7 @@ static void Holo_SpawnOne(void)
 	}
 }
 
-static client_t* Holo_NearestPlayer(const vec3_t from, float* distSq)
+static client_t* Holo_NearestPlayer(const vec3_t from, float* distSq, int onlyTeam)
 {
 	client_t* nearest = NULL;
 	float best = 0.0f;
@@ -3201,6 +3306,9 @@ static client_t* Holo_NearestPlayer(const vec3_t from, float* distSq)
 			cl->gentity->playerState->duelInProgress) {
 			continue;
 		}
+		if (onlyTeam && cl->gentity->playerState->persistant[PERS_TEAM] != onlyTeam) {
+			continue; // not a side this group attacks
+		}
 		const float d = DistanceSquared(cl->gentity->playerState->origin, from);
 		if (!nearest || d < best) {
 			nearest = cl;
@@ -3209,6 +3317,35 @@ static client_t* Holo_NearestPlayer(const vec3_t from, float* distSq)
 	}
 	*distSq = best;
 	return nearest;
+}
+
+// Who a scenario NPC goes for: the nearest player it attacks and - for a
+// group on a side - the nearest scenario NPC fighting for the other side
+// (MBII's AI doesn't go looking for enemy NPCs by itself).
+static sharedEntity_t* Holo_NearestTarget(const vec3_t from, float* distSq, int onlyTeam)
+{
+	float best = 0.0f;
+	client_t* cl = Holo_NearestPlayer(from, &best, onlyTeam);
+	sharedEntity_t* target = cl ? cl->gentity : NULL;
+	if (onlyTeam) {
+		for (int i = 0; i < HT_MAX_NPCS; i++) {
+			const htNpc_t* o = &gHolo.npcs[i];
+			if (!Holo_NpcUp(o)) {
+				continue;
+			}
+			sharedEntity_t* e = SV_GentityNum(o->ent);
+			if (Holo_SideOf(e) != onlyTeam) {
+				continue;
+			}
+			const float d = DistanceSquared(e->playerState->origin, from);
+			if (!target || d < best) {
+				target = e;
+				best = d;
+			}
+		}
+	}
+	*distSq = best;
+	return target;
 }
 
 static void Holo_MoveTo(sharedEntity_t* npc, const vec3_t goal)
@@ -3234,7 +3371,7 @@ static void Holo_Think(void)
 		sharedEntity_t* npc = SV_GentityNum(h->ent);
 		const float* at = npc->playerState->origin;
 		float d2 = 0.0f;
-		client_t* nearest = Holo_NearestPlayer(at, &d2);
+		sharedEntity_t* nearest = Holo_NearestTarget(at, &d2, g->attacks);
 		const float engage2 = g->engage * g->engage;
 
 		switch (g->behaviour) {
@@ -3243,7 +3380,7 @@ static void Holo_Think(void)
 		case HT_BEHAVE_GUARD:
 			if (nearest && d2 < engage2) {
 				void* old = GVM_BeginNative();
-				gSetEnemy(npc, nearest->gentity);
+				gSetEnemy(npc, nearest);
 				GVM_EndNative(old);
 			} else if (DistanceSquared(at, h->home) > 96.0f * 96.0f && (!h->homeGoalAt || svs.time - h->homeGoalAt > 3000)) {
 				Holo_MoveTo(npc, h->home); // nobody near: back to its post
@@ -3303,7 +3440,7 @@ static void Holo_Think(void)
 			if (nearest && gSetEnemy) {
 				// G_SetEnemy only takes if it has no enemy yet.
 				void* old = GVM_BeginNative();
-				gSetEnemy(npc, nearest->gentity);
+				gSetEnemy(npc, nearest);
 				GVM_EndNative(old);
 			}
 			break;
@@ -3632,6 +3769,49 @@ qboolean SV_SocialHoloCommand(client_t* cl, const char* args)
 	return qtrue;
 }
 
+// rcon debugging aids (finding where MBII keeps an NPC's team):
+// "htdbgspawn <type>" spawns an NPC at the first client (bots too), and
+// "htdbgdump <entity>" writes its game-side client memory (from its
+// playerState, the start of MBII's gclient_t) to /tmp/htdump_<entity>.bin.
+void SV_HoloDebugSpawn(const char* type)
+{
+	client_t* by = NULL;
+	for (int i = 0; i < sv_maxclients->integer && !by; i++) {
+		if (svs.clients[i].state == CS_ACTIVE && svs.clients[i].gentity && svs.clients[i].gentity->playerState) {
+			by = &svs.clients[i];
+		}
+	}
+	if (!by || !gNPCSpawnType || !type || !type[0]) {
+		Com_Printf("htdbgspawn: needs a client in the game and a type\n");
+		return;
+	}
+	void* old = GVM_BeginNative();
+	sharedEntity_t* e = (sharedEntity_t*)gNPCSpawnType(by->gentity, (char*)type, NULL, 0, 0, 0);
+	GVM_EndNative(old);
+	Com_Printf("htdbgspawn: %s -> entity %d\n", type, e ? e->s.number : -1);
+}
+
+void SV_HoloDebugDump(int num)
+{
+	if (num < 0 || num >= sv.num_entities) {
+		Com_Printf("htdbgdump: no entity %d\n", num);
+		return;
+	}
+	sharedEntity_t* e = SV_GentityNum(num);
+	if (!e->playerState) {
+		Com_Printf("htdbgdump: entity %d has no client\n", num);
+		return;
+	}
+	FILE* f = fopen(va("/tmp/htdump_%d.bin", num), "wb");
+	if (!f) {
+		return;
+	}
+	fwrite(e->playerState, 1, 32768, f);
+	fclose(f);
+	Com_Printf("htdbgdump: entity %d (eType %d, PERS_TEAM %d, clientNum %d, health %d) -> /tmp/htdump_%d.bin\n",
+		num, e->s.eType, e->playerState->persistant[PERS_TEAM], e->playerState->clientNum, e->playerState->stats[STAT_HEALTH], num);
+}
+
 static qboolean Social_HoloRunning(void)
 {
 	return gHoloActive;
@@ -3689,6 +3869,7 @@ void SV_SocialEnsureNpcFiles(void)
 void SV_SocialGameInit(void)
 {
 	// A new round or map frees every entity, fights included.
+	gHoloSidesOk = -1;
 	if (gHoloActive) {
 		Holo_RestorePlayers(qtrue);
 		gHoloActive = qfalse;

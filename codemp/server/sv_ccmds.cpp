@@ -285,6 +285,14 @@ static void SV_GiveCredits_f(void) {
 // Who's logged into which economy account: economywho
 // rcon "ht", "ht <n>", "ht <n> play", "ht stop" - Holotable scenarios, as
 // "!ht" in chat but without needing a login.
+static void SV_HoloDebugSpawn_f( void ) {
+	SV_HoloDebugSpawn( Cmd_Argv( 1 ) );
+}
+
+static void SV_HoloDebugDump_f( void ) {
+	SV_HoloDebugDump( atoi( Cmd_Argv( 1 ) ) );
+}
+
 static void SV_Holotable_f( void ) {
 	SV_SocialHoloCommand( NULL, Cmd_ArgsFrom( 1 ) );
 }
@@ -2906,6 +2914,8 @@ void SV_AddOperatorCommands( void ) {
 	Cmd_AddCommand("givecredits", SV_GiveCredits_f, "Give credits to a player: givecredits <player> <amount>");
 	Cmd_AddCommand("economywho", SV_EconomyWho_f, "List who's logged into which economy account");
 	Cmd_AddCommand("ht", SV_Holotable_f, "Holotable scenarios: ht, ht <n> play, ht restart, ht stop");
+	Cmd_AddCommand("htdbgspawn", SV_HoloDebugSpawn_f, "Holotable debugging: spawn an NPC type at the first client");
+	Cmd_AddCommand("htdbgdump", SV_HoloDebugDump_f, "Holotable debugging: dump an entity's client memory to /tmp");
 	Cmd_AddCommand("where", SV_SocialWhere_f, "A player's position and facing: where <player>");
 	Cmd_AddCommand("bartenderpoll", SV_BartenderPoll_f, "For the bartender plugin: list waiting !bartender questions");
 	Cmd_AddCommand("bartenderreply", SV_BartenderReply_f, "For the bartender plugin: bartenderreply <id> <answer | !fail>");
