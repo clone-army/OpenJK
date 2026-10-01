@@ -2344,7 +2344,9 @@ typedef struct {
 	int  numTypes;
 	char leader[48];
 	int  count, perPlayer, max;
-	int  spawnPoint, spawnRoute;  // one of them (-1 = not that)
+	int  spawnPoint, spawnRoute;  // where the next ones arrive (-1 = not that)
+	int  homePoint, homeRoute;    // the group's own spawn place (a Spawn action can say elsewhere)
+	qboolean spawnAtStart;        // spawned as the scenario starts, no trigger needed
 	int  behaviour;
 	int  route;                   // HT_BEHAVE_ROUTE: the route it walks
 	float engage;                 // how close a player comes before it goes for them
@@ -2369,6 +2371,7 @@ typedef struct {
 	int  whoKind, whoRef;         // HT_WHO_*: whom a player action is for (whoRef: an area)
 	int  value;                   // counter amount, objective number, behaviour...
 	char extra[96];               // a second name: texture swap's new shader, group move's route...
+	int  spawnPt, spawnRt;        // spawn: where this time (-1 = the group's own place)
 } htAction_t;
 typedef struct {
 	char id[40];
@@ -2681,11 +2684,10 @@ static qboolean Holo_Load(const char* file, char* err, size_t errSize)
 		g->spawnPoint = HT_FIND(gHolo.points, gHolo.numPoints, spawn);
 		g->spawnRoute = (g->spawnPoint < 0) ? HT_FIND(gHolo.routes, gHolo.numRoutes, spawn) : -1;
 		g->route = HT_FIND(gHolo.routes, gHolo.numRoutes, HtStr(it, "route", ""));
-		if (g->spawnPoint < 0 && g->spawnRoute < 0) {
-			Com_sprintf(err, errSize, "group \"%s\" has no spawn point", g->name);
-			cJSON_Delete(root);
-			return qfalse;
-		}
+		g->homePoint = g->spawnPoint;
+		g->homeRoute = g->spawnRoute;
+		g->spawnAtStart = cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(it, "spawnAtStart")) ? qtrue : qfalse;
+		// No place of its own is fine, if whatever spawns it says where.
 		if (!g->numTypes && !g->leader[0]) {
 			Com_sprintf(err, errSize, "group \"%s\" has no NPC types", g->name);
 			cJSON_Delete(root);
@@ -2727,6 +2729,9 @@ static qboolean Holo_Load(const char* file, char* err, size_t errSize)
 				act->type = HT_DO_SPAWN;
 				act->ref = HT_FIND(gHolo.groups, gHolo.numGroups, HtStr(a, "group", ""));
 				if (act->ref < 0) continue;
+				const char* where = HtStr(a, "at", "");
+				act->spawnPt = HT_FIND(gHolo.points, gHolo.numPoints, where);
+				act->spawnRt = (act->spawnPt < 0) ? HT_FIND(gHolo.routes, gHolo.numRoutes, where) : -1;
 			} else if (!Q_stricmp(d, "message") || !Q_stricmp(d, "center")) {
 				act->type = !Q_stricmp(d, "center") ? HT_DO_CENTER : HT_DO_MESSAGE;
 				Holo_Clean(act->text, HtStr(a, "text", ""), sizeof(act->text));
@@ -2865,8 +2870,12 @@ static qboolean Holo_Load(const char* file, char* err, size_t errSize)
 		}
 	}
 	cJSON_Delete(root);
-	if (!gHolo.numTriggers) {
-		Q_strncpyz(err, "it has no triggers - nothing would happen", errSize);
+	qboolean startsSpawned = qfalse;
+	for (int gi = 0; gi < gHolo.numGroups; gi++) {
+		startsSpawned = (startsSpawned || gHolo.groups[gi].spawnAtStart) ? qtrue : qfalse;
+	}
+	if (!gHolo.numTriggers && !startsSpawned) {
+		Q_strncpyz(err, "nothing happens in it - no triggers, and no group spawns at the start", errSize);
 		return qfalse;
 	}
 	return qtrue;
@@ -3264,22 +3273,34 @@ static void Holo_SetCvarFor(const char* cvar, int value, char* was, size_t wasSi
 	*until = seconds > 0.0f ? svs.time + (int)(seconds * 1000.0f) : 0;
 }
 
+// Queues a group to spawn - at a point or along a route if given, else at
+// its own place. The NPCs then arrive one at a time (Holo_SpawnOne).
+static void Holo_QueueGroup(int gi, int point, int route)
+{
+	htGroup_t* g = &gHolo.groups[gi];
+	g->spawnPoint = (point >= 0 || route >= 0) ? point : g->homePoint;
+	g->spawnRoute = (point >= 0 || route >= 0) ? route : g->homeRoute;
+	if (g->spawnPoint < 0 && g->spawnRoute < 0) {
+		Com_Printf("Holotable: group %s has nowhere to spawn\n", g->name);
+		return;
+	}
+	int n = g->count + g->perPlayer * Holo_Players();
+	n = Q_max(g->numTypes ? 1 : 0, Q_min(g->max, n));
+	g->queued += g->numTypes ? n : 0;
+	if (g->leader[0]) {
+		g->leaderDue = qtrue;
+	}
+}
+
 static void Holo_RunActions(htTrigger_t* t, client_t* who)
 {
 	for (int a = 0; a < t->numActions && gHoloActive; a++) {
 		const htAction_t* act = &t->actions[a];
 		vec3_t at;
 		switch (act->type) {
-		case HT_DO_SPAWN: {
-			htGroup_t* g = &gHolo.groups[act->ref];
-			int n = g->count + g->perPlayer * Holo_Players();
-			n = Q_max(g->numTypes ? 1 : 0, Q_min(g->max, n));
-			g->queued += g->numTypes ? n : 0;
-			if (g->leader[0]) {
-				g->leaderDue = qtrue;
-			}
+		case HT_DO_SPAWN:
+			Holo_QueueGroup(act->ref, act->spawnPt, act->spawnRt);
 			break;
-		}
 		case HT_DO_MESSAGE:
 			SV_SendServerCommand(NULL, "chat \"%s\"\n", act->text);
 			break;
@@ -3637,6 +3658,11 @@ static void Holo_SpawnOne(void)
 			continue;
 		}
 		gHolo.spawnTurn = gi + 1;
+		if (g->spawnPoint < 0 && g->spawnRoute < 0) {
+			g->queued = 0;
+			g->leaderDue = qfalse;
+			continue;
+		}
 
 		const char* type = g->leaderDue ? g->leader : g->types[g->spawned % g->numTypes];
 		const int n = g->spawned;
@@ -4094,6 +4120,11 @@ static qboolean Holo_Start(client_t* cl, const char* file, const char* label, co
 	}
 	for (int c = 0; c < sv_maxclients->integer; c++) {
 		gHolo.playerUp[c] = Holo_PlayerIn(c);
+	}
+	for (int gi = 0; gi < gHolo.numGroups; gi++) {
+		if (gHolo.groups[gi].spawnAtStart) {
+			Holo_QueueGroup(gi, -1, -1);
+		}
 	}
 	Holo_ReadTeamNames();
 	if (gHolo.joinTeam) {
