@@ -3212,6 +3212,7 @@ void SV_ClientThink (client_t *cl, usercmd_t *cmd) {
 	// game module actually reads still has the player's original request.
 	SV_GunGameClampWeaponSelect( cl, cmd );
 	SV_BarClientThink( cl, cmd );
+	SV_HoloClientThink( cl, cmd );
 	SV_BetClientThink( cl, cmd );
 	SV_VehicleClientThinkHook( cl, cmd );
 
