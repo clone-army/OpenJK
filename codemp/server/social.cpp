@@ -1810,7 +1810,7 @@ enum { HT_BEHAVE_HUNT, HT_BEHAVE_ROUTE, HT_BEHAVE_GUARD, HT_BEHAVE_IDLE, HT_BEHA
 #define HT_ATTACKS_NONE -1 // a group's attacks: nobody - peaceful, and can't be hurt
 enum { HT_WHEN_START, HT_WHEN_TIMER, HT_WHEN_ENTER, HT_WHEN_GROUP_DEAD, HT_WHEN_ALL_DEAD, HT_WHEN_AFTER,
 	HT_WHEN_ALL_IN_AREA, HT_WHEN_GROUP_LEFT, HT_WHEN_PLAYERS, HT_WHEN_PLAYER_DIED, HT_WHEN_NPC_KILLED,
-	HT_WHEN_COUNTER, HT_WHEN_COUNTDOWN_END };
+	HT_WHEN_COUNTER, HT_WHEN_COUNTDOWN_END, HT_WHEN_GROUP_IN_AREA };
 enum { HT_DO_SPAWN, HT_DO_MESSAGE, HT_DO_CENTER, HT_DO_SOUND, HT_DO_MUSIC, HT_DO_END, HT_DO_SAY,
 	HT_DO_TELL, HT_DO_EXPLODE, HT_DO_EFFECT, HT_DO_SHAKE, HT_DO_TELEPORT, HT_DO_USE, HT_DO_DESPAWN, HT_DO_WIN,
 	HT_DO_GIVE, HT_DO_KNOCKDOWN, HT_DO_KILL, HT_DO_HEAL, HT_DO_FREEZE, HT_DO_VEHICLE, HT_DO_ADDTIME, HT_DO_MOVE, HT_DO_SIDE,
@@ -1866,6 +1866,7 @@ typedef struct {
 	char id[40];
 	int  when;
 	int  ref;                     // area / group / trigger it's about (-1 = none)
+	int  ref2;                    // group_in_area: the group (ref is the area)
 	float seconds;
 	htAction_t actions[HT_MAX_ACTIONS];
 	int  numActions;
@@ -2275,7 +2276,8 @@ static qboolean Holo_Load(const char* file, char* err, size_t errSize)
 			!Q_stricmp(w, "after") ? HT_WHEN_AFTER : !Q_stricmp(w, "all_in_area") ? HT_WHEN_ALL_IN_AREA :
 			!Q_stricmp(w, "group_left") ? HT_WHEN_GROUP_LEFT : !Q_stricmp(w, "players") ? HT_WHEN_PLAYERS :
 			!Q_stricmp(w, "player_died") ? HT_WHEN_PLAYER_DIED : !Q_stricmp(w, "npc_killed") ? HT_WHEN_NPC_KILLED :
-			!Q_stricmp(w, "counter") ? HT_WHEN_COUNTER : !Q_stricmp(w, "countdown_end") ? HT_WHEN_COUNTDOWN_END : HT_WHEN_START;
+			!Q_stricmp(w, "counter") ? HT_WHEN_COUNTER : !Q_stricmp(w, "countdown_end") ? HT_WHEN_COUNTDOWN_END :
+			!Q_stricmp(w, "group_in_area") ? HT_WHEN_GROUP_IN_AREA : HT_WHEN_START;
 		t->off = cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(it, "startOff")) ? qtrue : qfalse;
 		const char* cmp = HtStr(it, "compare", ">=");
 		t->compare = !Q_stricmp(cmp, "<=") ? -1 : !Q_stricmp(cmp, "==") ? 0 : 1;
@@ -2283,7 +2285,8 @@ static qboolean Holo_Load(const char* file, char* err, size_t errSize)
 		t->count = (int)HtNum(it, "count", 0.0f);
 		t->repeat = cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(it, "repeat")) ? qtrue : qfalse;
 		t->cooldownMs = (int)(Q_max(1.0f, HtNum(it, "cooldown", 5.0f)) * 1000.0f);
-		t->ref = (t->when == HT_WHEN_ENTER || t->when == HT_WHEN_ALL_IN_AREA) ? HT_FIND(gHolo.areas, gHolo.numAreas, HtStr(it, "area", "")) :
+		t->ref2 = (t->when == HT_WHEN_GROUP_IN_AREA) ? HT_FIND(gHolo.groups, gHolo.numGroups, HtStr(it, "group", "")) : -1;
+		t->ref = (t->when == HT_WHEN_ENTER || t->when == HT_WHEN_ALL_IN_AREA || t->when == HT_WHEN_GROUP_IN_AREA) ? HT_FIND(gHolo.areas, gHolo.numAreas, HtStr(it, "area", "")) :
 			(t->when == HT_WHEN_GROUP_DEAD || t->when == HT_WHEN_GROUP_LEFT) ? HT_FIND(gHolo.groups, gHolo.numGroups, HtStr(it, "group", "")) :
 			(t->when == HT_WHEN_AFTER) ? HT_FIND(gHolo.triggers, gHolo.numTriggers, HtStr(it, "trigger", "")) :
 			(t->when == HT_WHEN_COUNTER) ? HtFind(HtStr(it, "counter", ""), gHolo.counterIds[0], sizeof(gHolo.counterIds[0]), gHolo.numCounters) : -1;
@@ -3854,6 +3857,13 @@ static void Holo_Think(void)
 	}
 }
 
+// A spot inside an area (its circle, from 64 below its floor to its height).
+static qboolean Holo_PointInArea(const htArea_t* a, const vec3_t o)
+{
+	const float dx = o[0] - a->org[0], dy = o[1] - a->org[1];
+	return (dx * dx + dy * dy <= a->radius * a->radius && o[2] >= a->org[2] - 64.0f && o[2] <= a->org[2] + a->height) ? qtrue : qfalse;
+}
+
 static qboolean Holo_InArea(const htArea_t* a, int c)
 {
 	const float* o = svs.clients[c].gentity->playerState->origin;
@@ -3985,6 +3995,19 @@ static void Holo_CheckTriggers(void)
 		case HT_WHEN_COUNTDOWN_END:
 			go = gHolo.countdownDone;
 			break;
+		case HT_WHEN_GROUP_IN_AREA: {
+			// At least N (count, 1 if not set) of a group's NPCs inside an area.
+			int in = 0;
+			for (int k = 0; k < HT_MAX_NPCS && t->ref >= 0 && t->ref2 >= 0; k++) {
+				const htNpc_t* h = &gHolo.npcs[k];
+				if (h->group == t->ref2 && Holo_NpcUp(h)) {
+					in += Holo_PointInArea(&gHolo.areas[t->ref], SV_GentityNum(h->ent)->r.currentOrigin);
+				}
+			}
+			level = (in >= Q_max(1, t->count)) ? qtrue : qfalse;
+			edge = qtrue;
+			break;
+		}
 		}
 		if (edge) {
 			go = (level && !t->wasTrue) ? qtrue : qfalse;
