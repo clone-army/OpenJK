@@ -936,6 +936,7 @@ void SV_Init (void) {
 	time( &svs.startTime );
 
 	SV_AddOperatorCommands ();
+	SV_GuidBanInit ();
 
 	// serverinfo vars
 	Cvar_Get ("dmflags", "0", CVAR_SERVERINFO);

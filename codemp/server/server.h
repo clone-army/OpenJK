@@ -619,6 +619,12 @@ void SV_SpinForceGiveWin(client_t* cl, int winIndex);
 void SV_EconomyFrame(void);
 void SV_EconomyRoundRestart(void);
 void SV_GunrayCheckFrame(void);
+
+// sv_guidban.cpp
+void SV_GuidBanInit( void );
+void SV_GuidBanFrame( void );
+qboolean SV_GuidBanned( const char *userinfo, const char *ip );
+void SV_GuidSeen( const char *userinfo, const char *ip );
 void SV_EconomyPersistCredits( client_t *cl );
 
 //

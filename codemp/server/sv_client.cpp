@@ -241,6 +241,14 @@ void SV_DirectConnect( netadr_t from ) {
 		}
 	}
 
+	// GUID bans (sv_guidban.cpp) - checked once the challenge has shown the
+	// IP is real, so nobody can run up a banned player's drop count
+	if ( SV_GuidBanned( userinfo, ip ) ) {
+		NET_OutOfBandPrint( NS_SERVER, from, "print\nYou are banned from this server.\n" );
+		return;
+	}
+	SV_GuidSeen( userinfo, ip );
+
 	newcl = &temp;
 	Com_Memset (newcl, 0, sizeof(client_t));
 

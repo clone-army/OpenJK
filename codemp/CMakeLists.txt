@@ -340,6 +340,7 @@ if(BuildMPEngine OR BuildMPDed)
 		"${MPDir}/server/sv_challenge.cpp"
 		"${MPDir}/server/sv_client.cpp"
 		"${MPDir}/server/sv_game.cpp"
+		"${MPDir}/server/sv_guidban.cpp"
 		"${MPDir}/server/sv_init.cpp"
 		"${MPDir}/server/sv_main.cpp"
 		"${MPDir}/server/sv_net_chan.cpp"
