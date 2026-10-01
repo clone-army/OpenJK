@@ -4267,6 +4267,94 @@ static void Holo_Frame(void)
 
 // Loads a scenario file and starts it ("started", or "restarted" by
 // !ht restart). qfalse, told to cl, if it won't load.
+// The MBII mode (g_Authenticity) a scenario plays in: -1 = whatever the
+// server's in. Scenarios that don't say are Full Authentic.
+static int Holo_WantedMode(const cJSON* root)
+{
+	const char* m = HtStr(root, "mode", "fa");
+	return !Q_stricmp(m, "keep") ? -1 : !Q_stricmp(m, "open") ? 0 : !Q_stricmp(m, "semi") ? 1 :
+		!Q_stricmp(m, "legends") ? 4 : 2;
+}
+
+static const char* Holo_ModeName(int mode)
+{
+	static const char* names[] = { "Open", "Semi-Authentic", "Full Authentic", "Duel", "Legends" };
+	return (mode >= 0 && mode < (int)ARRAY_LEN(names)) ? names[mode] : "?";
+}
+
+// A scenario waiting for the map to come back in its mode, then started.
+static struct {
+	qboolean waiting;
+	char file[64], label[64], verb[16], who[MAX_NAME_LENGTH];
+	int client;            // who asked (-1 = rcon) - still them if the name matches
+	int mode;
+	int readyAt;           // svs.time to start it (set once the map's back)
+	int giveUpAt;          // svs.time to drop it if the map never comes back
+} gHoloPending;
+
+static qboolean Holo_Start(client_t* cl, const char* file, const char* label, const char* verb);
+
+// Plays a scenario - first reloading the map in its mode if the server's in
+// another one (everyone back to class select), then starting it.
+static void Holo_Play(client_t* cl, const char* file, const char* label, const char* verb)
+{
+	cJSON* root = Holo_ReadFile(file);
+	const int mode = root ? Holo_WantedMode(root) : -1;
+	cJSON_Delete(root);
+	const int now = Cvar_VariableIntegerValue("g_Authenticity");
+	if (mode < 0 || mode == now) {
+		Holo_Start(cl, file, label, verb);
+		return;
+	}
+	memset(&gHoloPending, 0, sizeof(gHoloPending));
+	gHoloPending.waiting = qtrue;
+	Q_strncpyz(gHoloPending.file, file, sizeof(gHoloPending.file));
+	Q_strncpyz(gHoloPending.label, label, sizeof(gHoloPending.label));
+	Q_strncpyz(gHoloPending.verb, verb, sizeof(gHoloPending.verb));
+	Q_strncpyz(gHoloPending.who, cl ? cl->name : "", sizeof(gHoloPending.who));
+	gHoloPending.client = cl ? (int)(cl - svs.clients) : -1;
+	gHoloPending.mode = mode;
+	gHoloPending.giveUpAt = svs.time + 90000;
+	SV_SendServerCommand(NULL, "chat \"^5[Holotable] ^5%s^7 plays in ^3%s^7 - reloading the map in it now, then it starts. Pick your class again.\"\n",
+		label, Holo_ModeName(mode));
+	Com_Printf("Holotable: switching to mode %d (%s) for %s\n", mode, Holo_ModeName(mode), file);
+	Cbuf_AddText(va("mbmode %d %s\n", mode, Cvar_VariableString("mapname")));
+}
+
+// Each frame: start a waiting scenario a few seconds after its map's back
+// (players reconnecting), or give up on it.
+static void Holo_PendingFrame(void)
+{
+	if (!gHoloPending.waiting) {
+		return;
+	}
+	if (!gHoloPending.readyAt) {
+		if (svs.time >= gHoloPending.giveUpAt) {
+			gHoloPending.waiting = qfalse;
+			Com_Printf("Holotable: the map never came back for %s - not started\n", gHoloPending.file);
+		}
+		return;
+	}
+	if (svs.time < gHoloPending.readyAt) {
+		return;
+	}
+	gHoloPending.waiting = qfalse;
+	client_t* cl = NULL;
+	if (gHoloPending.client >= 0 && gHoloPending.client < sv_maxclients->integer) {
+		client_t* c = &svs.clients[gHoloPending.client];
+		if (c->state >= CS_CONNECTED && !Q_stricmp(c->name, gHoloPending.who)) {
+			cl = c;
+		}
+	}
+	if (Cvar_VariableIntegerValue("g_Authenticity") != gHoloPending.mode) {
+		SV_SendServerCommand(NULL, "chat \"^5[Holotable]^7 Couldn't switch to %s - starting %s as it is.\"\n",
+			Holo_ModeName(gHoloPending.mode), gHoloPending.label);
+	}
+	if (!gHoloActive && !gBarFightActive) {
+		Holo_Start(cl, gHoloPending.file, gHoloPending.label, gHoloPending.verb);
+	}
+}
+
 static qboolean Holo_Start(client_t* cl, const char* file, const char* label, const char* verb)
 {
 	char err[128] = "";
@@ -4365,6 +4453,11 @@ qboolean SV_SocialHoloCommand(client_t* cl, const char* args)
 		Holo_Reply(cl, "Log in first - ^5!login <name> <password>");
 		return qtrue;
 	}
+	if (!Q_stricmp(a1, "stop") && gHoloPending.waiting && !gHoloActive && Holo_CanRun(cl)) {
+		gHoloPending.waiting = qfalse;
+		Holo_Reply(cl, va("Called off ^5%s^7 - it won't start after the reload.", gHoloPending.label));
+		return qtrue;
+	}
 	if (!Q_stricmp(a1, "stop")) {
 		if (!Holo_CanRun(cl)) {
 			Holo_Reply(cl, "Only admins and scenario runners can stop a scenario.");
@@ -4404,7 +4497,7 @@ qboolean SV_SocialHoloCommand(client_t* cl, const char* args)
 			return qtrue;
 		}
 		Holo_End(cl ? va("reloading (%s)", cl->name) : "reloading");
-		Holo_Start(cl, file, label, "restarted");
+		Holo_Play(cl, file, label, "restarted");
 		return qtrue;
 	}
 
@@ -4449,11 +4542,12 @@ qboolean SV_SocialHoloCommand(client_t* cl, const char* args)
 		Holo_Reply(cl, "Only admins and scenario runners can run scenarios.");
 		return qtrue;
 	}
-	if (gHoloActive || gBarFightActive) {
-		Holo_Reply(cl, gHoloActive ? "A scenario's already running - ^5!ht stop^7 first." : "A bar fight's on - wait for it to end.");
+	if (gHoloActive || gBarFightActive || gHoloPending.waiting) {
+		Holo_Reply(cl, gHoloActive ? "A scenario's already running - ^5!ht stop^7 first." :
+			gHoloPending.waiting ? "A scenario's about to start - the map's reloading for it." : "A bar fight's on - wait for it to end.");
 		return qtrue;
 	}
-	Holo_Start(cl, gHoloList[pick].file, gHoloList[pick].name, "started");
+	Holo_Play(cl, gHoloList[pick].file, gHoloList[pick].name, "started");
 	return qtrue;
 }
 
@@ -4594,6 +4688,9 @@ void SV_SocialEnsureNpcFiles(void)
 
 void SV_SocialGameInit(void)
 {
+	if (gHoloPending.waiting && !gHoloPending.readyAt) {
+		gHoloPending.readyAt = svs.time + 8000; // players reloading the map first
+	}
 	// A new round or map frees every entity, fights included.
 	gHoloSidesOk = -1;
 	if (gHoloActive) {
@@ -4728,6 +4825,7 @@ void SV_SocialFrame(void)
 		Social_BarFightFrame();
 		Social_BarFightAutoFrame();
 	}
+	Holo_PendingFrame();
 	Holo_Frame(); // any server with g_holotable, not only social ones
 	if (Social_AnytimeSpawnWanted() || (g_socialBots && g_socialBots->integer)) {
 		Social_RescueStuckJoiners();
