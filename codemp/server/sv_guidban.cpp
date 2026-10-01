@@ -360,6 +360,10 @@ qboolean SV_GuidBanned( const char *userinfo, const char *ip ) {
 static void GuidBan_DropConnectedLocked( void ) {
 	qboolean changed = qfalse;
 
+	if ( !com_sv_running->integer || !svs.clients ) {
+		return;
+	}
+
 	for ( int i = 0; i < sv_maxclients->integer; i++ ) {
 		client_t *cl = &svs.clients[i];
 		char addr[NET_ADDRSTRMAXLEN];
@@ -429,7 +433,7 @@ static void SV_BanGuid_f( void ) {
 	const char *arg = Cmd_Argv( 1 );
 	if ( strlen( arg ) <= 2 && Q_isanumber( arg ) ) {
 		const int n = atoi( arg );
-		if ( n < 0 || n >= sv_maxclients->integer || svs.clients[n].state < CS_CONNECTED ) {
+		if ( !com_sv_running->integer || !svs.clients || n < 0 || n >= sv_maxclients->integer || svs.clients[n].state < CS_CONNECTED ) {
 			Com_Printf( "banguid: no client %d\n", n );
 			return;
 		}
