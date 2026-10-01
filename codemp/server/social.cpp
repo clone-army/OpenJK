@@ -161,6 +161,15 @@ static void (*gUseTargets2)(void* ent, void* activator, const char* target) = NU
 // MBII ends a round with this: (winning team - 1, 2, or 0 for a draw,
 // ENTITYNUM_NONE, 0), as its own calls do. gSiegeRoundEnded: already over.
 static void (*gSiegeRoundComplete)(int team, int client, int unused) = NULL;
+// More Holotable actions - argument counts checked against MBII's code, and
+// CS_SHADERSTATE (24) against its own BuildShaderStateConfig caller.
+static void (*gHoloKnockdown)(void* victim, int attacker, int addTime, int downVelocity, qboolean quickGetup) = NULL;
+static void (*gSiegeSetObjectiveComplete)(int team, int objective, qboolean failIt) = NULL;
+static void* (*gBGFindItem)(const char* classname) = NULL;
+static void* (*gLaunchItem)(void* item, float* origin, float* velocity) = NULL;
+static void (*gAddRemap)(const char* oldShader, const char* newShader, float timeOffset) = NULL;
+static const char* (*gBuildShaderStateConfig)(void) = NULL;
+#define HOLO_CS_SHADERSTATE 24
 static int* gSiegeRoundEnded = NULL;
 static void* (*gNPCSpawnType)(void* ent, char* type, char* targetname, int isVehicle, int asIfPlayer, int siegeTeam) = NULL;
 static void (*gFreeEntity)(void* ent) = NULL;
@@ -2308,16 +2317,21 @@ qboolean SV_SocialBarFightCommand(client_t* cl, const char* args)
 #define HT_MAX_GROUPS    16
 #define HT_MAX_TYPES     8
 #define HT_MAX_TRIGGERS  32
-#define HT_MAX_ACTIONS   8
+#define HT_MAX_ACTIONS   16
 #define HT_MAX_NPCS      32   // alive at once (slots of dead ones are reused)
 #define HT_MAX_LIST      32
 #define HT_DIR           "holotable"
 
 enum { HT_BEHAVE_HUNT, HT_BEHAVE_ROUTE, HT_BEHAVE_GUARD, HT_BEHAVE_IDLE };
 enum { HT_WHEN_START, HT_WHEN_TIMER, HT_WHEN_ENTER, HT_WHEN_GROUP_DEAD, HT_WHEN_ALL_DEAD, HT_WHEN_AFTER,
-	HT_WHEN_ALL_IN_AREA, HT_WHEN_GROUP_LEFT, HT_WHEN_PLAYERS, HT_WHEN_PLAYER_DIED, HT_WHEN_NPC_KILLED };
+	HT_WHEN_ALL_IN_AREA, HT_WHEN_GROUP_LEFT, HT_WHEN_PLAYERS, HT_WHEN_PLAYER_DIED, HT_WHEN_NPC_KILLED,
+	HT_WHEN_COUNTER, HT_WHEN_COUNTDOWN_END };
 enum { HT_DO_SPAWN, HT_DO_MESSAGE, HT_DO_CENTER, HT_DO_SOUND, HT_DO_MUSIC, HT_DO_END, HT_DO_SAY,
-	HT_DO_TELL, HT_DO_EXPLODE, HT_DO_EFFECT, HT_DO_SHAKE, HT_DO_TELEPORT, HT_DO_USE, HT_DO_DESPAWN, HT_DO_WIN };
+	HT_DO_TELL, HT_DO_EXPLODE, HT_DO_EFFECT, HT_DO_SHAKE, HT_DO_TELEPORT, HT_DO_USE, HT_DO_DESPAWN, HT_DO_WIN,
+	HT_DO_GIVE, HT_DO_KNOCKDOWN, HT_DO_KILL, HT_DO_HEAL, HT_DO_FREEZE, HT_DO_VEHICLE, HT_DO_ADDTIME, HT_DO_MOVE,
+	HT_DO_TRIGGER_ON, HT_DO_TRIGGER_OFF, HT_DO_COUNTER, HT_DO_COUNTDOWN, HT_DO_OBJECTIVE, HT_DO_PICKUP,
+	HT_DO_TEXTURE, HT_DO_GRAVITY, HT_DO_SPEED };
+enum { HT_WHO_PLAYER, HT_WHO_ALL, HT_WHO_TEAM1, HT_WHO_TEAM2, HT_WHO_AREA }; // whom a player action is for
 enum { HT_AT_NONE, HT_AT_POINT, HT_AT_AREA, HT_AT_PLAYER }; // where an action happens
 
 typedef struct { char id[40]; vec3_t org; float yaw; } htPoint_t;
@@ -2352,6 +2366,9 @@ typedef struct {
 	float damage, radius, intensity, seconds;
 	qboolean center;              // tell: big centre message, not chat
 	qboolean everyone;            // teleport: everyone, not just who set it off
+	int  whoKind, whoRef;         // HT_WHO_*: whom a player action is for (whoRef: an area)
+	int  value;                   // counter amount, objective number, behaviour...
+	char extra[96];               // a second name: texture swap's new shader, group move's route...
 } htAction_t;
 typedef struct {
 	char id[40];
@@ -2370,6 +2387,8 @@ typedef struct {
 	int  nextAt;                  // timer: when it next goes off
 	int  afterSeen;               // after: the other trigger's firing it's already followed
 	byte inside[MAX_CLIENTS];     // enter_area: who was in it last check
+	qboolean off;                 // turned off (starts off, or an action turned it off)
+	int  compare;                 // counter: -1 at most, 0 exactly, 1 at least
 } htTrigger_t;
 typedef struct {
 	int  ent;                     // -1 = free slot
@@ -2415,6 +2434,23 @@ static struct {
 	int  nextTeamCheck;
 	int  warnedAt[MAX_CLIENTS];
 	qboolean playerUp[MAX_CLIENTS];   // for "a player dies"
+	// Counters, the countdown, frozen players, and server settings changed
+	// for the scenario (put back when it ends).
+	char counterIds[16][40];
+	int  counters[16];
+	int  numCounters;
+	int  countdownEnd;                // svs.time it reaches 0 (0 = none running)
+	char countdownText[96];
+	int  countdownShown;              // seconds last shown
+	qboolean countdownDone;           // reached 0 since triggers last looked
+	int  frozenUntil[MAX_CLIENTS];
+	char gravityWas[16];
+	qboolean gravitySet;
+	int  gravityUntil;                // 0 = till the end
+	int  speedPct;                    // players' ground speed, % of normal (0 = not changed)
+	int  speedUntil;                  // 0 = till the end
+	char remaps[8][2][96];            // texture swaps made (old, new)
+	int  numRemaps;
 	qboolean npcUp[HT_MAX_NPCS];      // for "an NPC is killed"
 	int  pointSpawns[HT_MAX_POINTS];  // NPCs spawned at each point so far (where the next one goes)
 } gHolo;
@@ -2591,6 +2627,11 @@ static qboolean Holo_Load(const char* file, char* err, size_t errSize)
 			HtVec(pt, r->pts[r->count++]);
 		}
 	}
+	cJSON_ArrayForEach(it, cJSON_GetObjectItemCaseSensitive(root, "counters")) {
+		if (gHolo.numCounters >= 16) break;
+		Q_strncpyz(gHolo.counterIds[gHolo.numCounters], HtStr(it, "id", ""), sizeof(gHolo.counterIds[0]));
+		gHolo.counters[gHolo.numCounters++] = (int)HtNum(it, "start", 0.0f);
+	}
 	cJSON_ArrayForEach(it, cJSON_GetObjectItemCaseSensitive(root, "areas")) {
 		if (gHolo.numAreas >= HT_MAX_AREAS) break;
 		htArea_t* a = &gHolo.areas[gHolo.numAreas++];
@@ -2663,14 +2704,19 @@ static qboolean Holo_Load(const char* file, char* err, size_t errSize)
 			!Q_stricmp(w, "group_dead") ? HT_WHEN_GROUP_DEAD : !Q_stricmp(w, "all_dead") ? HT_WHEN_ALL_DEAD :
 			!Q_stricmp(w, "after") ? HT_WHEN_AFTER : !Q_stricmp(w, "all_in_area") ? HT_WHEN_ALL_IN_AREA :
 			!Q_stricmp(w, "group_left") ? HT_WHEN_GROUP_LEFT : !Q_stricmp(w, "players") ? HT_WHEN_PLAYERS :
-			!Q_stricmp(w, "player_died") ? HT_WHEN_PLAYER_DIED : !Q_stricmp(w, "npc_killed") ? HT_WHEN_NPC_KILLED : HT_WHEN_START;
+			!Q_stricmp(w, "player_died") ? HT_WHEN_PLAYER_DIED : !Q_stricmp(w, "npc_killed") ? HT_WHEN_NPC_KILLED :
+			!Q_stricmp(w, "counter") ? HT_WHEN_COUNTER : !Q_stricmp(w, "countdown_end") ? HT_WHEN_COUNTDOWN_END : HT_WHEN_START;
+		t->off = cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(it, "startOff")) ? qtrue : qfalse;
+		const char* cmp = HtStr(it, "compare", ">=");
+		t->compare = !Q_stricmp(cmp, "<=") ? -1 : !Q_stricmp(cmp, "==") ? 0 : 1;
 		t->seconds = Q_max(0.0f, HtNum(it, "seconds", 0.0f));
-		t->count = Q_max(0, (int)HtNum(it, "count", 0.0f));
+		t->count = (int)HtNum(it, "count", 0.0f);
 		t->repeat = cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(it, "repeat")) ? qtrue : qfalse;
 		t->cooldownMs = (int)(Q_max(1.0f, HtNum(it, "cooldown", 5.0f)) * 1000.0f);
 		t->ref = (t->when == HT_WHEN_ENTER || t->when == HT_WHEN_ALL_IN_AREA) ? HT_FIND(gHolo.areas, gHolo.numAreas, HtStr(it, "area", "")) :
 			(t->when == HT_WHEN_GROUP_DEAD || t->when == HT_WHEN_GROUP_LEFT) ? HT_FIND(gHolo.groups, gHolo.numGroups, HtStr(it, "group", "")) :
-			(t->when == HT_WHEN_AFTER) ? HT_FIND(gHolo.triggers, gHolo.numTriggers, HtStr(it, "trigger", "")) : -1;
+			(t->when == HT_WHEN_AFTER) ? HT_FIND(gHolo.triggers, gHolo.numTriggers, HtStr(it, "trigger", "")) :
+			(t->when == HT_WHEN_COUNTER) ? HtFind(HtStr(it, "counter", ""), gHolo.counterIds[0], sizeof(gHolo.counterIds[0]), gHolo.numCounters) : -1;
 		const cJSON* a;
 		cJSON_ArrayForEach(a, cJSON_GetObjectItemCaseSensitive(it, "actions")) {
 			if (t->numActions >= HT_MAX_ACTIONS) break;
@@ -2724,6 +2770,59 @@ static qboolean Holo_Load(const char* file, char* err, size_t errSize)
 				const char* team = HtStr(a, "team", "team1");
 				act->ref = !Q_stricmp(team, "team2") ? TEAM_BLUE : !Q_stricmp(team, "draw") ? 0 : TEAM_RED;
 				Holo_Clean(act->text, HtStr(a, "text", ""), sizeof(act->text));
+			} else if (!Q_stricmp(d, "give") || !Q_stricmp(d, "knockdown") || !Q_stricmp(d, "kill") ||
+				!Q_stricmp(d, "heal") || !Q_stricmp(d, "freeze")) {
+				// Player actions: for whom (who set it off, everyone, a side,
+				// everyone in an area).
+				act->type = !Q_stricmp(d, "give") ? HT_DO_GIVE : !Q_stricmp(d, "knockdown") ? HT_DO_KNOCKDOWN :
+					!Q_stricmp(d, "kill") ? HT_DO_KILL : !Q_stricmp(d, "heal") ? HT_DO_HEAL : HT_DO_FREEZE;
+				Q_strncpyz(act->extra, HtStr(a, "item", ""), sizeof(act->extra));
+				act->seconds = Q_max(0.5f, Q_min(60.0f, HtNum(a, "seconds", 3.0f)));
+				if (act->type == HT_DO_GIVE && !act->extra[0]) continue;
+			} else if (!Q_stricmp(d, "vehicle") || !Q_stricmp(d, "pickup")) {
+				act->type = !Q_stricmp(d, "vehicle") ? HT_DO_VEHICLE : HT_DO_PICKUP;
+				Q_strncpyz(act->extra, HtStr(a, act->type == HT_DO_VEHICLE ? "vehicle" : "item", ""), sizeof(act->extra));
+				if (!act->extra[0]) continue;
+			} else if (!Q_stricmp(d, "addtime")) {
+				act->type = HT_DO_ADDTIME;
+				act->seconds = Q_max(-3600.0f, Q_min(3600.0f, HtNum(a, "seconds", 60.0f)));
+			} else if (!Q_stricmp(d, "move")) {
+				// A group's new orders: hunt, walk a route, guard a point, idle.
+				act->type = HT_DO_MOVE;
+				act->ref = HT_FIND(gHolo.groups, gHolo.numGroups, HtStr(a, "group", ""));
+				const char* b = HtStr(a, "behaviour", "hunt");
+				act->value = !Q_stricmp(b, "route") ? HT_BEHAVE_ROUTE : !Q_stricmp(b, "guard") ? HT_BEHAVE_GUARD :
+					!Q_stricmp(b, "idle") ? HT_BEHAVE_IDLE : HT_BEHAVE_HUNT;
+				act->atRef = HT_FIND(gHolo.routes, gHolo.numRoutes, HtStr(a, "route", ""));
+				if (act->ref < 0 || (act->value == HT_BEHAVE_ROUTE && act->atRef < 0)) continue;
+			} else if (!Q_stricmp(d, "trigger_on") || !Q_stricmp(d, "trigger_off")) {
+				act->type = !Q_stricmp(d, "trigger_on") ? HT_DO_TRIGGER_ON : HT_DO_TRIGGER_OFF;
+				act->ref = HT_FIND(gHolo.triggers, gHolo.numTriggers, HtStr(a, "trigger", ""));
+				if (act->ref < 0) continue;
+			} else if (!Q_stricmp(d, "counter")) {
+				act->type = HT_DO_COUNTER;
+				act->ref = HtFind(HtStr(a, "counter", ""), gHolo.counterIds[0], sizeof(gHolo.counterIds[0]), gHolo.numCounters);
+				act->value = (int)HtNum(a, "value", 1.0f);
+				act->center = !Q_stricmp(HtStr(a, "op", "add"), "set") ? qtrue : qfalse; // set, not add
+				if (act->ref < 0) continue;
+			} else if (!Q_stricmp(d, "countdown")) {
+				act->type = HT_DO_COUNTDOWN;
+				act->seconds = Q_max(1.0f, Q_min(3600.0f, HtNum(a, "seconds", 30.0f)));
+				Holo_Clean(act->text, HtStr(a, "text", ""), sizeof(act->text));
+			} else if (!Q_stricmp(d, "objective")) {
+				act->type = HT_DO_OBJECTIVE;
+				act->ref = !Q_stricmp(HtStr(a, "team", "team1"), "team2") ? TEAM_BLUE : TEAM_RED;
+				act->value = Q_max(1, (int)HtNum(a, "objective", 1.0f));
+			} else if (!Q_stricmp(d, "texture")) {
+				act->type = HT_DO_TEXTURE;
+				Q_strncpyz(act->effect, HtStr(a, "from", ""), sizeof(act->effect));
+				Q_strncpyz(act->extra, HtStr(a, "to", ""), sizeof(act->extra));
+				if (!act->effect[0] || !act->extra[0]) continue;
+			} else if (!Q_stricmp(d, "gravity") || !Q_stricmp(d, "speed")) {
+				act->type = !Q_stricmp(d, "gravity") ? HT_DO_GRAVITY : HT_DO_SPEED;
+				act->value = act->type == HT_DO_GRAVITY ? (int)Q_max(0.0f, Q_min(5000.0f, HtNum(a, "value", 800.0f)))
+					: (int)Q_max(10.0f, Q_min(400.0f, HtNum(a, "value", 200.0f)));
+				act->seconds = Q_max(0.0f, Q_min(3600.0f, HtNum(a, "seconds", 0.0f)));
 			} else if (!Q_stricmp(d, "despawn")) {
 				act->type = HT_DO_DESPAWN;
 				act->ref = HT_FIND(gHolo.groups, gHolo.numGroups, HtStr(a, "group", ""));
@@ -2749,6 +2848,18 @@ static qboolean Holo_Load(const char* file, char* err, size_t errSize)
 			}
 			if (act->type == HT_DO_TELEPORT && act->atKind == HT_AT_PLAYER) {
 				continue; // to a point or area, not to themselves
+			}
+			if ((act->type == HT_DO_VEHICLE || act->type == HT_DO_PICKUP) && act->atKind == HT_AT_NONE) {
+				continue; // needs somewhere
+			}
+			{
+				const char* who = HtStr(a, "who", "player");
+				act->whoKind = !Q_stricmp(who, "all") ? HT_WHO_ALL : !Q_stricmp(who, "team1") ? HT_WHO_TEAM1 :
+					!Q_stricmp(who, "team2") ? HT_WHO_TEAM2 : HT_WHO_PLAYER;
+				if (act->whoKind == HT_WHO_PLAYER && Q_stricmp(who, "player")) {
+					act->whoRef = HT_FIND(gHolo.areas, gHolo.numAreas, who);
+					act->whoKind = (act->whoRef >= 0) ? HT_WHO_AREA : HT_WHO_PLAYER;
+				}
 			}
 			t->numActions++;
 		}
@@ -2845,6 +2956,24 @@ static qboolean Holo_ShiftRound(int deltaMs)
 // Puts back what a scenario changed for its players.
 static void Holo_RestorePlayers(qboolean mapChanging)
 {
+	if (gHolo.gravitySet) {
+		Cvar_Set("g_gravity", gHolo.gravityWas);
+		gHolo.gravitySet = qfalse;
+	}
+	gHolo.speedPct = 0;
+	memset(gHolo.frozenUntil, 0, sizeof(gHolo.frozenUntil));
+	gHolo.countdownEnd = 0;
+	if (!mapChanging && gHolo.numRemaps && gAddRemap && gBuildShaderStateConfig) {
+		// Every swapped texture back to itself.
+		void* old = GVM_BeginNative();
+		for (int i = 0; i < gHolo.numRemaps; i++) {
+			gAddRemap(gHolo.remaps[i][0], gHolo.remaps[i][0], sv.time * 0.001f);
+		}
+		const char* state = gBuildShaderStateConfig();
+		GVM_EndNative(old);
+		SV_SetConfigstring(HOLO_CS_SHADERSTATE, state);
+	}
+	gHolo.numRemaps = 0;
 	if (gHolo.balanceChanged) {
 		Cvar_Set("g_balance", gHolo.balanceWas);
 		gHolo.balanceChanged = qfalse;
@@ -3025,6 +3154,8 @@ static qboolean Holo_PlayerIn(int c)
 		Social_IsSpawned(cl->gentity->playerState, c) && cl->gentity->playerState->stats[STAT_HEALTH] > 0) ? qtrue : qfalse;
 }
 
+static qboolean Holo_InArea(const htArea_t* a, int c);
+
 static void Holo_Teleport(client_t* cl, const vec3_t spot, float yaw, int n)
 {
 	if (!gTeleportPlayer || !cl || !cl->gentity) {
@@ -3042,6 +3173,95 @@ static void Holo_Teleport(client_t* cl, const vec3_t spot, float yaw, int n)
 	void* old = GVM_BeginNative();
 	gTeleportPlayer(cl->gentity, org, ang);
 	GVM_EndNative(old);
+}
+
+// MBII's own cheat commands (give ...) run as a player for a moment: the
+// same way the engine's other features give things.
+static void Holo_CheatCommand(client_t* cl, const char* cmd)
+{
+	const qboolean cheats = Cvar_VariableIntegerValue("sv_cheats") ? qtrue : qfalse;
+	if (!cheats) {
+		Cvar_Set("sv_cheats", "1");
+		GVM_RunFrame(sv.time);
+	}
+	SV_ExecuteClientCommand(cl, cmd, qtrue);
+	if (!cheats) {
+		Cvar_Set("sv_cheats", "0");
+		GVM_RunFrame(sv.time);
+	}
+}
+
+// MBII's weapon numbers, by name (game/bg_weapons.h's weapon_t).
+static const struct { const char* name; int wp; } kHoloWeapons[] = {
+	{ "WP_STUN_BATON", WP_STUN_BATON }, { "WP_MELEE", WP_MELEE }, { "WP_SABER", WP_SABER },
+	{ "WP_BRYAR_PISTOL", WP_BRYAR_PISTOL }, { "WP_CLONE_PISTOL", WP_CLONE_PISTOL }, { "WP_MANDO_PISTOL", WP_MANDO_PISTOL },
+	{ "WP_BLASTER", WP_BLASTER }, { "WP_DC_CARBINE", WP_DC_CARBINE }, { "WP_CR2", WP_CR2 }, { "WP_E_22", WP_E_22 },
+	{ "WP_HEAVY_PISTOL", WP_HEAVY_PISTOL }, { "WP_DLT19", WP_DLT19 }, { "WP_TRAD_BOWCASTER", WP_TRAD_BOWCASTER },
+	{ "WP_DISRUPTOR", WP_DISRUPTOR }, { "WP_BOWCASTER", WP_BOWCASTER }, { "WP_REPEATER", WP_REPEATER },
+	{ "WP_CLONE_RIFLE", WP_CLONE_RIFLE }, { "WP_THROWER", WP_THROWER }, { "WP_MINIGUN", WP_MINIGUN }, { "WP_DEMP2", WP_DEMP2 },
+	{ "WP_SHOTGUN", WP_SHOTGUN }, { "WP_FLECHETTE", WP_FLECHETTE }, { "WP_A280", WP_A280 }, { "WP_DLT20A", WP_DLT20A },
+	{ "WP_M5", WP_M5 }, { "WP_T21", WP_T21 }, { "WP_ROCKET_LAUNCHER", WP_ROCKET_LAUNCHER }, { "WP_PLX1", WP_PLX1 },
+	{ "WP_THERMAL", WP_THERMAL }, { "WP_FRAG_NADE", WP_FRAG_NADE }, { "WP_REAL_TD", WP_REAL_TD }, { "WP_TRIP_MINE", WP_TRIP_MINE },
+	{ "WP_PULSE_NADE", WP_PULSE_NADE }, { "WP_FIRE_NADE", WP_FIRE_NADE }, { "WP_SONIC_NADE", WP_SONIC_NADE },
+	{ "WP_CRYO_NADE", WP_CRYO_NADE }, { "WP_CONC_NADE", WP_CONC_NADE }, { "WP_DET_PACK", WP_DET_PACK },
+	{ "WP_CONCUSSION", WP_CONCUSSION }, { "WP_SBD", WP_SBD }, { "WP_BRYAR_OLD", WP_BRYAR_OLD }, { "WP_EE3", WP_EE3 },
+	{ "WP_EE4", WP_EE4 }, { "WP_AMBAN", WP_AMBAN }, { "WP_PROJ", WP_PROJ },
+};
+
+static void Holo_Give(client_t* cl, const char* what)
+{
+	if (!Q_stricmpn(what, "WP_", 3)) {
+		for (size_t i = 0; i < ARRAY_LEN(kHoloWeapons); i++) {
+			if (!Q_stricmp(kHoloWeapons[i].name, what)) {
+				Holo_CheatCommand(cl, va("give weaponnum %d", kHoloWeapons[i].wp));
+				Holo_CheatCommand(cl, "give ammo_all");
+				return;
+			}
+		}
+		return;
+	}
+	if (!Q_stricmp(what, "health") || !Q_stricmp(what, "armor")) {
+		Holo_CheatCommand(cl, va("give %s", what));
+	} else if (!Q_stricmp(what, "ammo")) {
+		Holo_CheatCommand(cl, "give ammo_all");
+	} else {
+		// An item by its classname (item_jetpack, item_shockfield...).
+		char item[64];
+		Q_strncpyz(item, what, sizeof(item));
+		for (char* c = item; *c; c++) {
+			if (!isalnum((unsigned char)*c) && *c != '_') return; // only names, nothing else on the line
+		}
+		Holo_CheatCommand(cl, va("give %s", item));
+		if (!Q_stricmp(item, "item_jetpack")) {
+			Holo_CheatCommand(cl, "give fuel 100");
+		}
+	}
+}
+
+// Whether a player is one of an action's "who".
+static qboolean Holo_IsTarget(const htAction_t* act, client_t* who, int c)
+{
+	if (!Holo_PlayerIn(c)) {
+		return qfalse;
+	}
+	const int team = svs.clients[c].gentity->playerState->persistant[PERS_TEAM];
+	switch (act->whoKind) {
+	case HT_WHO_ALL: return qtrue;
+	case HT_WHO_TEAM1: return team == TEAM_RED ? qtrue : qfalse;
+	case HT_WHO_TEAM2: return team == TEAM_BLUE ? qtrue : qfalse;
+	case HT_WHO_AREA: return Holo_InArea(&gHolo.areas[act->whoRef], c);
+	default: return (who && who == &svs.clients[c]) ? qtrue : qfalse;
+	}
+}
+
+static void Holo_SetCvarFor(const char* cvar, int value, char* was, size_t wasSize, qboolean* set, int* until, float seconds)
+{
+	if (!*set) {
+		Q_strncpyz(was, Cvar_VariableString(cvar), wasSize);
+		*set = qtrue;
+	}
+	Cvar_Set(cvar, va("%i", value));
+	*until = seconds > 0.0f ? svs.time + (int)(seconds * 1000.0f) : 0;
 }
 
 static void Holo_RunActions(htTrigger_t* t, client_t* who)
@@ -3189,6 +3409,178 @@ static void Holo_RunActions(htTrigger_t* t, client_t* who)
 				SV_SendServerCommand(NULL, "cp \"%s\"\n", act->text);
 			}
 			Holo_End("finished");
+			break;
+		case HT_DO_GIVE:
+		case HT_DO_KNOCKDOWN:
+		case HT_DO_KILL:
+		case HT_DO_HEAL:
+		case HT_DO_FREEZE:
+			for (int c = 0; c < sv_maxclients->integer; c++) {
+				if (!Holo_IsTarget(act, who, c)) {
+					continue;
+				}
+				client_t* cl = &svs.clients[c];
+				if (act->type == HT_DO_GIVE) {
+					Holo_Give(cl, act->extra);
+				} else if (act->type == HT_DO_HEAL) {
+					Holo_CheatCommand(cl, "give health");
+				} else if (act->type == HT_DO_KILL) {
+					Holo_Damage(cl->gentity, cl->gentity->playerState->origin, 100000);
+				} else if (act->type == HT_DO_KNOCKDOWN && gHoloKnockdown) {
+					void* old = GVM_BeginNative();
+					gHoloKnockdown(cl->gentity, c, (int)(act->seconds * 1000.0f), 0, qfalse);
+					GVM_EndNative(old);
+				} else if (act->type == HT_DO_FREEZE) {
+					gHolo.frozenUntil[c] = svs.time + (int)(act->seconds * 1000.0f);
+				}
+			}
+			break;
+		case HT_DO_VEHICLE: {
+			// A vehicle (swoop, speeder...) at the spot, for players to take.
+			// Not removed when the scenario ends: someone may be riding it.
+			client_t* spawner = Social_AnyPlayer();
+			for (int i = 0; i < sv_maxclients->integer && !spawner; i++) {
+				if (svs.clients[i].state == CS_ACTIVE && svs.clients[i].gentity && svs.clients[i].gentity->playerState) {
+					spawner = &svs.clients[i];
+				}
+			}
+			if (!spawner || !gNPCSpawnType || !Holo_ActionAt(act, who, at)) {
+				break;
+			}
+			at[2] += 24.0f;
+			playerState_t* pps = spawner->gentity->playerState;
+			const float savedYaw = pps->viewangles[YAW];
+			if (act->atKind == HT_AT_POINT) {
+				pps->viewangles[YAW] = gHolo.points[act->atRef].yaw;
+			}
+			void* old = GVM_BeginNative();
+			sharedEntity_t* e = (sharedEntity_t*)gNPCSpawnType(spawner->gentity, (char*)act->extra, NULL, 1 /* vehicle */, 0, 0);
+			GVM_EndNative(old);
+			pps->viewangles[YAW] = savedYaw;
+			if (e) {
+				if (e->playerState) {
+					VectorCopy(at, e->playerState->origin);
+				}
+				VectorCopy(at, e->s.origin);
+				VectorCopy(at, e->s.pos.trBase);
+				VectorCopy(at, e->r.currentOrigin);
+				Com_Printf("Holotable: vehicle %s (entity %d)\n", act->extra, e->s.number);
+			} else {
+				Com_Printf("Holotable: couldn't spawn vehicle \"%s\"\n", act->extra);
+			}
+			break;
+		}
+		case HT_DO_PICKUP:
+			// An item on the floor: MBII's LaunchItem, as a dropped one.
+			if (gBGFindItem && gLaunchItem && Holo_ActionAt(act, who, at)) {
+				void* old = GVM_BeginNative();
+				void* item = gBGFindItem(act->extra);
+				if (item) {
+					vec3_t vel = { 0.0f, 0.0f, 80.0f };
+					gLaunchItem(item, at, vel);
+				}
+				GVM_EndNative(old);
+				if (!item) {
+					Com_Printf("Holotable: no item called \"%s\"\n", act->extra);
+				}
+			}
+			break;
+		case HT_DO_ADDTIME:
+			if (Holo_ShiftRound((int)(act->seconds * 1000.0f))) {
+				SV_SendServerCommand(NULL, "chat \"^5[Holotable]^7 %s%d seconds %s the round clock.\"\n",
+					act->seconds > 0 ? "+" : "", (int)act->seconds, act->seconds > 0 ? "on" : "off");
+			}
+			break;
+		case HT_DO_MOVE: {
+			// New orders for a group, and every one of it that's up.
+			htGroup_t* g = &gHolo.groups[act->ref];
+			g->behaviour = act->value;
+			if (act->value == HT_BEHAVE_ROUTE) {
+				g->route = act->atRef;
+			}
+			const qboolean guardAt = (act->value == HT_BEHAVE_GUARD && Holo_ActionAt(act, who, at)) ? qtrue : qfalse;
+			for (int k = 0; k < HT_MAX_NPCS; k++) {
+				htNpc_t* h = &gHolo.npcs[k];
+				if (h->group != act->ref || !Holo_NpcUp(h)) {
+					continue;
+				}
+				if (guardAt) {
+					VectorCopy(at, h->home);
+					h->home[2] -= 16.0f;
+					h->homeGoalAt = 0;
+				}
+				if (act->value == HT_BEHAVE_ROUTE) {
+					const htRoute_t* r = &gHolo.routes[g->route];
+					float best = 0.0f;
+					for (int p = 0; p < r->count; p++) {
+						const float d = DistanceSquared(r->pts[p], SV_GentityNum(h->ent)->playerState->origin);
+						if (!p || d < best) {
+							best = d;
+							h->wp = p;
+						}
+					}
+					h->onRoute = qtrue;
+					h->wpGoalAt = 0;
+					h->wpSince = 0;
+				}
+			}
+			break;
+		}
+		case HT_DO_TRIGGER_ON: {
+			// On, and ready to go again (even if it's fired before).
+			htTrigger_t* o = &gHolo.triggers[act->ref];
+			o->off = qfalse;
+			o->fired = qfalse;
+			o->wasTrue = qfalse;
+			o->nextAt = svs.time + (int)(o->seconds * 1000.0f);
+			memset(o->inside, 0, sizeof(o->inside));
+			break;
+		}
+		case HT_DO_TRIGGER_OFF:
+			gHolo.triggers[act->ref].off = qtrue;
+			break;
+		case HT_DO_COUNTER:
+			gHolo.counters[act->ref] = act->center ? act->value : gHolo.counters[act->ref] + act->value;
+			Com_Printf("Holotable: counter %s = %d\n", gHolo.counterIds[act->ref], gHolo.counters[act->ref]);
+			break;
+		case HT_DO_COUNTDOWN:
+			gHolo.countdownEnd = svs.time + (int)(act->seconds * 1000.0f);
+			Q_strncpyz(gHolo.countdownText, act->text, sizeof(gHolo.countdownText));
+			gHolo.countdownShown = -1;
+			gHolo.countdownDone = qfalse;
+			break;
+		case HT_DO_OBJECTIVE:
+			// The map's own objective, as if its team had done it.
+			if (gSiegeSetObjectiveComplete) {
+				void* old = GVM_BeginNative();
+				gSiegeSetObjectiveComplete(act->ref, act->value, qfalse);
+				GVM_EndNative(old);
+				Com_Printf("Holotable: %s objective %d complete\n", gHolo.teamNames[act->ref], act->value);
+			}
+			break;
+		case HT_DO_TEXTURE:
+			// Swaps a surface's texture for everyone (put back at the end).
+			if (gAddRemap && gBuildShaderStateConfig) {
+				void* old = GVM_BeginNative();
+				gAddRemap(act->effect, act->extra, sv.time * 0.001f);
+				const char* state = gBuildShaderStateConfig();
+				GVM_EndNative(old);
+				SV_SetConfigstring(HOLO_CS_SHADERSTATE, state);
+				if (gHolo.numRemaps < 8) {
+					Q_strncpyz(gHolo.remaps[gHolo.numRemaps][0], act->effect, sizeof(gHolo.remaps[0][0]));
+					Q_strncpyz(gHolo.remaps[gHolo.numRemaps][1], act->extra, sizeof(gHolo.remaps[0][1]));
+					gHolo.numRemaps++;
+				}
+			}
+			break;
+		case HT_DO_GRAVITY:
+			Holo_SetCvarFor("g_gravity", act->value, gHolo.gravityWas, sizeof(gHolo.gravityWas), &gHolo.gravitySet, &gHolo.gravityUntil, act->seconds);
+			break;
+		case HT_DO_SPEED:
+			// MBII has no speed cvar (each class has its own): applied to
+			// movement each frame instead, in SV_HoloClientThink.
+			gHolo.speedPct = (act->value == 100) ? 0 : act->value;
+			gHolo.speedUntil = act->seconds > 0.0f ? svs.time + (int)(act->seconds * 1000.0f) : 0;
 			break;
 		case HT_DO_WIN: {
 			// The scenario's over (NPCs gone, settings back), then MBII ends
@@ -3533,7 +3925,7 @@ static void Holo_CheckTriggers(void)
 
 	for (int i = 0; i < gHolo.numTriggers && gHoloActive; i++) {
 		htTrigger_t* t = &gHolo.triggers[i];
-		if (t->fired && !t->repeat) {
+		if (t->off || (t->fired && !t->repeat)) {
 			continue;
 		}
 		qboolean go = qfalse, level = qfalse, edge = qfalse;
@@ -3601,6 +3993,16 @@ static void Holo_CheckTriggers(void)
 		case HT_WHEN_NPC_KILLED:
 			go = downs ? qtrue : qfalse;
 			break;
+		case HT_WHEN_COUNTER:
+			if (t->ref >= 0) {
+				const int v = gHolo.counters[t->ref];
+				level = (t->compare > 0 ? v >= t->count : t->compare < 0 ? v <= t->count : v == t->count) ? qtrue : qfalse;
+			}
+			edge = qtrue;
+			break;
+		case HT_WHEN_COUNTDOWN_END:
+			go = gHolo.countdownDone;
+			break;
 		}
 		if (edge) {
 			go = (level && !t->wasTrue) ? qtrue : qfalse;
@@ -3621,6 +4023,7 @@ static void Holo_CheckTriggers(void)
 		Com_Printf("Holotable: trigger %s%s%s\n", t->id, who ? " by " : "", who ? who->name : "");
 		Holo_RunActions(t, who);
 	}
+	gHolo.countdownDone = qfalse; // every trigger waiting for it has had it
 }
 
 static void Holo_Frame(void)
@@ -3637,6 +4040,26 @@ static void Holo_Frame(void)
 		return;
 	}
 	Holo_TeamFrame();
+	// The countdown, on everyone's screen each second.
+	if (gHolo.countdownEnd) {
+		const int left = (gHolo.countdownEnd - svs.time + 999) / 1000;
+		if (left <= 0) {
+			gHolo.countdownEnd = 0;
+			gHolo.countdownDone = qtrue;
+			SV_SendServerCommand(NULL, "cp \"%s%s^10\"\n", gHolo.countdownText, gHolo.countdownText[0] ? "\n" : "");
+		} else if (left != gHolo.countdownShown) {
+			gHolo.countdownShown = left;
+			SV_SendServerCommand(NULL, "cp \"%s%s^3%d:%02d\"\n", gHolo.countdownText, gHolo.countdownText[0] ? "\n" : "", left / 60, left % 60);
+		}
+	}
+	// Gravity / speed changed for a while: back when it's up.
+	if (gHolo.gravitySet && gHolo.gravityUntil && svs.time >= gHolo.gravityUntil) {
+		Cvar_Set("g_gravity", gHolo.gravityWas);
+		gHolo.gravitySet = qfalse;
+	}
+	if (gHolo.speedPct && gHolo.speedUntil && svs.time >= gHolo.speedUntil) {
+		gHolo.speedPct = 0;
+	}
 	if (svs.time >= gHolo.nextTriggers) {
 		gHolo.nextTriggers = svs.time + 250;
 		Holo_CheckTriggers();
@@ -3881,6 +4304,44 @@ void SV_HoloDebugDump(int num)
 		num, e->s.eType, e->playerState->persistant[PERS_TEAM], e->playerState->clientNum, e->playerState->stats[STAT_HEALTH], num);
 }
 
+// Called with every client's movement command: a frozen player can look
+// about, but not move, jump or shoot.
+static void Holo_SpeedThink(client_t* cl);
+
+void SV_HoloClientThink(client_t* cl, usercmd_t* cmd)
+{
+	Holo_SpeedThink(cl);
+	const int c = cl - svs.clients;
+	if (!gHoloActive || c < 0 || c >= MAX_CLIENTS || svs.time >= gHolo.frozenUntil[c]) {
+		return;
+	}
+	cmd->forwardmove = cmd->rightmove = cmd->upmove = 0;
+	cmd->buttons = 0;
+}
+
+// Players' speed changed by the scenario: on the ground, pushed up towards it
+// (as the bar's Sugar Rush does) or held down to it. Normal running is ~250.
+static void Holo_SpeedThink(client_t* cl)
+{
+	if (!gHoloActive || !gHolo.speedPct || !cl->gentity || !cl->gentity->playerState) {
+		return;
+	}
+	playerState_t* ps = cl->gentity->playerState;
+	if (ps->groundEntityNum == ENTITYNUM_NONE || ps->pm_type != PM_NORMAL) {
+		return;
+	}
+	const float target = 250.0f * gHolo.speedPct / 100.0f;
+	const float speed = sqrtf(ps->velocity[0] * ps->velocity[0] + ps->velocity[1] * ps->velocity[1]);
+	float scale = 1.0f;
+	if (gHolo.speedPct > 100 && speed > 50.0f && speed < target) {
+		scale = Q_min(1.12f, target / speed);
+	} else if (gHolo.speedPct < 100 && speed > target) {
+		scale = target / speed;
+	}
+	ps->velocity[0] *= scale;
+	ps->velocity[1] *= scale;
+}
+
 static qboolean Social_HoloRunning(void)
 {
 	return gHoloActive;
@@ -3979,6 +4440,12 @@ void SV_SocialGameInit(void)
 		gUseTargets2 = (void (*)(void*, void*, const char*))Sys_LoadFunction(dll, "G_UseTargets2");
 		gSiegeRoundComplete = (void (*)(int, int, int))Sys_LoadFunction(dll, "SiegeRoundComplete");
 		gSiegeRoundEnded = (int*)Sys_LoadFunction(dll, "gSiegeRoundEnded");
+		gHoloKnockdown = (void (*)(void*, int, int, int, qboolean))Sys_LoadFunction(dll, "G_Knockdown");
+		gSiegeSetObjectiveComplete = (void (*)(int, int, qboolean))Sys_LoadFunction(dll, "G_SiegeSetObjectiveComplete");
+		gBGFindItem = (void* (*)(const char*))Sys_LoadFunction(dll, "BG_FindItem");
+		gLaunchItem = (void* (*)(void*, float*, float*))Sys_LoadFunction(dll, "LaunchItem");
+		gAddRemap = (void (*)(const char*, const char*, float))Sys_LoadFunction(dll, "AddRemap");
+		gBuildShaderStateConfig = (const char* (*)(void))Sys_LoadFunction(dll, "BuildShaderStateConfig");
 		gNPCSpawnType = (void* (*)(void*, char*, char*, int, int, int))Sys_LoadFunction(dll, "NPC_SpawnType");
 		gFreeEntity = (void (*)(void*))Sys_LoadFunction(dll, "G_FreeEntity");
 		gSetEnemy = (void (*)(void*, void*))Sys_LoadFunction(dll, "G_SetEnemy");
