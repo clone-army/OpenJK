@@ -2386,9 +2386,6 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 	}
 
 	// Emotes (social servers) aren't part of the economy either.
-	if ( !Q_stricmp( commandName, "barfight" ) && g_socialMode && g_socialMode->integer ) {
-		return SV_SocialBarFightCommand( cl, chatCursor );
-	}
 	if ( !Q_stricmp( commandName, "ht" ) && g_holotable && g_holotable->integer ) {
 		return SV_SocialHoloCommand( cl, chatCursor );
 	}

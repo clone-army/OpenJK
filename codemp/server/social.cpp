@@ -312,7 +312,7 @@ static qboolean Social_AllowPlayerDamage(int damage, int mod)
 	}
 }
 
-static qboolean Social_BarFightHit(void* targ, void* attacker);
+static qboolean Social_ScenarioHit(void* targ, void* attacker);
 static qboolean Holo_IsNpc(void* ent);
 static qboolean Holo_Running(void);
 // Both on a side (PERS_TEAM 1/2), and the same / different ones.
@@ -338,7 +338,7 @@ static qboolean Holo_OppositeSides(void* a, void* b)
 
 static void Social_GDamageHook(void* targ, void* inflictor, void* attacker, float* dir, float* point, int damage, int dflags, int mod)
 {
-	if (Social_Enabled() && Social_BarFightHit(targ, attacker)) {
+	if (Social_Enabled() && Social_ScenarioHit(targ, attacker)) {
 		((GDamageFn)gTrampoline)(targ, inflictor, attacker, dir, point, damage, dflags | SOCIAL_DAMAGE_NO_TKPOINTS, mod);
 		return;
 	}
@@ -1525,7 +1525,6 @@ static qboolean Social_SpotOccupied(const vec3_t spot, int npcEnt)
 	return qfalse;
 }
 
-static qboolean gBarFightActive = qfalse;
 static qboolean Social_HoloRunning(void);
 
 static void Social_NpcFrame(void)
@@ -1534,10 +1533,10 @@ static void Social_NpcFrame(void)
 	if (!gSocialNpcCount || !gNPCSpawnType) {
 		return;
 	}
-	// A bar fight's on: the regulars keep out of it (a fight's FREE-team
-	// NPCs would go for them too), and are back once it's over. Same for a
-	// Holotable scenario.
-	if (gBarFightActive || Social_HoloRunning()) {
+	// A Holotable scenario's on (bar fights are scenarios too): the regulars
+	// keep out of it (its FREE-team NPCs would go for them too), and are back
+	// once it's over.
+	if (Social_HoloRunning()) {
 		for (int i = 0; i < gSocialNpcCount; i++) {
 			socialNpc_t* n = &gSocialNpcs[i];
 			if (Social_NpcAlive(n) && gFreeEntity) {
@@ -1690,143 +1689,23 @@ static void Social_NpcFrame(void)
 	}
 }
 
-// --- Bar fights -----------------------------------------------------------
-//
-// "!barfight <n>" starts one: hostile NPCs arrive at g_barFightSpawn ("x y
-// z yaw", a point on the floor - they're dropped in 24 units above it) and
-// they and the players can hurt each other - players still can't hurt
-// each other. MBII's NPC_ValidEnemy has an NPC on NPCTEAM_FREE attack anyone
-// who isn't (and players are always on NPCTEAM_ENEMY or NPCTEAM_PLAYER,
-// g_client.c), so the fights use NPC types whose .npc files put them on
-// TEAM_FREE: they go for both teams alike. The regulars leave while it's on
-// (Social_NpcFrame). It ends when they're all down, after g_barFightSeconds,
-// or on "!barfight stop"; anything left is removed. g_barFightEnable.
-// With g_barFightRoutes set ("main bar"), each walks one of those !wp routes
-// (handed out in turn) and breaks off to fight when a player's close or the
-// route's done. Otherwise, with g_barFightRally ("x y z yaw") set, they
-// first walk there (MBII's
-// NPC_SetMoveGoal) and start hunting once they've arrived; either way each
-// is pointed at the nearest player (G_SetEnemy), since NPC AI only charges
-// an enemy it has seen.
-#define BARFIGHT_MAX 20
-#define BARFIGHT_MUSIC "music/sailbargealternate" // Jabba's Palace (mb2_jabba's own music), for every fight
-
-typedef struct {
-	const char* name;
-	const char* intro;
-	const char* types[8];
-	int base, perPlayer, max;     // how many: base + perPlayer * players, up to max
-	const char* music;            // plays while it's on
-	float spacing;                // how far apart they arrive - beasts are big
-	const char* leader;           // arrives first, once (NULL = none)
-	const char* quote;            // said in chat as it starts (NULL = none)
-	const char* shouts[13];       // one played as it starts, at random (NULL-ended)
-} barFightKind_t;
-
-// Only types MBII spawns as NPCs: most armed TEAM_FREE ones (droideka,
-// espo, dxun_g0t0, maxrebo...) are vehicles and are refused.
-static const barFightKind_t kBarFights[] = {
-	// Our own NPC types (ext_data/NPCs/ca_cantina.npc, written out by the
-	// engine - SV_SocialEnsureNpcFiles), except the rancor.
-	{ "Thugs", "Jabba's heavies kick the door in!",
-		{ "CA_Trando", "CA_Weequay", "CA_Nikto", "CA_Klatoo", "CA_Rodian", NULL }, 3, 2, 20, BARFIGHT_MUSIC, 64.0f, "CA_Gamorrean",
-		"^3[Gamorrean Enforcer]^7 *snort* Somebody in here owes Jabba. Everybody pays!",
-		{ NULL } },
-	{ "Rancor", "A rancor is on the loose in the cantina!",
-		{ "rancor", NULL }, 1, 0, 1, BARFIGHT_MUSIC, 0.0f, NULL, NULL, { NULL } },
-	{ "Droid Attack", "Roger roger - battle droids roll in!",
-		{ "CA_B1", "CA_B1", "CA_B2", NULL }, 3, 2, 20, BARFIGHT_MUSIC, 64.0f, "CA_Magna",
-		"^3[Tactical Droid]^7 Enemy combatants detected in this cantina. Leave no survivors.",
-		{ "sound/canyon/roger_blowitup.wav", "sound/chars/battledroid/misc/anger1.mp3", "sound/chars/battledroid/misc/anger2.mp3",
-		  "sound/chars/battledroid/misc/taunt.mp3", "sound/chars/battledroid/misc/taunt1.mp3", "sound/chars/battledroid/misc/taunt2.mp3",
-		  "sound/chars/battledroid/misc/taunt3.mp3", "sound/chars/battledroid/misc/taunt4.mp3", "sound/chars/battledroid_cw/misc/combat1.mp3",
-		  "sound/chars/battledroid_cw2/misc/combat1.mp3", "sound/chars/battledroid_cw2/misc/combat2.mp3", NULL } },
-	{ "Clone Raid: 212th", "The 212th Attack Battalion storms the bar!",
-		{ "CA_212", NULL }, 3, 2, 20, BARFIGHT_MUSIC, 64.0f, "CA_212ARC",
-		"^3[ARC Trooper]^7 Commander Cody wants these separatists dealt with. You're all under arrest!",
-		{ "sound/chars/cody/misc/anger1.mp3", "sound/chars/cody/misc/anger2.mp3", "sound/chars/cody/misc/taunt.mp3",
-		  "sound/chars/cody/misc/taunt1.mp3", "sound/chars/cody/misc/taunt2.mp3", "sound/chars/cody/misc/taunt3.mp3",
-		  "sound/chars/cody/misc/taunt4.mp3", "sound/chars/cody/misc/detected1.mp3", NULL } },
-	{ "Clone Raid: 501st", "The 501st Legion kicks the door in!",
-		{ "CA_501", NULL }, 3, 2, 20, BARFIGHT_MUSIC, 64.0f, "CA_Rex",
-		"^3[Captain Rex]^7 General's orders - there's been a disturbance, and we're here to put it down!",
-		{ "sound/chars/rex/misc/anger1.mp3", "sound/chars/rex/misc/taunt.mp3", "sound/chars/rex/misc/taunt1.mp3",
-		  "sound/chars/rex/misc/taunt2.mp3", "sound/chars/rex/misc/taunt3.mp3", "sound/chars/rex/misc/taunt4.mp3",
-		  "sound/chars/rex2/misc/anger1.mp3", "sound/chars/rex2/misc/anger2.mp3", "sound/chars/rex2/misc/combat1.mp3",
-		  "sound/chars/rex2/misc/combat2.mp3", NULL } },
-	{ "Death Watch", "Death Watch drops into the cantina!",
-		{ "CA_DeathWatch", "CA_DeathWatchRed", NULL }, 3, 2, 16, BARFIGHT_MUSIC, 64.0f, "CA_Vizsla",
-		"^3[Pre Vizsla]^7 This cantina answers to Death Watch now. Anyone who disagrees can take it up with Mandalore!",
-		{ NULL } },
-	{ "Pyke Syndicate", "The Pyke Syndicate raids the cantina!",
-		{ "CA_Pyke", "CA_Pyke", "CA_PykeGunner", NULL }, 3, 2, 20, BARFIGHT_MUSIC, 64.0f, "CA_PykeBoss",
-		"^3[Pyke Boss]^7 Someone in here has been skimming our spice. Nobody leaves until we get it back!",
-		{ NULL } },
-};
-
-static struct {
-	int    kind;
-	int    ends;
-	int    toSpawn;
-	int    spawned;
-	int    nextSpawn;
-	int    ents[BARFIGHT_MAX];
-	int    spawnedAt[BARFIGHT_MAX];
-	qboolean goaled[BARFIGHT_MAX];   // sent towards the rally point
-	qboolean arrived[BARFIGHT_MAX];  // there (or gave up walking): hunting now
-	char   route[BARFIGHT_MAX][32];  // attack route it walks first ("" = rally point)
-	int    wp[BARFIGHT_MAX];         // ...the point it's heading for
-	int    wpGoalAt[BARFIGHT_MAX];
-	int    wpSince[BARFIGHT_MAX];    // heading for this point since
-	float  wpBest[BARFIGHT_MAX];
-	int    count;
-	int    nextHunt;
-	int    spawnStart;     // first of the recorded spawn points to use
-	qboolean haveRally;
-	vec3_t rally;
-	vec3_t origin;
-	float  yaw;
-	int    cooldownUntil;
-} gBarFight;
-
-static qboolean Social_IsFightNpc(void* ent)
+// Who a Holotable scenario's NPCs can hurt (bar fights are scenarios too):
+// players and NPCs, both ways - players still can't hurt each other - except
+// that one on a side (it attacks only the other) doesn't hurt or get hurt by
+// players on its own side, and fights scenario NPCs on the other one.
+static qboolean Social_ScenarioHit(void* targ, void* attacker)
 {
-	if (!gBarFightActive || !ent || !sv.gentities || sv.gentitySize <= 0) {
+	if (!Holo_IsNpc(targ) && !Holo_IsNpc(attacker)) {
 		return qfalse;
 	}
-	const intptr_t delta = (byte*)ent - (byte*)sv.gentities;
-	if (delta < 0 || delta % sv.gentitySize) {
+	if (Holo_SameSide(targ, attacker)) {
 		return qfalse;
 	}
-	const int num = (int)(delta / sv.gentitySize);
-	for (int i = 0; i < gBarFight.count; i++) {
-		if (gBarFight.ents[i] == num) {
-			return qtrue;
-		}
+	if (Holo_IsNpc(targ) && Holo_IsNpc(attacker)) {
+		return Holo_OppositeSides(targ, attacker);
 	}
-	return qfalse;
-}
-
-static qboolean Social_BarFightHit(void* targ, void* attacker)
-{
-	// A Holotable scenario's NPCs: the same rules as a bar fight's - except
-	// that one on a side (it attacks only the other) doesn't hurt or get hurt
-	// by players on its own side, and fights scenario NPCs on the other one.
-	if (Holo_IsNpc(targ) || Holo_IsNpc(attacker)) {
-		if (Holo_SameSide(targ, attacker)) {
-			return qfalse;
-		}
-		if (Holo_IsNpc(targ) && Holo_IsNpc(attacker)) {
-			return Holo_OppositeSides(targ, attacker);
-		}
-		return ((Social_IsPlayerEntity(targ) && Holo_IsNpc(attacker)) ||
-			(Holo_IsNpc(targ) && Social_IsPlayerEntity(attacker))) ? qtrue : qfalse;
-	}
-	if (!gBarFightActive) {
-		return qfalse;
-	}
-	return ((Social_IsPlayerEntity(targ) && Social_IsFightNpc(attacker)) ||
-		(Social_IsFightNpc(targ) && Social_IsPlayerEntity(attacker))) ? qtrue : qfalse;
+	return ((Social_IsPlayerEntity(targ) && Holo_IsNpc(attacker)) ||
+		(Holo_IsNpc(targ) && Social_IsPlayerEntity(attacker))) ? qtrue : qfalse;
 }
 
 static qboolean Social_FightNpcUp(int num)
@@ -1874,430 +1753,6 @@ static client_t* Social_AnyPlayer(void)
 		}
 	}
 	return NULL;
-}
-
-static int gBarFightAutoNext = 0; // svs.time the next timed fight is due (0 = not counting yet)
-
-static void Social_BarFightEnd(const char* how)
-{
-	int down = 0;
-	for (int i = 0; i < gBarFight.count; i++) {
-		const int num = gBarFight.ents[i];
-		if (!Social_FightNpcUp(num)) {
-			down++;
-		}
-		// Whatever's left of it - the fighter, or its body - goes.
-		if (num >= MAX_CLIENTS && num < sv.num_entities && gFreeEntity) {
-			sharedEntity_t* e = SV_GentityNum(num);
-			if (e->r.linked && e->s.eType == ET_NPC) {
-				void* old = GVM_BeginNative();
-				gFreeEntity(e);
-				GVM_EndNative(old);
-			}
-		}
-	}
-	SV_SendServerCommand(NULL, "cp \"^3%s\n^7%d of %d down\"\n", how, down, gBarFight.spawned);
-	SV_SendServerCommand(NULL, "chat \"^1[Bar fight] ^7%s - %d of %d down. The regulars are back.\"\n",
-		how, down, gBarFight.spawned);
-	Com_Printf("Social mode: bar fight over (%s), %d of %d down\n", how, down, gBarFight.spawned);
-	gBarFightActive = qfalse;
-	gBarFight.count = 0;
-	gBarFight.cooldownUntil = svs.time + 15000;
-	SV_JukeboxFightEnd();
-	gBarFightAutoNext = 0; // the next timed one is a full interval from now
-}
-
-static void Social_BarFightFrame(void)
-{
-	if (!gBarFightActive) {
-		return;
-	}
-	if (!Social_Enabled()) {
-		Social_BarFightEnd("The fight's called off");
-		return;
-	}
-
-	if (gBarFight.toSpawn > 0 && svs.time >= gBarFight.nextSpawn && gNPCSpawnType) {
-		client_t* spawner = Social_AnyPlayer();
-		if (spawner && gBarFight.count < BARFIGHT_MAX) {
-			const barFightKind_t* k = &kBarFights[gBarFight.kind];
-			int types = 0;
-			while (types < 8 && k->types[types]) {
-				types++;
-			}
-			const int n = gBarFight.spawned;
-			const float yawRad = DEG2RAD(gBarFight.yaw);
-			vec3_t org;
-			socialRoute_t* spawns = (g_barFightSpawnRoute && g_barFightSpawnRoute->string[0]) ?
-				Social_FindRoute(g_barFightSpawnRoute->string, qfalse) : NULL;
-			if (spawns && spawns->count > 0) {
-				// The recorded spawn points (!wp route g_barFightSpawnRoute),
-				// in turn from a random start; once they've all been used,
-				// the next round of them just beside the last.
-				const int round = n / spawns->count;
-				VectorCopy(spawns->pts[(gBarFight.spawnStart + n) % spawns->count], org);
-				org[0] += cosf(yawRad + M_PI * 0.5f) * 40.0f * round;
-				org[1] += sinf(yawRad + M_PI * 0.5f) * 40.0f * round;
-				org[2] += 8.0f;
-			} else {
-				// In a line going into the room (along the spawn point's
-				// facing), staggered side to side, spaced for their size.
-				const float fwd = k->spacing * (n / 2), side = (n % 2) ? k->spacing * 0.5f : -k->spacing * 0.5f * (n > 0);
-				VectorCopy(gBarFight.origin, org);
-				org[0] += cosf(yawRad) * fwd - sinf(yawRad) * side;
-				org[1] += sinf(yawRad) * fwd + cosf(yawRad) * side;
-			}
-
-			playerState_t* pps = spawner->gentity->playerState;
-			const float savedYaw = pps->viewangles[YAW];
-			pps->viewangles[YAW] = gBarFight.yaw;
-			void* old = GVM_BeginNative();
-			const char* type = (n == 0 && k->leader) ? k->leader : k->types[(k->leader ? n - 1 : n) % types];
-			sharedEntity_t* e = (sharedEntity_t*)gNPCSpawnType(spawner->gentity, (char*)type, NULL, 0, 0, 0);
-			GVM_EndNative(old);
-			pps->viewangles[YAW] = savedYaw;
-
-			if (e) {
-				if (e->playerState) {
-					VectorCopy(org, e->playerState->origin);
-				}
-				VectorCopy(org, e->s.origin);
-				VectorCopy(org, e->s.pos.trBase);
-				VectorCopy(org, e->r.currentOrigin);
-				gBarFight.spawnedAt[gBarFight.count] = svs.time;
-				// Attack routes (g_barFightRoutes), handed out in turn.
-				gBarFight.route[gBarFight.count][0] = '\0';
-				if (g_barFightRoutes && g_barFightRoutes->string[0]) {
-					char names[MAX_CVAR_VALUE_STRING], *list[8];
-					int routes = 0;
-					Q_strncpyz(names, g_barFightRoutes->string, sizeof(names));
-					for (char* w = strtok(names, " ,"); w && routes < 8; w = strtok(NULL, " ,")) {
-						list[routes++] = w;
-					}
-					if (routes) {
-						Q_strncpyz(gBarFight.route[gBarFight.count], list[gBarFight.count % routes], sizeof(gBarFight.route[0]));
-						// Joined at its point nearest where this one arrives,
-						// not its first - spawns are spread about the room.
-						socialRoute_t* r = Social_FindRoute(gBarFight.route[gBarFight.count], qfalse);
-						gBarFight.wp[gBarFight.count] = 0;
-						if (r) {
-							float best = 0.0f;
-							for (int p = 0; p < r->count; p++) {
-								const float d = DistanceSquared(r->pts[p], org);
-								if (!p || d < best) {
-									best = d;
-									gBarFight.wp[gBarFight.count] = p;
-								}
-							}
-						}
-					}
-				}
-				gBarFight.ents[gBarFight.count++] = e->s.number;
-				Com_Printf("Social mode: bar fight - %s (entity %d)\n", type, e->s.number);
-			} else {
-				Com_Printf("Social mode: bar fight - couldn't spawn %s\n", type);
-			}
-			gBarFight.spawned++;
-			gBarFight.toSpawn--;
-		}
-		gBarFight.nextSpawn = svs.time + 700;
-		return;
-	}
-
-	if (gSetEnemy && svs.time >= gBarFight.nextHunt) {
-		gBarFight.nextHunt = svs.time + 1000;
-		for (int i = 0; i < gBarFight.count; i++) {
-			if (!Social_FightNpcUp(gBarFight.ents[i])) {
-				continue;
-			}
-			sharedEntity_t* npc = SV_GentityNum(gBarFight.ents[i]);
-
-			// An attack route (g_barFightRoutes): walk its points in order,
-			// round and round, and break off to fight once a player's within
-			// 350 units (back to it when nobody's within 500) - a point it
-			// can't get any closer to in 6s is skipped.
-			if (gBarFight.route[i][0] && !gBarFight.arrived[i]) {
-				socialRoute_t* r = Social_FindRoute(gBarFight.route[i], qfalse);
-				qboolean close = qfalse;
-				for (int c = 0; c < sv_maxclients->integer && !close; c++) {
-					const client_t* pc = &svs.clients[c];
-					if (pc->state == CS_ACTIVE && pc->gentity && pc->gentity->playerState &&
-						Social_IsSpawned(pc->gentity->playerState, c) && pc->gentity->playerState->stats[STAT_HEALTH] > 0 &&
-						DistanceSquared(pc->gentity->playerState->origin, npc->playerState->origin) < 350.0f * 350.0f) {
-						close = qtrue;
-					}
-				}
-				if (r && gBarFight.wp[i] >= r->count) {
-					gBarFight.wp[i] = 0; // round again
-				}
-				if (close || !r || !r->count || !gSetMoveGoal) {
-					gBarFight.arrived[i] = qtrue;
-				} else if (svs.time - gBarFight.spawnedAt[i] > 800) {
-					const float* p = r->pts[gBarFight.wp[i]];
-					const float dx = npc->playerState->origin[0] - p[0], dy = npc->playerState->origin[1] - p[1];
-					const float d = sqrtf(dx * dx + dy * dy);
-					if (d < 48.0f || (gBarFight.wpSince[i] && svs.time - gBarFight.wpSince[i] > 6000 && d > gBarFight.wpBest[i] - 16.0f)) {
-						gBarFight.wp[i]++;
-						gBarFight.wpGoalAt[i] = 0;
-						gBarFight.wpSince[i] = 0;
-					} else {
-						if (!gBarFight.wpSince[i] || d < gBarFight.wpBest[i] - 16.0f) {
-							gBarFight.wpSince[i] = svs.time;
-							gBarFight.wpBest[i] = d;
-						}
-						if (!gBarFight.wpGoalAt[i] || svs.time - gBarFight.wpGoalAt[i] > 3000) {
-							vec3_t goal;
-							VectorCopy(p, goal);
-							void* old = GVM_BeginNative();
-							gSetMoveGoal(npc, goal, 24, 0, -1, NULL);
-							GVM_EndNative(old);
-							gBarFight.wpGoalAt[i] = svs.time;
-						}
-					}
-					continue;
-				}
-			}
-
-			// First, into the room: walk to the rally point (its AI
-			// follows a move goal while it has no enemy), a little apart
-			// from each other; hunt once there, or after 10s regardless.
-			if (gBarFight.haveRally && !gBarFight.arrived[i] && !gBarFight.route[i][0]) {
-				const int age = svs.time - gBarFight.spawnedAt[i];
-				vec3_t goal;
-				VectorCopy(gBarFight.rally, goal);
-				goal[0] += ((i % 3) - 1) * 56.0f;
-				goal[1] += (((i / 3) % 3) - 1) * 56.0f;
-				if (DistanceSquared(npc->playerState->origin, goal) < 160.0f * 160.0f || age > 10000) {
-					gBarFight.arrived[i] = qtrue;
-				} else {
-					if (!gBarFight.goaled[i] && age > 800 && gSetMoveGoal) {
-						void* old = GVM_BeginNative();
-						gSetMoveGoal(npc, goal, 48, 0, -1, NULL);
-						GVM_EndNative(old);
-						gBarFight.goaled[i] = qtrue;
-					}
-					continue;
-				}
-			}
-			client_t* nearest = NULL;
-			float best = 0.0f;
-			for (int c = 0; c < sv_maxclients->integer; c++) {
-				client_t* cl = &svs.clients[c];
-				if (cl->state != CS_ACTIVE || !cl->gentity || !cl->gentity->playerState ||
-					!Social_IsSpawned(cl->gentity->playerState, c) || cl->gentity->playerState->stats[STAT_HEALTH] <= 0 ||
-					cl->gentity->playerState->duelInProgress) {
-					continue;
-				}
-				const float d = DistanceSquared(cl->gentity->playerState->origin, npc->playerState->origin);
-				if (!nearest || d < best) {
-					nearest = cl;
-					best = d;
-				}
-			}
-			// Hunting with nobody within 500 units: back to its route,
-			// from its nearest point, till someone comes close again.
-			if (gBarFight.route[i][0] && (!nearest || best > 500.0f * 500.0f)) {
-				socialRoute_t* r = Social_FindRoute(gBarFight.route[i], qfalse);
-				if (r && r->count) {
-					float closest = 0.0f;
-					for (int p = 0; p < r->count; p++) {
-						const float d = DistanceSquared(r->pts[p], npc->playerState->origin);
-						if (!p || d < closest) {
-							closest = d;
-							gBarFight.wp[i] = p;
-						}
-					}
-					gBarFight.arrived[i] = qfalse;
-					gBarFight.wpGoalAt[i] = 0;
-					gBarFight.wpSince[i] = 0;
-					continue;
-				}
-			}
-			if (nearest) {
-				// G_SetEnemy only takes it if the NPC has no enemy yet, so
-				// one already in a fight carries on with it.
-				void* old = GVM_BeginNative();
-				gSetEnemy(npc, nearest->gentity);
-				GVM_EndNative(old);
-			}
-		}
-	}
-
-	if (gBarFight.toSpawn <= 0) {
-		qboolean anyUp = qfalse;
-		for (int i = 0; i < gBarFight.count && !anyUp; i++) {
-			anyUp = (svs.time - gBarFight.spawnedAt[i] < 4000 || Social_FightNpcUp(gBarFight.ents[i])) ? qtrue : qfalse;
-		}
-		if (!anyUp) {
-			Social_BarFightEnd("^2The bar is cleared!");
-			return;
-		}
-	}
-	if (svs.time >= gBarFight.ends) {
-		Social_BarFightEnd("Last orders - the fight's over");
-	}
-}
-
-// Starts bar fight kBarFights[pick] - for !barfight (cl: who asked, told
-// if it can't) or the hourly timer (cl NULL). Checks for one already on
-// and the cooldown are the caller's.
-static qboolean Social_BarFightBegin(int pick, client_t* cl)
-{
-	vec3_t org;
-	float yaw = 0.0f;
-	const qboolean haveSpawnRoute = (g_barFightSpawnRoute && g_barFightSpawnRoute->string[0] &&
-		Social_FindRoute(g_barFightSpawnRoute->string, qfalse)) ? qtrue : qfalse;
-	if (!g_barFightSpawn || sscanf(g_barFightSpawn->string, "%f %f %f %f", &org[0], &org[1], &org[2], &yaw) < 3) {
-		if (!haveSpawnRoute) {
-			if (cl) {
-				SV_SendServerCommand(cl, "chat \"^1[Bar fight]^7 No spawn point set (g_barFightSpawn or g_barFightSpawnRoute).\"\n");
-			}
-			return qfalse;
-		}
-		VectorClear(org);
-	}
-	org[2] += 24.0f; // a point on the floor: drop them in above it
-
-	vec3_t rally;
-	float rallyYaw = 0.0f;
-	const qboolean haveRally = (g_barFightRally &&
-		sscanf(g_barFightRally->string, "%f %f %f %f", &rally[0], &rally[1], &rally[2], &rallyYaw) >= 3) ? qtrue : qfalse;
-
-	int players = 0;
-	for (int i = 0; i < sv_maxclients->integer; i++) {
-		players += (svs.clients[i].state == CS_ACTIVE && svs.clients[i].netchan.remoteAddress.type != NA_BOT);
-	}
-	const barFightKind_t* k = &kBarFights[pick];
-	memset(&gBarFight, 0, sizeof(gBarFight));
-	gBarFight.kind = pick;
-	// More players, more of them - with a little randomness for the ones
-	// that scale (soldiers: 3 to 20); creatures keep their few.
-	gBarFight.toSpawn = k->base + k->perPlayer * players + (k->perPlayer ? Q_irand(-1, 2) : 0);
-	gBarFight.toSpawn = Q_max(k->perPlayer ? 3 : 1, Q_min(k->max, gBarFight.toSpawn));
-	gBarFight.toSpawn = Q_min(gBarFight.toSpawn, BARFIGHT_MAX);
-	gBarFight.nextSpawn = svs.time + 1500; // the regulars clear out first
-	gBarFight.ends = svs.time + 1000 * Q_max(30, g_barFightSeconds ? g_barFightSeconds->integer : 180);
-	VectorCopy(org, gBarFight.origin);
-	gBarFight.yaw = yaw;
-	gBarFight.spawnStart = Q_irand(0, 63);
-	gBarFight.haveRally = haveRally;
-	if (haveRally) {
-		VectorCopy(rally, gBarFight.rally);
-	}
-	gBarFightActive = qtrue;
-
-	SV_JukeboxFightStart(k->music);
-	SV_SendServerCommand(NULL, "cp \"^1BAR FIGHT!\n^7%s\"\n", k->intro);
-	if (cl) {
-		SV_SendServerCommand(NULL, "chat \"^1[Bar fight] ^7%s ^7started a bar fight: ^1%s^7! They can hurt you and you can hurt them.\"\n",
-			cl->name, k->name);
-	} else {
-		SV_SendServerCommand(NULL, "chat \"^1[Bar fight] ^7A bar fight breaks out: ^1%s^7! They can hurt you and you can hurt them.\"\n",
-			k->name);
-	}
-	if (k->quote) {
-		SV_SendServerCommand(NULL, "chat \"%s\"\n", k->quote);
-	}
-	int shouts = 0;
-	while (shouts < (int)ARRAY_LEN(k->shouts) && k->shouts[shouts]) {
-		shouts++;
-	}
-	if (shouts) {
-		Social_ShoutToAll(k->shouts[Q_irand(0, shouts - 1)]);
-	}
-	Com_Printf("Social mode: %s started a bar fight (%s, %d)\n", cl ? cl->name : "the timer", k->name, gBarFight.toSpawn);
-	gBarFightAutoNext = 0; // the timer counts from this one's end
-	return qtrue;
-}
-
-// g_barFightAutoMinutes: a random bar fight that long after the last one
-// ended (or the server started), once at least g_barFightAutoPlayers are in
-// and have been for 2 minutes - so it doesn't go off in someone's face the
-// moment they join.
-static void Social_BarFightAutoFrame(void)
-{
-	static int enoughSince = 0;
-	if (!g_barFightEnable || !g_barFightEnable->integer || !g_barFightAutoMinutes || g_barFightAutoMinutes->integer <= 0) {
-		gBarFightAutoNext = 0;
-		return;
-	}
-	if (gBarFightActive || Social_HoloRunning()) {
-		return;
-	}
-	const int interval = 60000 * g_barFightAutoMinutes->integer;
-	if (!gBarFightAutoNext || gBarFightAutoNext - svs.time > interval) {
-		gBarFightAutoNext = svs.time + interval;
-	}
-	int players = 0;
-	for (int i = 0; i < sv_maxclients->integer; i++) {
-		players += (svs.clients[i].state == CS_ACTIVE && svs.clients[i].netchan.remoteAddress.type != NA_BOT);
-	}
-	const int need = Q_max(1, g_barFightAutoPlayers ? g_barFightAutoPlayers->integer : 2);
-	if (players < need) {
-		enoughSince = 0;
-		return;
-	}
-	if (!enoughSince) {
-		enoughSince = svs.time ? svs.time : 1;
-	}
-	if (svs.time < gBarFightAutoNext || svs.time - enoughSince < 120000 || svs.time < gBarFight.cooldownUntil) {
-		return;
-	}
-	if (!Social_BarFightBegin(Q_irand(0, (int)ARRAY_LEN(kBarFights) - 1), NULL)) {
-		gBarFightAutoNext = svs.time + interval; // no spawn point: try again next time round
-	}
-}
-
-// "!barfight", "!barfight <n>", "!barfight stop".
-qboolean SV_SocialBarFightCommand(client_t* cl, const char* args)
-{
-	char arg[32] = "";
-	sscanf(args, "%31s", arg);
-
-	if (!Social_Enabled() || !g_barFightEnable || !g_barFightEnable->integer) {
-		SV_SendServerCommand(cl, "chat \"^1[Bar fight]^7 No bar fights on this server.\"\n");
-		return qtrue;
-	}
-	if (!Social_IsAdmin(cl)) {
-		SV_SendServerCommand(cl, "chat \"^1[Bar fight]^7 Only admins can start bar fights - log in with an admin account.\"\n");
-		return qtrue;
-	}
-	if (!Q_stricmp(arg, "stop")) {
-		if (gBarFightActive) {
-			Social_BarFightEnd(va("%s ^7broke it up", cl->name));
-		}
-		return qtrue;
-	}
-	if (!arg[0]) {
-		SV_SendServerCommand(cl, "chat \"^1[Bar fight]^7 %s\"\n", gBarFightActive ?
-			"A fight's on! ^5!barfight stop ^7ends it." : "Start one - they can hurt you and you can hurt them:");
-		for (int i = 0; i < (int)ARRAY_LEN(kBarFights); i++) {
-			SV_SendServerCommand(cl, "chat \"^5!barfight %d ^7- %s\"\n", i + 1, kBarFights[i].name);
-		}
-		return qtrue;
-	}
-
-	const int pick = atoi(arg) - 1;
-	if (pick < 0 || pick >= (int)ARRAY_LEN(kBarFights)) {
-		SV_SendServerCommand(cl, "chat \"^1[Bar fight]^7 Pick 1 to %d - ^5!barfight ^7lists them.\"\n", (int)ARRAY_LEN(kBarFights));
-		return qtrue;
-	}
-	if (gBarFightActive) {
-		SV_SendServerCommand(cl, "chat \"^1[Bar fight]^7 One's already on!\"\n");
-		return qtrue;
-	}
-	if (Social_HoloRunning()) {
-		SV_SendServerCommand(cl, "chat \"^1[Bar fight]^7 A Holotable scenario's running.\"\n");
-		return qtrue;
-	}
-	if (svs.time < gBarFight.cooldownUntil) {
-		SV_SendServerCommand(cl, "chat \"^1[Bar fight]^7 Let the dust settle - try again in %ds.\"\n",
-			(gBarFight.cooldownUntil - svs.time + 999) / 1000);
-		return qtrue;
-	}
-
-	Social_BarFightBegin(pick, cl);
-	return qtrue;
 }
 
 // --- Holotable scenarios ------------------------------------------------------
@@ -3968,8 +3423,7 @@ static void Holo_Pace(htNpc_t* h, int pace)
 
 // MBII's AI can hang on to an enemy that's died - an NPC then stands over
 // the body attacking it till it's gone - or pick one on its own side. Drop
-// either so it picks a live, real enemy. gentity_t's enemy is at 0x584
-// (from G_SetEnemy).
+// either so it picks a live, real enemy. gentity_t's enemy is at 0x584 (from G_SetEnemy).
 #define HOLO_ENEMY_OFS 0x584
 static void Holo_DropDeadEnemy(sharedEntity_t* npc)
 {
@@ -4336,7 +3790,7 @@ static struct {
 	int giveUpAt;          // svs.time to drop it if the map never comes back
 } gHoloPending;
 
-static qboolean Holo_Start(client_t* cl, const char* file, const char* label, const char* verb);
+static qboolean Holo_Start(client_t* cl, const char* file, const char* label, const char* verb, const char* by = NULL, qboolean extendRound = qtrue);
 
 // Plays a scenario - first reloading the map in its mode if the server's in
 // another one (everyone back to class select), then starting it.
@@ -4394,12 +3848,12 @@ static void Holo_PendingFrame(void)
 		SV_SendServerCommand(NULL, "chat \"^5[Holotable]^7 Couldn't switch to %s - starting %s as it is.\"\n",
 			Holo_ModeName(gHoloPending.mode), gHoloPending.label);
 	}
-	if (!gHoloActive && !gBarFightActive) {
+	if (!gHoloActive) {
 		Holo_Start(cl, gHoloPending.file, gHoloPending.label, gHoloPending.verb);
 	}
 }
 
-static qboolean Holo_Start(client_t* cl, const char* file, const char* label, const char* verb)
+static qboolean Holo_Start(client_t* cl, const char* file, const char* label, const char* verb, const char* by, qboolean extendRound)
 {
 	char err[128] = "";
 	if (!Holo_Load(file, err, sizeof(err))) {
@@ -4427,11 +3881,12 @@ static qboolean Holo_Start(client_t* cl, const char* file, const char* label, co
 		Cvar_Set("g_balance", "0");
 		gHolo.balanceChanged = qtrue;
 	}
-	// The round clock runs on at least as long as the scenario can.
-	if (Holo_ShiftRound(gHolo.timeLimit * 1000)) {
+	// The round clock runs on at least as long as the scenario can (not for
+	// one that came with the round: it lives within it).
+	if (extendRound && Holo_ShiftRound(gHolo.timeLimit * 1000)) {
 		gHolo.roundExtendMs = gHolo.timeLimit * 1000;
 	}
-	SV_SendServerCommand(NULL, "chat \"^5[Holotable] ^7%s ^7%s ^5%s^7!\"\n", cl ? cl->name : "An admin", verb, gHolo.name);
+	SV_SendServerCommand(NULL, "chat \"^5[Holotable] ^7%s ^7%s ^5%s^7!\"\n", by ? by : cl ? cl->name : "An admin", verb, gHolo.name);
 	if (gHolo.joinTeam) {
 		SV_SendServerCommand(NULL, "chat \"^5[Holotable]^7 Co-op: everyone on the ^3%s^7 side%s.\"\n",
 			gHolo.teamNames[gHolo.joinTeam], gHolo.anytime ? va(", respawning after %ds", gHolo.respawnSecs) : "");
@@ -4586,9 +4041,9 @@ qboolean SV_SocialHoloCommand(client_t* cl, const char* args)
 		Holo_Reply(cl, "Only admins and scenario runners can run scenarios.");
 		return qtrue;
 	}
-	if (gHoloActive || gBarFightActive || gHoloPending.waiting) {
+	if (gHoloActive || gHoloPending.waiting) {
 		Holo_Reply(cl, gHoloActive ? "A scenario's already running - ^5!ht stop^7 first." :
-			gHoloPending.waiting ? "A scenario's about to start - the map's reloading for it." : "A bar fight's on - wait for it to end.");
+			"A scenario's about to start - the map's reloading for it.");
 		return qtrue;
 	}
 	Holo_Play(cl, gHoloList[pick].file, gHoloList[pick].name, "started");
@@ -4681,6 +4136,170 @@ static qboolean Social_HoloRunning(void)
 	return gHoloActive;
 }
 
+// --- Holotable auto-play ----------------------------------------------------
+//
+// Scenarios for the map that's on can start without anyone typing !ht, on
+// any server with g_holotable. g_holotableAuto (set by MBIIEZ's Holotable
+// plugin):
+//   1 - a random one g_holotableAutoMinutes after the last one ended (or the
+//       server started), once g_holotableAutoPlayers have been in for 2
+//       minutes - the cantina's bar fights;
+//   2 - one as every round begins, picked at random if there are several.
+// They come from holotable_auto.txt in the instance's own game folder
+// (fs_homepath/fs_game), one scenario id a line, kept by the plugin; without
+// the file, any for the map can. They play in the mode the server's in (no
+// map reload, unlike "!ht <n> play"), and one started for a round doesn't
+// stretch the round clock.
+//
+// g_holotableAutoRestart: a scenario running when the round restarts (which
+// clears every NPC) starts again in the new round, however it started.
+
+static int gHoloAutoNext = 0;          // svs.time the next timed one is due (0 = not counting yet)
+static int gHoloRoundAt = 0;           // svs.time a new round was set up (0 = nothing waiting on it)
+static char gHoloRoundFile[64];        // the scenario to start again in the new round ("" = none)
+
+static int Holo_AutoMode(void)
+{
+	return (Holo_Enabled() && g_holotableAuto) ? g_holotableAuto->integer : 0;
+}
+
+static int Holo_AutoPlayersNeeded(void)
+{
+	return Q_max(1, g_holotableAutoPlayers ? g_holotableAutoPlayers->integer : 2);
+}
+
+// A scenario file ("clone_ambush.json") auto-play may pick.
+static qboolean Holo_AutoAllowed(const char* file)
+{
+	char id[64], line[128], word[128];
+	Q_strncpyz(id, file, sizeof(id));
+	char* dot = strrchr(id, '.');
+	if (dot && !Q_stricmp(dot, ".json")) {
+		*dot = '\0';
+	}
+	FILE* f = fopen(va("%s/%s/holotable_auto.txt", Cvar_VariableString("fs_homepath"), Cvar_VariableString("fs_game")), "r");
+	if (!f) {
+		return qtrue;
+	}
+	qboolean ok = qfalse;
+	while (!ok && fgets(line, sizeof(line), f)) {
+		word[0] = '\0';
+		sscanf(line, "%127s", word);
+		ok = (word[0] && word[0] != '#' && !Q_stricmp(word, id)) ? qtrue : qfalse;
+	}
+	fclose(f);
+	return ok;
+}
+
+// Starts a random allowed scenario for the map that's on.
+static qboolean Holo_AutoStart(qboolean extendRound)
+{
+	int list[HT_MAX_LIST], n = 0;
+	Holo_RefreshList();
+	for (int i = 0; i < gHoloListCount; i++) {
+		if (Holo_AutoAllowed(gHoloList[i].file)) {
+			list[n++] = i;
+		}
+	}
+	if (!n) {
+		return qfalse;
+	}
+	const int pick = list[Q_irand(0, n - 1)];
+	char file[64], label[64];
+	Q_strncpyz(file, gHoloList[pick].file, sizeof(file));
+	Q_strncpyz(label, gHoloList[pick].name, sizeof(label));
+	if (!Holo_Start(NULL, file, label, "starts", "The Holotable", extendRound)) {
+		return qfalse;
+	}
+	SV_SendServerCommand(NULL, "cp \"^5HOLOTABLE\n^7%s\"\n", label);
+	return qtrue;
+}
+
+// The timer: counts from when the last scenario ended (or the server
+// started), and waits until enough players have been in for 2 minutes - so
+// it doesn't go off in someone's face the moment they join.
+static void Holo_AutoTimerFrame(void)
+{
+	static int enoughSince = 0;
+	if (Holo_AutoMode() != 1 || !g_holotableAutoMinutes || g_holotableAutoMinutes->integer <= 0
+		|| gHoloActive || gHoloPending.waiting || gHoloRoundAt) {
+		gHoloAutoNext = 0;
+		return;
+	}
+	const int interval = 60000 * g_holotableAutoMinutes->integer;
+	if (!gHoloAutoNext || gHoloAutoNext - svs.time > interval) {
+		gHoloAutoNext = svs.time + interval;
+	}
+	if (Holo_Players() < Holo_AutoPlayersNeeded()) {
+		enoughSince = 0;
+		return;
+	}
+	if (!enoughSince) {
+		enoughSince = svs.time ? svs.time : 1;
+	}
+	if (svs.time < gHoloAutoNext || svs.time - enoughSince < 120000) {
+		return;
+	}
+	if (!Holo_AutoStart(qtrue)) {
+		gHoloAutoNext = svs.time + interval; // none for this map (or it won't load): next time round
+	}
+}
+
+// A new round (or map): once it's under way, start the scenario that was
+// running again, or - every round - a new one.
+static void Holo_AutoRoundFrame(void)
+{
+	if (!gHoloRoundAt) {
+		return;
+	}
+	const int since = svs.time - gHoloRoundAt;
+	const qboolean begun = (!gSiegeRoundBegun || *gSiegeRoundBegun) ? qtrue : qfalse;
+	if (since < 5000 || (!begun && since < 60000)) {
+		return;
+	}
+	gHoloRoundAt = 0;
+	char file[64];
+	Q_strncpyz(file, gHoloRoundFile, sizeof(file));
+	gHoloRoundFile[0] = '\0';
+	if (!Holo_Enabled() || gHoloActive || gHoloPending.waiting || Holo_Players() < 1) {
+		return;
+	}
+	const int mode = Holo_AutoMode();
+	if (file[0]) {
+		// Only if it's still for this map (the round may have come with a new one).
+		cJSON* root = Holo_ReadFile(file);
+		char label[64] = "";
+		qboolean sameMap = qfalse;
+		if (root) {
+			sameMap = !Q_stricmp(HtStr(root, "map", ""), Cvar_VariableString("mapname")) ? qtrue : qfalse;
+			Holo_Clean(label, HtStr(root, "name", file), sizeof(label));
+			cJSON_Delete(root);
+		}
+		if (sameMap && Holo_Start(NULL, file, label, "restarts", "New round - the Holotable", mode != 2 ? qtrue : qfalse)) {
+			return;
+		}
+	}
+	if (mode == 2 && Holo_Players() >= Holo_AutoPlayersNeeded()) {
+		Holo_AutoStart(qfalse);
+	}
+}
+
+// SV_SocialGameInit, before a running scenario is cleared away.
+static void Holo_AutoGameInit(void)
+{
+	gHoloRoundFile[0] = '\0';
+	if (gHoloActive && g_holotableAutoRestart && g_holotableAutoRestart->integer) {
+		Q_strncpyz(gHoloRoundFile, gHolo.file, sizeof(gHoloRoundFile));
+	}
+	gHoloRoundAt = svs.time ? svs.time : 1;
+}
+
+static void Holo_AutoFrame(void)
+{
+	Holo_AutoRoundFrame();
+	Holo_AutoTimerFrame();
+}
+
 // --- Our NPC types, kept with the engine --------------------------------------
 //
 // The bar fights' own NPC types (droids, 212th and 501st clones) are MBII
@@ -4735,7 +4354,9 @@ void SV_SocialGameInit(void)
 	if (gHoloPending.waiting && !gHoloPending.readyAt) {
 		gHoloPending.readyAt = svs.time + 8000; // players reloading the map first
 	}
-	// A new round or map frees every entity, fights included.
+	// A new round or map frees every entity, scenarios included (one may
+	// start again once the round is under way: Holo_AutoRoundFrame).
+	Holo_AutoGameInit();
 	gHoloSidesOk = -1;
 	if (gHoloActive) {
 		Holo_RestorePlayers(qtrue);
@@ -4744,8 +4365,6 @@ void SV_SocialGameInit(void)
 			gHolo.npcs[i].ent = -1;
 		}
 	}
-	gBarFightActive = qfalse;
-	gBarFight.count = 0;
 	SV_JukeboxFightEnd();
 
 	// A new round or map frees every entity: spawn the NPCs again.
@@ -4873,10 +4492,9 @@ void SV_SocialFrame(void)
 	if (Social_Enabled()) {
 		Social_CheckDuels();
 		Social_NpcFrame();
-		Social_BarFightFrame();
-		Social_BarFightAutoFrame();
 	}
 	Holo_PendingFrame();
+	Holo_AutoFrame();
 	Holo_Frame(); // any server with g_holotable, not only social ones
 	if (Social_AnytimeSpawnWanted() || (g_socialBots && g_socialBots->integer)) {
 		Social_RescueStuckJoiners();
