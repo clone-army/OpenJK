@@ -170,6 +170,7 @@ static void* (*gLaunchItem)(void* item, float* origin, float* velocity) = NULL;
 static void (*gAddRemap)(const char* oldShader, const char* newShader, float timeOffset) = NULL;
 static const char* (*gBuildShaderStateConfig)(void) = NULL;
 #define HOLO_CS_SHADERSTATE 24
+
 static int* gSiegeRoundEnded = NULL;
 static void* (*gNPCSpawnType)(void* ent, char* type, char* targetname, int isVehicle, int asIfPlayer, int siegeTeam) = NULL;
 static void (*gFreeEntity)(void* ent) = NULL;
@@ -2351,6 +2352,7 @@ typedef struct {
 	int  route;                   // HT_BEHAVE_ROUTE: the route it walks
 	float engage;                 // how close a player comes before it goes for them
 	int  attacks;                 // 0 = everyone; TEAM_RED / TEAM_BLUE = only that side (it fights for the other)
+	qboolean routeWalk;           // walks its route (else runs it); after someone, it runs either way
 	// running
 	int  queued;                  // still to spawn
 	int  spawned;
@@ -2402,6 +2404,7 @@ typedef struct {
 	int  wp, wpGoalAt, wpSince;
 	float wpBest;
 	int  homeGoalAt;
+	int  pace;                    // what it's been told: 0 not yet / its AI's own, 1 walk, 2 run
 } htNpc_t;
 
 static qboolean gHoloActive = qfalse;
@@ -2659,6 +2662,7 @@ static qboolean Holo_Load(const char* file, char* err, size_t errSize)
 		g->perPlayer = Q_max(0, (int)HtNum(it, "perPlayer", 0.0f));
 		g->max = Q_max(1, Q_min(HT_MAX_NPCS, (int)HtNum(it, "max", 20.0f)));
 		g->engage = HtNum(it, "engage", 0.0f);
+		g->routeWalk = !Q_stricmp(HtStr(it, "routePace", "walk"), "run") ? qfalse : qtrue;
 		const char* at = HtStr(it, "attacks", "all");
 		g->attacks = !Q_stricmp(at, "team1") ? TEAM_RED : !Q_stricmp(at, "team2") ? TEAM_BLUE : 0;
 		const char* b = HtStr(it, "behaviour", "hunt");
@@ -2799,6 +2803,7 @@ static qboolean Holo_Load(const char* file, char* err, size_t errSize)
 				act->value = !Q_stricmp(b, "route") ? HT_BEHAVE_ROUTE : !Q_stricmp(b, "guard") ? HT_BEHAVE_GUARD :
 					!Q_stricmp(b, "idle") ? HT_BEHAVE_IDLE : HT_BEHAVE_HUNT;
 				act->atRef = HT_FIND(gHolo.routes, gHolo.numRoutes, HtStr(a, "route", ""));
+				act->center = !Q_stricmp(HtStr(a, "pace", "walk"), "run") ? qfalse : qtrue; // walk the route
 				if (act->ref < 0 || (act->value == HT_BEHAVE_ROUTE && act->atRef < 0)) continue;
 			} else if (!Q_stricmp(d, "trigger_on") || !Q_stricmp(d, "trigger_off")) {
 				act->type = !Q_stricmp(d, "trigger_on") ? HT_DO_TRIGGER_ON : HT_DO_TRIGGER_OFF;
@@ -3518,6 +3523,7 @@ static void Holo_RunActions(htTrigger_t* t, client_t* who)
 			g->behaviour = act->value;
 			if (act->value == HT_BEHAVE_ROUTE) {
 				g->route = act->atRef;
+				g->routeWalk = act->center;
 			}
 			const qboolean guardAt = (act->value == HT_BEHAVE_GUARD && Holo_ActionAt(act, who, at)) ? qtrue : qfalse;
 			for (int k = 0; k < HT_MAX_NPCS; k++) {
@@ -3810,6 +3816,77 @@ static void Holo_MoveTo(sharedEntity_t* npc, const vec3_t goal)
 	GVM_EndNative(old);
 }
 
+// Every frame, for NPCs on their route: MBII's own walk / run script flags
+// (what an ICARUS "set SET_RUNNING" sets) - so they really run, and turn at
+// their points as they should. Legs to match, in case the AI's anim lags.
+#define HOLO_NPC_OFS      0x364 // gentity_t's NPC (gNPC_t*), from SetNPCGlobals
+#define HOLO_SCRIPTFLAGS  0x1d8 // gNPC_t's scriptFlags, from NPC_ApplyScriptFlags
+#define HOLO_SCF_WALKING  0x02
+#define HOLO_SCF_RUNNING  0x20
+static int* Holo_ScriptFlags(int ent)
+{
+	byte* npc = *(byte**)((byte*)SV_GentityNum(ent) + HOLO_NPC_OFS);
+	return npc ? (int*)(npc + HOLO_SCRIPTFLAGS) : NULL;
+}
+
+// Reached its route point: on to the next one now, not at the next think -
+// else it stops at every point (a runner most of all).
+static qboolean Holo_RouteArrive(htNpc_t* h, sharedEntity_t* e)
+{
+	const htGroup_t* g = &gHolo.groups[h->group];
+	if (!h->onRoute || g->behaviour != HT_BEHAVE_ROUTE || g->route < 0) {
+		return qfalse;
+	}
+	const htRoute_t* r = &gHolo.routes[g->route];
+	if (r->count < 1 || h->wp >= r->count) {
+		return qfalse;
+	}
+	const float* p = r->pts[h->wp];
+	const float dx = e->r.currentOrigin[0] - p[0], dy = e->r.currentOrigin[1] - p[1];
+	if (dx * dx + dy * dy >= 48.0f * 48.0f) {
+		return qfalse;
+	}
+	h->wp = (h->wp + 1) % r->count;
+	h->wpSince = 0;
+	Holo_MoveTo(e, r->pts[h->wp]);
+	h->wpGoalAt = svs.time;
+	return qtrue;
+}
+
+static void Holo_PaceFrame(void)
+{
+	for (int i = 0; i < HT_MAX_NPCS; i++) {
+		htNpc_t* h = &gHolo.npcs[i];
+		if (!h->pace || !Holo_NpcUp(h)) {
+			continue;
+		}
+		int* flags = Holo_ScriptFlags(h->ent);
+		if (!flags) {
+			continue;
+		}
+		*flags = (*flags & ~(HOLO_SCF_WALKING | HOLO_SCF_RUNNING)) | (h->pace == 2 ? HOLO_SCF_RUNNING : HOLO_SCF_WALKING);
+		sharedEntity_t* e = SV_GentityNum(h->ent);
+		Holo_RouteArrive(h, e);
+		playerState_t* ps = e->playerState;
+		const float speed = sqrtf(ps->velocity[0] * ps->velocity[0] + ps->velocity[1] * ps->velocity[1]);
+		if (ps->groundEntityNum != ENTITYNUM_NONE && speed >= 15.0f && ps->legsTimer < 200) {
+			SV_EntitySetLegsAnim(e, h->pace == 2 ? "BOTH_RUN1" : "BOTH_WALK1");
+		}
+	}
+}
+
+// Leaving its route (after someone): flags cleared, its AI picks its pace.
+static void Holo_Pace(htNpc_t* h, int pace)
+{
+	if (h->pace && !pace && Holo_NpcUp(h)) {
+		int* flags = Holo_ScriptFlags(h->ent);
+		if (flags) {
+			*flags &= ~(HOLO_SCF_WALKING | HOLO_SCF_RUNNING);
+		}
+	}
+	h->pace = pace;
+}
+
 static void Holo_Think(void)
 {
 	for (int i = 0; i < HT_MAX_NPCS; i++) {
@@ -3844,7 +3921,9 @@ static void Holo_Think(void)
 			if (h->onRoute) {
 				if (nearest && d2 < engage2) {
 					h->onRoute = qfalse;
+					Holo_Pace(h, 0); // after them: its own pace (a run)
 				} else {
+					Holo_Pace(h, g->routeWalk ? 1 : 2);
 					if (h->wp >= r->count) {
 						h->wp = 0;
 					}
@@ -3853,8 +3932,9 @@ static void Holo_Think(void)
 					const float d = sqrtf(dx * dx + dy * dy);
 					if (d < 48.0f || (h->wpSince && svs.time - h->wpSince > 6000 && d > h->wpBest - 16.0f)) {
 						h->wp = (h->wp + 1) % r->count;
-						h->wpGoalAt = 0;
 						h->wpSince = 0;
+						Holo_MoveTo(npc, r->pts[h->wp]);
+						h->wpGoalAt = svs.time;
 					} else {
 						if (!h->wpSince || d < h->wpBest - 16.0f) {
 							h->wpSince = svs.time;
@@ -4101,6 +4181,7 @@ static void Holo_Frame(void)
 		gHolo.nextThink = svs.time + 1000;
 		Holo_Think();
 	}
+	Holo_PaceFrame();
 }
 
 // Loads a scenario file and starts it ("started", or "restarted" by
@@ -4477,6 +4558,7 @@ void SV_SocialGameInit(void)
 		gLaunchItem = (void* (*)(void*, float*, float*))Sys_LoadFunction(dll, "LaunchItem");
 		gAddRemap = (void (*)(const char*, const char*, float))Sys_LoadFunction(dll, "AddRemap");
 		gBuildShaderStateConfig = (const char* (*)(void))Sys_LoadFunction(dll, "BuildShaderStateConfig");
+
 		gNPCSpawnType = (void* (*)(void*, char*, char*, int, int, int))Sys_LoadFunction(dll, "NPC_SpawnType");
 		gFreeEntity = (void (*)(void*))Sys_LoadFunction(dll, "G_FreeEntity");
 		gSetEnemy = (void (*)(void*, void*))Sys_LoadFunction(dll, "G_SetEnemy");
