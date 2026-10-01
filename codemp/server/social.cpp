@@ -2418,6 +2418,7 @@ typedef struct {
 	float wpBest;
 	int  homeGoalAt;
 	int  pace;                    // what it's been told: 0 not yet / its AI's own, 1 walk, 2 run
+	int  sideDue;                 // the side it attacks, not yet set on it (nobody in the game to check against)
 } htNpc_t;
 
 static qboolean gHoloActive = qfalse;
@@ -3119,6 +3120,28 @@ static qboolean Holo_SidesUsable(void)
 }
 
 // Puts a spawned NPC on the side that fights `attacks` (TEAM_RED/BLUE).
+static void Holo_SetSide(sharedEntity_t* e, int attacks);
+
+// Puts an NPC on its group's side. Its PERS_TEAM (what the scenario's own
+// rules go by - who it can hurt, who it goes for) straight away; MBII's own
+// NPC team fields once there's a player in the game to check them against
+// - till then it's due, and Holo_Think tries again each second. (A scenario
+// started as the map loads - after a mode change - has its NPCs in before
+// anyone's picked a class: they'd otherwise keep their .npc file's
+// TEAM_FREE and attack everyone.)
+static void Holo_ApplySide(htNpc_t* h)
+{
+	if (!h->sideDue || !Holo_NpcUp(h)) {
+		return;
+	}
+	sharedEntity_t* e = SV_GentityNum(h->ent);
+	e->playerState->persistant[PERS_TEAM] = (h->sideDue == TEAM_RED) ? TEAM_BLUE : TEAM_RED;
+	if (Holo_SidesUsable()) {
+		Holo_SetSide(e, h->sideDue);
+		h->sideDue = 0;
+	}
+}
+
 static void Holo_SetSide(sharedEntity_t* e, int attacks)
 {
 	if (!attacks || !e || !e->playerState || !Holo_SidesUsable()) {
@@ -3778,13 +3801,14 @@ static int Holo_SpawnOne(void)
 		VectorCopy(org, e->s.origin);
 		VectorCopy(org, e->s.pos.trBase);
 		VectorCopy(org, e->r.currentOrigin);
-		Holo_SetSide(e, g->attacks);
 		htNpc_t* h = &gHolo.npcs[slot];
 		memset(h, 0, sizeof(*h));
 		gHolo.npcUp[slot] = qtrue;
 		h->ent = e->s.number;
 		h->group = gi;
 		h->spawnedAt = svs.time;
+		h->sideDue = g->attacks;
+		Holo_ApplySide(h);
 		VectorCopy(org, h->home);
 		if (g->behaviour == HT_BEHAVE_ROUTE && Holo_RouteOk(g->route)) {
 			// Joins its route at the point nearest where it arrived.
@@ -3987,6 +4011,7 @@ static void Holo_Think(void)
 		}
 		const htGroup_t* g = &gHolo.groups[h->group];
 		sharedEntity_t* npc = SV_GentityNum(h->ent);
+		Holo_ApplySide(h);
 		Holo_DropDeadEnemy(npc);
 		const float* at = npc->playerState->origin;
 		float d2 = 0.0f;
