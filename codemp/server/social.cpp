@@ -1813,7 +1813,7 @@ enum { HT_WHEN_START, HT_WHEN_TIMER, HT_WHEN_ENTER, HT_WHEN_GROUP_DEAD, HT_WHEN_
 	HT_WHEN_COUNTER, HT_WHEN_COUNTDOWN_END };
 enum { HT_DO_SPAWN, HT_DO_MESSAGE, HT_DO_CENTER, HT_DO_SOUND, HT_DO_MUSIC, HT_DO_END, HT_DO_SAY,
 	HT_DO_TELL, HT_DO_EXPLODE, HT_DO_EFFECT, HT_DO_SHAKE, HT_DO_TELEPORT, HT_DO_USE, HT_DO_DESPAWN, HT_DO_WIN,
-	HT_DO_GIVE, HT_DO_KNOCKDOWN, HT_DO_KILL, HT_DO_HEAL, HT_DO_FREEZE, HT_DO_VEHICLE, HT_DO_ADDTIME, HT_DO_MOVE,
+	HT_DO_GIVE, HT_DO_KNOCKDOWN, HT_DO_KILL, HT_DO_HEAL, HT_DO_FREEZE, HT_DO_VEHICLE, HT_DO_ADDTIME, HT_DO_MOVE, HT_DO_SIDE,
 	HT_DO_TRIGGER_ON, HT_DO_TRIGGER_OFF, HT_DO_COUNTER, HT_DO_COUNTDOWN, HT_DO_OBJECTIVE, HT_DO_PICKUP,
 	HT_DO_TEXTURE, HT_DO_GRAVITY, HT_DO_SPEED };
 enum { HT_WHO_PLAYER, HT_WHO_ALL, HT_WHO_TEAM1, HT_WHO_TEAM2, HT_WHO_AREA }; // whom a player action is for
@@ -2372,6 +2372,14 @@ static qboolean Holo_Load(const char* file, char* err, size_t errSize)
 				act->route = HT_FIND(gHolo.routes, gHolo.numRoutes, HtStr(a, "route", ""));
 				act->center = !Q_stricmp(HtStr(a, "pace", "walk"), "run") ? qfalse : qtrue; // walk the route
 				if (act->ref < 0 || (act->value == HT_BEHAVE_ROUTE && (act->route < 0 || !gHolo.routes[act->route].count))) continue;
+			} else if (!Q_stricmp(d, "side")) {
+				// A group changes side: who it attacks, as its own "attacks".
+				act->type = HT_DO_SIDE;
+				act->ref = HT_FIND(gHolo.groups, gHolo.numGroups, HtStr(a, "group", ""));
+				const char* at = HtStr(a, "attacks", "all");
+				act->value = !Q_stricmp(at, "team1") ? TEAM_RED : !Q_stricmp(at, "team2") ? TEAM_BLUE :
+					!Q_stricmp(at, "none") ? HT_ATTACKS_NONE : 0;
+				if (act->ref < 0) continue;
 			} else if (!Q_stricmp(d, "trigger_on") || !Q_stricmp(d, "trigger_off")) {
 				act->type = !Q_stricmp(d, "trigger_on") ? HT_DO_TRIGGER_ON : HT_DO_TRIGGER_OFF;
 				act->ref = HT_FIND(gHolo.triggers, gHolo.numTriggers, HtStr(a, "trigger", ""));
@@ -2664,6 +2672,24 @@ static void Holo_ApplySide(htNpc_t* h)
 		Holo_SetSide(e, h->sideDue);
 		h->sideDue = 0;
 	}
+}
+
+// Back to attacking everyone: NPC TEAM_FREE, like Holotable's own NPC types
+// (MBII's NPCs on TEAM_FREE go for anyone who isn't).
+static void Holo_SetHostile(sharedEntity_t* e)
+{
+	if (!e || !e->playerState || !Holo_SidesUsable()) {
+		return;
+	}
+	playerState_t* ps = e->playerState;
+	const int* pt = Holo_ClientInt(ps, HOLO_OFS_PLAYERTEAM);
+	const int* et = Holo_ClientInt(ps, HOLO_OFS_ENEMYTEAM);
+	if (*pt < 0 || *pt > 3 || *et < 0 || *et > 3) {
+		return; // not what an NPC's team looks like: leave it alone
+	}
+	*Holo_ClientInt(ps, HOLO_OFS_PLAYERTEAM) = 0; // NPC TEAM_FREE
+	*Holo_ClientInt(ps, HOLO_OFS_ENEMYTEAM) = 1;  // NPC TEAM_PLAYER
+	ps->persistant[PERS_TEAM] = TEAM_FREE;
 }
 
 static void Holo_SetSide(sharedEntity_t* e, int attacks)
@@ -3197,6 +3223,35 @@ static void Holo_RunActions(htTrigger_t* t, client_t* who)
 					h->wpSince = 0;
 				}
 			}
+			break;
+		}
+		case HT_DO_SIDE: {
+			// The group's side from now on (any of it spawned later too), and
+			// every one of it that's up switches now and lets go of whoever it
+			// was after, to pick from the new side's enemies.
+			htGroup_t* g = &gHolo.groups[act->ref];
+			g->attacks = act->value;
+			for (int k = 0; k < HT_MAX_NPCS; k++) {
+				htNpc_t* h = &gHolo.npcs[k];
+				if (h->group != act->ref || !Holo_NpcUp(h)) {
+					continue;
+				}
+				sharedEntity_t* e = SV_GentityNum(h->ent);
+				h->sideDue = 0;
+				if (act->value) {
+					h->sideDue = act->value;
+					Holo_ApplySide(h);
+				} else {
+					Holo_SetHostile(e);
+				}
+				if (gClearEnemy) {
+					void* old = GVM_BeginNative();
+					gClearEnemy(e);
+					GVM_EndNative(old);
+				}
+			}
+			Com_Printf("Holotable: group %s now attacks %s\n", g->id, act->value == TEAM_RED ? "team1" :
+				act->value == TEAM_BLUE ? "team2" : act->value == HT_ATTACKS_NONE ? "nobody" : "everyone");
 			break;
 		}
 		case HT_DO_TRIGGER_ON: {
@@ -4007,9 +4062,10 @@ static qboolean Holo_Start(client_t* cl, const char* file, const char* label, co
 
 // Plays a scenario - first reloading the map in its mode if the server's in
 // another one (everyone back to class select), then starting it.
-// A Full Authentic scenario can bring its own teams: any of the game's team
+// A Legends scenario can bring its own teams: any of the game's team
 // configs, by MBII's g_siegeTeam1/2 - every player has them, nothing to
-// download. They take on a map load, so !ht play reloads the map with them;
+// download. (MBII only goes by them in Legends - its default there is the
+// Legends sides, LEG_Good / LEG_Evil.) They take on a map load, so !ht play reloads the map with them;
 // the server's own come back when the map changes (SV_HoloMapChange), so
 // round restarts on the same map keep them.
 static qboolean gHoloTeamsSet = qfalse;   // g_siegeTeam1/2 are a scenario's
@@ -4062,7 +4118,7 @@ static void Holo_Play(client_t* cl, const char* file, const char* label, const c
 	cJSON* root = Holo_ReadFile(file);
 	const int mode = root ? Holo_WantedMode(root) : -1;
 	char team1[64] = "", team2[64] = "";
-	if (root && mode == 2) {
+	if (root && mode == 4) {
 		Q_strncpyz(team1, HtStr(root, "team1", ""), sizeof(team1));
 		Q_strncpyz(team2, HtStr(root, "team2", ""), sizeof(team2));
 	}
@@ -4070,7 +4126,7 @@ static void Holo_Play(client_t* cl, const char* file, const char* label, const c
 	const int now = Cvar_VariableIntegerValue("g_Authenticity");
 	char teams[2][64];
 	Holo_WantedTeams(team1, team2, teams);
-	const qboolean teamsChange = (mode == 2 && (Q_stricmp(teams[0], Cvar_VariableString("g_siegeTeam1"))
+	const qboolean teamsChange = (mode == 4 && (Q_stricmp(teams[0], Cvar_VariableString("g_siegeTeam1"))
 		|| Q_stricmp(teams[1], Cvar_VariableString("g_siegeTeam2")))) ? qtrue : qfalse;
 	if ((mode < 0 || mode == now) && !teamsChange) {
 		Holo_Start(cl, file, label, verb);
