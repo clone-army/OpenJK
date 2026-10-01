@@ -183,6 +183,9 @@ static void (*gSoundOnEnt)(void* ent, int channel, const char* path) = NULL;
 static void (*gSaveNPCGlobals)(void) = NULL;
 static void (*gRestoreNPCGlobals)(void) = NULL;
 static void (*gSetNPCGlobals)(void* ent) = NULL;
+static void (*gNPCChangeWeapon)(int weapon) = NULL;               // NPC_ChangeWeapon: the NPC globals' one
+static int (*gGetIDForString)(void* table, const char* s) = NULL; // GetIDForString
+static void* gWPTable = NULL;                                     // WPTable: MBII's weapon names
 static int (*gNPCFacePosition)(float* position, int doPitch) = NULL;
 static vmCvar_t* gAuthenticity = NULL;
 static int* gRebelTimeLimit = NULL;
@@ -1813,7 +1816,7 @@ enum { HT_WHEN_START, HT_WHEN_TIMER, HT_WHEN_ENTER, HT_WHEN_GROUP_DEAD, HT_WHEN_
 	HT_WHEN_COUNTER, HT_WHEN_COUNTDOWN_END, HT_WHEN_GROUP_IN_AREA };
 enum { HT_DO_SPAWN, HT_DO_MESSAGE, HT_DO_CENTER, HT_DO_SOUND, HT_DO_MUSIC, HT_DO_END, HT_DO_SAY,
 	HT_DO_TELL, HT_DO_EXPLODE, HT_DO_EFFECT, HT_DO_SHAKE, HT_DO_TELEPORT, HT_DO_USE, HT_DO_DESPAWN, HT_DO_WIN,
-	HT_DO_GIVE, HT_DO_KNOCKDOWN, HT_DO_KILL, HT_DO_HEAL, HT_DO_FREEZE, HT_DO_VEHICLE, HT_DO_ADDTIME, HT_DO_MOVE, HT_DO_SIDE,
+	HT_DO_GIVE, HT_DO_KNOCKDOWN, HT_DO_KILL, HT_DO_HEAL, HT_DO_FREEZE, HT_DO_VEHICLE, HT_DO_ADDTIME, HT_DO_MOVE, HT_DO_SIDE, HT_DO_ARM,
 	HT_DO_TRIGGER_ON, HT_DO_TRIGGER_OFF, HT_DO_COUNTER, HT_DO_COUNTDOWN, HT_DO_OBJECTIVE, HT_DO_PICKUP,
 	HT_DO_TEXTURE, HT_DO_GRAVITY, HT_DO_SPEED };
 enum { HT_WHO_PLAYER, HT_WHO_ALL, HT_WHO_TEAM1, HT_WHO_TEAM2, HT_WHO_AREA }; // whom a player action is for
@@ -1839,6 +1842,7 @@ typedef struct {
 	qboolean routeWalk;           // walks its route (else runs it); after someone, it runs either way
 	int  followClient;            // HT_BEHAVE_FOLLOW: the player it follows (-1 = nobody)
 	char followClass[40];         // ...or (set) whoever's nearest playing this class ("sc" token)
+	int  weapon;                  // given by an "arm" action: its NPCs carry this (0 = their type's own)
 	// running
 	int  queued;                  // still to spawn
 	int  spawned;
@@ -1894,6 +1898,7 @@ typedef struct {
 	int  homeGoalAt;
 	int  pace;                    // what it's been told: 0 not yet / its AI's own, 1 walk, 2 run
 	int  sideDue;                 // the side it attacks, not yet set on it (nobody in the game to check against)
+	int  weaponSet;               // the group weapon it's been given (0 = none yet)
 } htNpc_t;
 
 static qboolean gHoloActive = qfalse;
@@ -2375,6 +2380,12 @@ static qboolean Holo_Load(const char* file, char* err, size_t errSize)
 				act->route = HT_FIND(gHolo.routes, gHolo.numRoutes, HtStr(a, "route", ""));
 				act->center = !Q_stricmp(HtStr(a, "pace", "walk"), "run") ? qfalse : qtrue; // walk the route
 				if (act->ref < 0 || (act->value == HT_BEHAVE_ROUTE && (act->route < 0 || !gHolo.routes[act->route].count))) continue;
+			} else if (!Q_stricmp(d, "arm")) {
+				// A group gets a weapon (its name, looked up in MBII's own table when used).
+				act->type = HT_DO_ARM;
+				act->ref = HT_FIND(gHolo.groups, gHolo.numGroups, HtStr(a, "group", ""));
+				Q_strncpyz(act->extra, HtStr(a, "weapon", ""), sizeof(act->extra));
+				if (act->ref < 0 || !act->extra[0]) continue;
 			} else if (!Q_stricmp(d, "side")) {
 				// A group changes side: who it attacks, as its own "attacks".
 				act->type = HT_DO_SIDE;
@@ -3228,6 +3239,18 @@ static void Holo_RunActions(htTrigger_t* t, client_t* who)
 			}
 			break;
 		}
+		case HT_DO_ARM: {
+			// MBII's number for it; every one of the group up switches at its
+			// next think (Holo_ArmNpc), any spawned later too.
+			const int wp = (gGetIDForString && gWPTable) ? gGetIDForString(gWPTable, act->extra) : -1;
+			if (wp <= 0 || !Q_stricmp(act->extra, "WP_SABER")) {
+				Com_Printf("Holotable: no weapon \"%s\" to give\n", act->extra);
+				break;
+			}
+			gHolo.groups[act->ref].weapon = wp;
+			Com_Printf("Holotable: group %s gets %s (%d)\n", gHolo.groups[act->ref].id, act->extra, wp);
+			break;
+		}
 		case HT_DO_SIDE: {
 			// The group's side from now on (any of it spawned later too), and
 			// every one of it that's up switches now and lets go of whoever it
@@ -3644,6 +3667,24 @@ static void Holo_Pace(htNpc_t* h, int pace)
 // the body attacking it till it's gone - or pick one on its own side. Drop
 // either so it picks a live, real enemy. gentity_t's enemy is at 0x584 (from G_SetEnemy).
 #define HOLO_ENEMY_OFS 0x584
+// A group weapon (an "arm" action) onto one of its NPCs: MBII's own
+// NPC_ChangeWeapon, run as that NPC (its NPC globals), as its Boba AI
+// switches weapons. Not sabers - those need MBII's saber set-up at spawn.
+static void Holo_ArmNpc(htNpc_t* h, sharedEntity_t* npc)
+{
+	const int wp = gHolo.groups[h->group].weapon;
+	if (wp <= 0 || h->weaponSet == wp || !gNPCChangeWeapon || !gSetNPCGlobals || !gSaveNPCGlobals || !gRestoreNPCGlobals) {
+		return;
+	}
+	h->weaponSet = wp;
+	void* old = GVM_BeginNative();
+	gSaveNPCGlobals();
+	gSetNPCGlobals(npc);
+	gNPCChangeWeapon(wp);
+	gRestoreNPCGlobals();
+	GVM_EndNative(old);
+}
+
 // Peaceful NPCs never keep an enemy: every frame, one picked is let go
 // before it can aim or fire. Neutral (NPC TEAM_NEUTRAL both ways, like
 // MBII's bartender) should be enough, but MBII's AI still has armed neutral
@@ -3743,6 +3784,7 @@ static void Holo_Think(void)
 		const htGroup_t* g = &gHolo.groups[h->group];
 		sharedEntity_t* npc = SV_GentityNum(h->ent);
 		Holo_ApplySide(h);
+		Holo_ArmNpc(h, npc);
 		Holo_DropDeadEnemy(npc);
 		const float* at = npc->playerState->origin;
 		float d2 = 0.0f;
@@ -4947,6 +4989,9 @@ void SV_SocialGameInit(void)
 		gSaveNPCGlobals = (void (*)(void))Sys_LoadFunction(dll, "SaveNPCGlobals");
 		gRestoreNPCGlobals = (void (*)(void))Sys_LoadFunction(dll, "RestoreNPCGlobals");
 		gSetNPCGlobals = (void (*)(void*))Sys_LoadFunction(dll, "SetNPCGlobals");
+		gNPCChangeWeapon = (void (*)(int))Sys_LoadFunction(dll, "NPC_ChangeWeapon");
+		gGetIDForString = (int (*)(void*, const char*))Sys_LoadFunction(dll, "GetIDForString");
+		gWPTable = Sys_LoadFunction(dll, "WPTable");
 		gNPCFacePosition = (int (*)(float*, int))Sys_LoadFunction(dll, "NPC_FacePosition");
 		gAuthenticity = (vmCvar_t*)Sys_LoadFunction(dll, "g_Authenticity");
 		gRebelTimeLimit = (int*)Sys_LoadFunction(dll, "rebel_time_limit");
