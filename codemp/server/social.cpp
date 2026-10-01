@@ -1804,7 +1804,9 @@ static client_t* Social_AnyPlayer(void)
 #define HT_MAX_LIST      32
 #define HT_DIR           "holotable"
 
-enum { HT_BEHAVE_HUNT, HT_BEHAVE_ROUTE, HT_BEHAVE_GUARD, HT_BEHAVE_IDLE };
+enum { HT_BEHAVE_HUNT, HT_BEHAVE_ROUTE, HT_BEHAVE_GUARD, HT_BEHAVE_IDLE, HT_BEHAVE_FOLLOW };
+#define HT_FOLLOW_GAP   140.0f // follow: how close behind its player it stops
+#define HT_FOLLOW_RUN   400.0f // ...and further than this, it runs to catch up
 #define HT_ATTACKS_NONE -1 // a group's attacks: nobody - peaceful, and can't be hurt
 enum { HT_WHEN_START, HT_WHEN_TIMER, HT_WHEN_ENTER, HT_WHEN_GROUP_DEAD, HT_WHEN_ALL_DEAD, HT_WHEN_AFTER,
 	HT_WHEN_ALL_IN_AREA, HT_WHEN_GROUP_LEFT, HT_WHEN_PLAYERS, HT_WHEN_PLAYER_DIED, HT_WHEN_NPC_KILLED,
@@ -1835,6 +1837,7 @@ typedef struct {
 	float engage;                 // how close a player comes before it goes for them
 	int  attacks;                 // 0 = everyone; TEAM_RED / TEAM_BLUE = only that side (it fights for the other); HT_ATTACKS_NONE = nobody
 	qboolean routeWalk;           // walks its route (else runs it); after someone, it runs either way
+	int  followClient;            // HT_BEHAVE_FOLLOW: the player it follows (-1 = nobody)
 	// running
 	int  queued;                  // still to spawn
 	int  spawned;
@@ -2224,6 +2227,7 @@ static qboolean Holo_Load(const char* file, char* err, size_t errSize)
 		g->routeWalk = !Q_stricmp(HtStr(it, "routePace", "walk"), "run") ? qfalse : qtrue;
 		const char* at = HtStr(it, "attacks", "all");
 		g->attacks = !Q_stricmp(at, "team1") ? TEAM_RED : !Q_stricmp(at, "team2") ? TEAM_BLUE : !Q_stricmp(at, "none") ? HT_ATTACKS_NONE : 0;
+		g->followClient = -1;
 		const char* b = HtStr(it, "behaviour", "hunt");
 		g->behaviour = !Q_stricmp(b, "route") ? HT_BEHAVE_ROUTE : !Q_stricmp(b, "guard") ? HT_BEHAVE_GUARD :
 			!Q_stricmp(b, "idle") ? HT_BEHAVE_IDLE : HT_BEHAVE_HUNT;
@@ -2360,7 +2364,7 @@ static qboolean Holo_Load(const char* file, char* err, size_t errSize)
 				act->ref = HT_FIND(gHolo.groups, gHolo.numGroups, HtStr(a, "group", ""));
 				const char* b = HtStr(a, "behaviour", "hunt");
 				act->value = !Q_stricmp(b, "route") ? HT_BEHAVE_ROUTE : !Q_stricmp(b, "guard") ? HT_BEHAVE_GUARD :
-					!Q_stricmp(b, "idle") ? HT_BEHAVE_IDLE : HT_BEHAVE_HUNT;
+					!Q_stricmp(b, "idle") ? HT_BEHAVE_IDLE : !Q_stricmp(b, "follow") ? HT_BEHAVE_FOLLOW : HT_BEHAVE_HUNT;
 				act->route = HT_FIND(gHolo.routes, gHolo.numRoutes, HtStr(a, "route", ""));
 				act->center = !Q_stricmp(HtStr(a, "pace", "walk"), "run") ? qfalse : qtrue; // walk the route
 				if (act->ref < 0 || (act->value == HT_BEHAVE_ROUTE && (act->route < 0 || !gHolo.routes[act->route].count))) continue;
@@ -2909,6 +2913,8 @@ static void Holo_QueueGroup(int gi, int point, int route)
 	}
 }
 
+static client_t* Holo_NearestPlayer(const vec3_t from, float* distSq, int onlyTeam);
+
 static void Holo_RunActions(htTrigger_t* t, client_t* who)
 {
 	for (int a = 0; a < t->numActions && gHoloActive; a++) {
@@ -3133,6 +3139,24 @@ static void Holo_RunActions(htTrigger_t* t, client_t* who)
 			// New orders for a group, and every one of it that's up.
 			htGroup_t* g = &gHolo.groups[act->ref];
 			g->behaviour = act->value;
+			if (act->value == HT_BEHAVE_FOLLOW) {
+				// The player who set the trigger off - or, for one no player
+				// sets off, whoever's nearest the group.
+				g->followClient = -1;
+				if (who && Holo_PlayerIn((int)(who - svs.clients))) {
+					g->followClient = (int)(who - svs.clients);
+				} else {
+					for (int k = 0; k < HT_MAX_NPCS && g->followClient < 0; k++) {
+						const htNpc_t* h = &gHolo.npcs[k];
+						if (h->group == act->ref && Holo_NpcUp(h)) {
+							float best = 0.0f;
+							client_t* near = Holo_NearestPlayer(SV_GentityNum(h->ent)->playerState->origin, &best, 0);
+							g->followClient = near ? (int)(near - svs.clients) : -1;
+						}
+					}
+				}
+				Com_Printf("Holotable: group %s follows %s\n", g->id, g->followClient >= 0 ? svs.clients[g->followClient].name : "nobody");
+			}
 			if (act->value == HT_BEHAVE_ROUTE) {
 				g->route = act->route;
 				g->routeWalk = act->center;
@@ -3485,6 +3509,17 @@ static void Holo_PaceFrame(void)
 		*flags = (*flags & ~(HOLO_SCF_WALKING | HOLO_SCF_RUNNING)) | (h->pace == 2 ? HOLO_SCF_RUNNING : HOLO_SCF_WALKING);
 		sharedEntity_t* e = SV_GentityNum(h->ent);
 		Holo_RouteArrive(h, e);
+		const htGroup_t* g = &gHolo.groups[h->group];
+		if (g->behaviour == HT_BEHAVE_FOLLOW && g->followClient >= 0 && g->followClient < sv_maxclients->integer
+			&& Holo_PlayerIn(g->followClient) && svs.time - h->wpGoalAt > 300) {
+			const float* to = svs.clients[g->followClient].gentity->playerState->origin;
+			const float dist = Distance(e->playerState->origin, to);
+			if (dist > HT_FOLLOW_GAP) {
+				h->pace = dist > HT_FOLLOW_RUN ? 2 : 1;
+				Holo_MoveTo(e, to);
+				h->wpGoalAt = svs.time;
+			}
+		}
 		playerState_t* ps = e->playerState;
 		const float speed = sqrtf(ps->velocity[0] * ps->velocity[0] + ps->velocity[1] * ps->velocity[1]);
 		if (ps->groundEntityNum != ENTITYNUM_NONE && speed >= 15.0f && ps->legsTimer < 200) {
@@ -3569,6 +3604,46 @@ static void Holo_Think(void)
 		switch (g->behaviour) {
 		case HT_BEHAVE_IDLE:
 			break;
+		case HT_BEHAVE_FOLLOW: {
+			// After the player its orders named, a few steps behind, running
+			// to catch up (Holo_PaceFrame keeps its goal on them). One that
+			// attacks everyone goes for them instead; one on a side still
+			// takes on enemies who come close, then carries on following.
+			const int c = g->followClient;
+			if (c < 0 || c >= sv_maxclients->integer || !Holo_PlayerIn(c)) {
+				Holo_Pace(h, 0);
+				break; // gone or dead: it waits where it is (and follows again when they're back)
+			}
+			sharedEntity_t* p = svs.clients[c].gentity;
+			if (!g->attacks) {
+				if (gSetEnemy) {
+					void* old = GVM_BeginNative();
+					gSetEnemy(npc, p);
+					GVM_EndNative(old);
+				}
+				break;
+			}
+			const float fight = g->engage > 0.0f ? g->engage : 350.0f;
+			if (nearest && d2 < fight * fight) {
+				Holo_Pace(h, 0);
+				if (gSetEnemy) {
+					void* old = GVM_BeginNative();
+					gSetEnemy(npc, nearest);
+					GVM_EndNative(old);
+				}
+				break;
+			}
+			const float dist = Distance(at, p->playerState->origin);
+			if (dist > HT_FOLLOW_GAP) {
+				Holo_Pace(h, dist > HT_FOLLOW_RUN ? 2 : 1);
+				Holo_MoveTo(npc, p->playerState->origin);
+				h->wpGoalAt = svs.time;
+			} else {
+				Holo_Pace(h, 0);
+				Holo_MoveTo(npc, at); // close enough: stop here
+			}
+			break;
+		}
 		case HT_BEHAVE_GUARD:
 			if (nearest && d2 < engage2) {
 				void* old = GVM_BeginNative();
