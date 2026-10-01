@@ -65,7 +65,7 @@ static void Jukebox_SetMusic(const char* music)
 	SV_SetConfigstring(CS_MUSIC, gJukeboxLastSet);
 }
 
-// A bar fight's own music (social.cpp): the jukebox stands aside - no
+// A Holotable scenario's own music (social.cpp): the jukebox stands aside - no
 // autoplay changes, no paid picks - until it's over, then carries on
 // (autoplay: a fresh random track; otherwise what was playing before).
 static qboolean gJukeboxFight = qfalse;
@@ -174,7 +174,7 @@ static void Jukebox_Play(client_t* cl, int index)
 	const int cost = Jukebox_Cost();
 
 	if (gJukeboxFight) {
-		SV_EconomyPrint(cl, "Not during a bar fight! The jukebox is back when it's over.");
+		SV_EconomyPrint(cl, "Not during a Holotable scenario! The jukebox is back when it's over.");
 		return;
 	}
 	if (svs.time < gJukeboxNextChange) {
