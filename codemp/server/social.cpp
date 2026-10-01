@@ -175,6 +175,7 @@ static int* gSiegeRoundEnded = NULL;
 static void* (*gNPCSpawnType)(void* ent, char* type, char* targetname, int isVehicle, int asIfPlayer, int siegeTeam) = NULL;
 static void (*gFreeEntity)(void* ent) = NULL;
 static void (*gSetEnemy)(void* self, void* enemy) = NULL;
+static void (*gClearEnemy)(void* self) = NULL;
 static void (*gSetMoveGoal)(void* ent, float* point, int radius, int isNavGoal, int combatPoint, void* targetEnt) = NULL;
 static void (*gSoundOnEnt)(void* ent, int channel, const char* path) = NULL;
 static void (*gSaveNPCGlobals)(void) = NULL;
@@ -3924,6 +3925,41 @@ static void Holo_Pace(htNpc_t* h, int pace)
 	h->pace = pace;
 }
 
+// MBII's AI can hang on to an enemy that's died - an NPC then stands over
+// the body attacking it till it's gone. Drop a dead (or gone) enemy so it
+// picks a live one. gentity_t's enemy is at 0x584 (from G_SetEnemy).
+#define HOLO_ENEMY_OFS 0x584
+static void Holo_DropDeadEnemy(sharedEntity_t* npc)
+{
+	if (!gClearEnemy || !sv.gentities || sv.gentitySize <= 0) {
+		return;
+	}
+	void* enemy = *(void**)((byte*)npc + HOLO_ENEMY_OFS);
+	if (!enemy) {
+		return;
+	}
+	const intptr_t delta = (byte*)enemy - (byte*)sv.gentities;
+	if (delta < 0 || delta % sv.gentitySize || delta / sv.gentitySize >= sv.num_entities) {
+		return;
+	}
+	const int num = (int)(delta / sv.gentitySize);
+	sharedEntity_t* e = SV_GentityNum(num);
+	qboolean alive;
+	if (num < MAX_CLIENTS) {
+		alive = (e->r.linked && e->playerState && e->playerState->stats[STAT_HEALTH] > 0 &&
+			Social_IsSpawned(e->playerState, num)) ? qtrue : qfalse;
+	} else if (e->s.eType == ET_NPC) {
+		alive = Social_FightNpcUp(num);
+	} else {
+		alive = e->r.linked ? qtrue : qfalse; // something else it's after (a turret...): its own business
+	}
+	if (!alive) {
+		void* old = GVM_BeginNative();
+		gClearEnemy(npc);
+		GVM_EndNative(old);
+	}
+}
+
 static void Holo_Think(void)
 {
 	for (int i = 0; i < HT_MAX_NPCS; i++) {
@@ -3933,6 +3969,7 @@ static void Holo_Think(void)
 		}
 		const htGroup_t* g = &gHolo.groups[h->group];
 		sharedEntity_t* npc = SV_GentityNum(h->ent);
+		Holo_DropDeadEnemy(npc);
 		const float* at = npc->playerState->origin;
 		float d2 = 0.0f;
 		sharedEntity_t* nearest = Holo_NearestTarget(at, &d2, g->attacks);
@@ -4609,6 +4646,7 @@ void SV_SocialGameInit(void)
 		gNPCSpawnType = (void* (*)(void*, char*, char*, int, int, int))Sys_LoadFunction(dll, "NPC_SpawnType");
 		gFreeEntity = (void (*)(void*))Sys_LoadFunction(dll, "G_FreeEntity");
 		gSetEnemy = (void (*)(void*, void*))Sys_LoadFunction(dll, "G_SetEnemy");
+		gClearEnemy = (void (*)(void*))Sys_LoadFunction(dll, "G_ClearEnemy");
 		gSetMoveGoal = (void (*)(void*, float*, int, int, int, void*))Sys_LoadFunction(dll, "NPC_SetMoveGoal");
 		gSoundOnEnt = (void (*)(void*, int, const char*))Sys_LoadFunction(dll, "G_SoundOnEnt");
 		gSaveNPCGlobals = (void (*)(void))Sys_LoadFunction(dll, "SaveNPCGlobals");
