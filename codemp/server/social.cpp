@@ -4007,16 +4007,77 @@ static qboolean Holo_Start(client_t* cl, const char* file, const char* label, co
 
 // Plays a scenario - first reloading the map in its mode if the server's in
 // another one (everyone back to class select), then starting it.
+// A Full Authentic scenario can bring its own teams: any of the game's team
+// configs, by MBII's g_siegeTeam1/2 - every player has them, nothing to
+// download. They take on a map load, so !ht play reloads the map with them;
+// the server's own come back when the map changes (SV_HoloMapChange), so
+// round restarts on the same map keep them.
+static qboolean gHoloTeamsSet = qfalse;   // g_siegeTeam1/2 are a scenario's
+static char gHoloTeamsWas[2][64];         // ...and what they were before
+static char gHoloTeamsMap[64];            // ...set for this map
+
+// What g_siegeTeam1/2 should be for a scenario's teams: its own, or (""
+// - the map's) whatever the server had before any scenario's - which needn't
+// be "none" (MBII's default is the Legends sides, LEG_Good / LEG_Evil).
+static void Holo_WantedTeams(const char* team1, const char* team2, char out[2][64])
+{
+	const char* want[2] = { team1, team2 };
+	for (int i = 0; i < 2; i++) {
+		Q_strncpyz(out[i], want[i][0] ? want[i] : gHoloTeamsSet ? gHoloTeamsWas[i] :
+			Cvar_VariableString(i ? "g_siegeTeam2" : "g_siegeTeam1"), sizeof(out[i]));
+	}
+}
+
+static void Holo_SetTeams(char teams[2][64])
+{
+	if (!gHoloTeamsSet) {
+		Q_strncpyz(gHoloTeamsWas[0], Cvar_VariableString("g_siegeTeam1"), sizeof(gHoloTeamsWas[0]));
+		Q_strncpyz(gHoloTeamsWas[1], Cvar_VariableString("g_siegeTeam2"), sizeof(gHoloTeamsWas[1]));
+		gHoloTeamsSet = qtrue;
+	}
+	Q_strncpyz(gHoloTeamsMap, Cvar_VariableString("mapname"), sizeof(gHoloTeamsMap));
+	Cvar_Set("g_siegeTeam1", teams[0]);
+	Cvar_Set("g_siegeTeam2", teams[1]);
+	Com_Printf("Holotable: teams %s / %s (the server's own: %s / %s)\n", teams[0], teams[1], gHoloTeamsWas[0], gHoloTeamsWas[1]);
+	if (!Q_stricmp(teams[0], gHoloTeamsWas[0]) && !Q_stricmp(teams[1], gHoloTeamsWas[1])) {
+		gHoloTeamsSet = qfalse; // back to the server's own
+	}
+}
+
+// SV_SpawnServer: a map change puts the server's own teams back.
+void SV_HoloMapChange(const char* map)
+{
+	if (!gHoloTeamsSet || !Q_stricmp(map, gHoloTeamsMap)) {
+		return;
+	}
+	Cvar_Set("g_siegeTeam1", gHoloTeamsWas[0]);
+	Cvar_Set("g_siegeTeam2", gHoloTeamsWas[1]);
+	gHoloTeamsSet = qfalse;
+	Com_Printf("Holotable: new map - the server's own teams back (%s / %s)\n", Cvar_VariableString("g_siegeTeam1"), Cvar_VariableString("g_siegeTeam2"));
+}
+
 static void Holo_Play(client_t* cl, const char* file, const char* label, const char* verb)
 {
 	Holo_PutAwayBackground();
 	cJSON* root = Holo_ReadFile(file);
 	const int mode = root ? Holo_WantedMode(root) : -1;
+	char team1[64] = "", team2[64] = "";
+	if (root && mode == 2) {
+		Q_strncpyz(team1, HtStr(root, "team1", ""), sizeof(team1));
+		Q_strncpyz(team2, HtStr(root, "team2", ""), sizeof(team2));
+	}
 	cJSON_Delete(root);
 	const int now = Cvar_VariableIntegerValue("g_Authenticity");
-	if (mode < 0 || mode == now) {
+	char teams[2][64];
+	Holo_WantedTeams(team1, team2, teams);
+	const qboolean teamsChange = (mode == 2 && (Q_stricmp(teams[0], Cvar_VariableString("g_siegeTeam1"))
+		|| Q_stricmp(teams[1], Cvar_VariableString("g_siegeTeam2")))) ? qtrue : qfalse;
+	if ((mode < 0 || mode == now) && !teamsChange) {
 		Holo_Start(cl, file, label, verb);
 		return;
+	}
+	if (teamsChange) {
+		Holo_SetTeams(teams);
 	}
 	memset(&gHoloPending, 0, sizeof(gHoloPending));
 	gHoloPending.waiting = qtrue;
@@ -4027,10 +4088,16 @@ static void Holo_Play(client_t* cl, const char* file, const char* label, const c
 	gHoloPending.client = cl ? (int)(cl - svs.clients) : -1;
 	gHoloPending.mode = mode;
 	gHoloPending.giveUpAt = svs.time + 90000;
-	SV_SendServerCommand(NULL, "chat \"^5[Holotable] ^5%s^7 plays in ^3%s^7 - reloading the map in it now, then it starts. Pick your class again.\"\n",
-		label, Holo_ModeName(mode));
-	Com_Printf("Holotable: switching to mode %d (%s) for %s\n", mode, Holo_ModeName(mode), file);
-	Cbuf_AddText(va("mbmode %d %s\n", mode, Cvar_VariableString("mapname")));
+	if (mode != now) {
+		SV_SendServerCommand(NULL, "chat \"^5[Holotable] ^5%s^7 plays in ^3%s^7%s - reloading the map now, then it starts. Pick your class again.\"\n",
+			label, Holo_ModeName(mode), teamsChange ? " with its own teams" : "");
+		Com_Printf("Holotable: switching to mode %d (%s) for %s\n", mode, Holo_ModeName(mode), file);
+		Cbuf_AddText(va("mbmode %d %s\n", mode, Cvar_VariableString("mapname")));
+	} else {
+		SV_SendServerCommand(NULL, "chat \"^5[Holotable] ^5%s^7 brings its own teams - reloading the map with them now, then it starts. Pick your class again.\"\n", label);
+		Com_Printf("Holotable: reloading %s with the teams of %s\n", Cvar_VariableString("mapname"), file);
+		Cbuf_AddText(va("map %s\n", Cvar_VariableString("mapname")));
+	}
 }
 
 // Each frame: start a waiting scenario a few seconds after its map's back
