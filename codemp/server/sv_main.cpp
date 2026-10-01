@@ -1382,6 +1382,9 @@ void SV_Frame( int msec ) {
 	// action taken yet
 	SV_GunrayCheckFrame();
 
+	// drop anyone whose GUID has just been banned
+	SV_GuidBanFrame();
+
 	// check timeouts
 	SV_CheckTimeouts();
 
