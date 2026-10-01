@@ -316,9 +316,8 @@ static qboolean Social_AllowPlayerDamage(int damage, int mod)
 static qboolean Social_ScenarioHit(void* targ, void* attacker);
 static qboolean Holo_IsNpc(void* ent);
 static qboolean Holo_Running(void);
-static qboolean Holo_BackgroundRegulars(char* out, size_t size);
-static qboolean Social_IsRegular(void* ent);
 static int Holo_NpcSide(int num);
+static qboolean Holo_Peaceful(void* ent);
 // Both on a side (PERS_TEAM 1/2), and the same / different ones. An NPC's
 // side is only what its scenario group gave it: MBII keeps an NPC's own team
 // in PERS_TEAM too, and its numbers overlap the players' (an "enemy" NPC,
@@ -349,8 +348,8 @@ static qboolean Holo_OppositeSides(void* a, void* b)
 
 static void Social_GDamageHook(void* targ, void* inflictor, void* attacker, float* dir, float* point, int damage, int dflags, int mod)
 {
-	if (Social_IsRegular(targ)) {
-		return; // the regulars (a Holotable background's, or g_socialNpcs) can't be hurt, on any server
+	if (Holo_Peaceful(targ)) {
+		return; // a scenario's peaceful NPCs can't be hurt, on any server
 	}
 	if (Social_Enabled() && Social_ScenarioHit(targ, attacker)) {
 		((GDamageFn)gTrampoline)(targ, inflictor, attacker, dir, point, damage, dflags | SOCIAL_DAMAGE_NO_TKPOINTS, mod);
@@ -933,15 +932,9 @@ qboolean SV_SocialSpawnCommand(client_t* cl, const char* command)
 // yaw for the call, then the NPC's playerState origin set to its spot
 // before it begins. Only engine-known entity fields are touched. Each
 // round's G_InitGame clears every entity, so they're spawned again; and
-// they're held on their spot, since their AI may wander. They can't be hurt
-// (Social_GDamageHook).
-//
-// On any server with g_holotable, the map's background Holotable scenario
-// (Holo_BackgroundRegulars) gives the regulars instead: its "regulars", each
-// an NPC type at one of its points with a pose (or patrolling / pacing one of
-// its routes, known here as "@<route id>").
+// they're held on their spot, since their AI may wander. Damage to NPCs is
+// already blocked on social servers (Social_GDamageHook).
 #define SOCIAL_MAX_NPCS 16
-#define SOCIAL_NPCS_TEXT 4096
 
 typedef struct {
 	char   type[32];
@@ -955,7 +948,7 @@ typedef struct {
 	int    nextAnim;   // idle/bartend: next gesture
 	int    offSince;   // first seen off its spot (0 = on it)
 	int    failures;   // spawns MBII refused, in a row
-	char   route[48];  // patrol: the route it walks
+	char   route[32];  // patrol: the route it walks
 	int    wp;         // ...the point it's heading for
 	vec3_t lastPos;    // where it was last frame (walking legs only if it really moved)
 	float  lookYaw;    // patrol: the way it's looking while stood at a point
@@ -986,18 +979,16 @@ static const char* const kNpcBartendAnims[] = {
 
 static socialNpc_t gSocialNpcs[SOCIAL_MAX_NPCS];
 static int gSocialNpcCount = 0;
-static char gSocialNpcsParsed[SOCIAL_NPCS_TEXT] = "\x01"; // never a real value, so the first frame parses
+static char gSocialNpcsParsed[MAX_CVAR_VALUE_STRING * 4 + 4] = "\x01"; // never a real value, so the first frame parses
 
 static qboolean Social_NpcAlive(const socialNpc_t* n);
 
 static void Social_ParseNpcs(void)
 {
-	char want[SOCIAL_NPCS_TEXT];
-	if (!Holo_BackgroundRegulars(want, sizeof(want))) {
-		Com_sprintf(want, sizeof(want), "%s;%s;%s;%s",
-			g_socialNpcs ? g_socialNpcs->string : "", g_socialNpcs2 ? g_socialNpcs2->string : "",
-			g_socialNpcs3 ? g_socialNpcs3->string : "", g_socialNpcs4 ? g_socialNpcs4->string : "");
-	}
+	char want[MAX_CVAR_VALUE_STRING * 4 + 4];
+	Com_sprintf(want, sizeof(want), "%s;%s;%s;%s",
+		g_socialNpcs ? g_socialNpcs->string : "", g_socialNpcs2 ? g_socialNpcs2->string : "",
+		g_socialNpcs3 ? g_socialNpcs3->string : "", g_socialNpcs4 ? g_socialNpcs4->string : "");
 	if (!strcmp(want, gSocialNpcsParsed)) {
 		return;
 	}
@@ -1013,13 +1004,13 @@ static void Social_ParseNpcs(void)
 	}
 	gSocialNpcCount = 0;
 
-	char buf[SOCIAL_NPCS_TEXT];
+	char buf[MAX_CVAR_VALUE_STRING * 4 + 4];
 	Q_strncpyz(buf, want, sizeof(buf));
 	for (char* entry = strtok(buf, ";"); entry && gSocialNpcCount < SOCIAL_MAX_NPCS; entry = strtok(NULL, ";")) {
 		socialNpc_t* n = &gSocialNpcs[gSocialNpcCount];
 		memset(n, 0, sizeof(*n));
-		char flag[64] = "";
-		if (sscanf(entry, "%31s %f %f %f %f %63s", n->type, &n->origin[0], &n->origin[1], &n->origin[2], &n->yaw, flag) >= 5) {
+		char flag[48] = "";
+		if (sscanf(entry, "%31s %f %f %f %f %47s", n->type, &n->origin[0], &n->origin[1], &n->origin[2], &n->yaw, flag) >= 5) {
 			n->ent = -1;
 			n->roam = !Q_stricmp(flag, "roam") ? qtrue : qfalse;
 			qboolean pace = qfalse;
@@ -1106,11 +1097,11 @@ void SV_SocialNpcGesture(const char* type, const char* anim)
 // going). Every half second: a point within 40 units is reached; one it
 // hasn't got any closer to in 8s is skipped, and three skips in a row put
 // it straight on the point, so it can't stay stuck.
-#define SOCIAL_MAX_ROUTES      16
-#define SOCIAL_ROUTE_POINTS    64
+#define SOCIAL_MAX_ROUTES      8
+#define SOCIAL_ROUTE_POINTS    32
 
 typedef struct {
-	char   name[48];
+	char   name[32];
 	vec3_t pts[SOCIAL_ROUTE_POINTS];
 	int    count;
 } socialRoute_t;
@@ -1164,9 +1155,6 @@ static void Social_SaveRoutes(void)
 		return;
 	}
 	for (int i = 0; i < gRouteCount; i++) {
-		if (gRoutes[i].name[0] == '@') {
-			continue; // a Holotable background's: in memory only
-		}
 		for (int p = 0; p < gRoutes[i].count; p++) {
 			fprintf(f, "%s %.0f %.0f %.0f\n", gRoutes[i].name, gRoutes[i].pts[p][0], gRoutes[i].pts[p][1], gRoutes[i].pts[p][2]);
 		}
@@ -1191,38 +1179,6 @@ static socialRoute_t* Social_FindRoute(const char* name, qboolean create)
 	memset(r, 0, sizeof(*r));
 	Q_strncpyz(r->name, name, sizeof(r->name));
 	return r;
-}
-
-// A Holotable background's route, "@<route id>": kept in memory only, never
-// written to social_routes.txt.
-static void Social_SetMemoryRoute(const char* name, const vec3_t* pts, int count)
-{
-	socialRoute_t* r = Social_FindRoute(name, qtrue);
-	if (!r) {
-		return;
-	}
-	r->count = 0;
-	for (int i = 0; i < count && r->count < SOCIAL_ROUTE_POINTS; i++) {
-		VectorCopy(pts[i], r->pts[r->count++]);
-	}
-}
-
-static qboolean Social_IsRegular(void* ent)
-{
-	if (!ent || !sv.gentities || sv.gentitySize <= 0) {
-		return qfalse;
-	}
-	const intptr_t delta = (byte*)ent - (byte*)sv.gentities;
-	if (delta < 0 || delta % sv.gentitySize) {
-		return qfalse;
-	}
-	const int num = (int)(delta / sv.gentitySize);
-	for (int i = 0; i < gSocialNpcCount; i++) {
-		if (gSocialNpcs[i].ent == num && num >= MAX_CLIENTS) {
-			return qtrue;
-		}
-	}
-	return qfalse;
 }
 
 static void Social_Tell(client_t* cl, const char* text)
@@ -1849,6 +1805,7 @@ static client_t* Social_AnyPlayer(void)
 #define HT_DIR           "holotable"
 
 enum { HT_BEHAVE_HUNT, HT_BEHAVE_ROUTE, HT_BEHAVE_GUARD, HT_BEHAVE_IDLE };
+#define HT_ATTACKS_NONE -1 // a group's attacks: nobody - peaceful, and can't be hurt
 enum { HT_WHEN_START, HT_WHEN_TIMER, HT_WHEN_ENTER, HT_WHEN_GROUP_DEAD, HT_WHEN_ALL_DEAD, HT_WHEN_AFTER,
 	HT_WHEN_ALL_IN_AREA, HT_WHEN_GROUP_LEFT, HT_WHEN_PLAYERS, HT_WHEN_PLAYER_DIED, HT_WHEN_NPC_KILLED,
 	HT_WHEN_COUNTER, HT_WHEN_COUNTDOWN_END };
@@ -1876,7 +1833,7 @@ typedef struct {
 	int  behaviour;
 	int  route;                   // HT_BEHAVE_ROUTE: the route it walks
 	float engage;                 // how close a player comes before it goes for them
-	int  attacks;                 // 0 = everyone; TEAM_RED / TEAM_BLUE = only that side (it fights for the other)
+	int  attacks;                 // 0 = everyone; TEAM_RED / TEAM_BLUE = only that side (it fights for the other); HT_ATTACKS_NONE = nobody
 	qboolean routeWalk;           // walks its route (else runs it); after someone, it runs either way
 	// running
 	int  queued;                  // still to spawn
@@ -1935,6 +1892,14 @@ typedef struct {
 } htNpc_t;
 
 static qboolean gHoloActive = qfalse;
+// The running scenario is the map's background (Holo_BackgroundFrame): it
+// plays quietly whenever nothing else does, ignores its time limit, and is
+// put away (quietly) for any other scenario.
+static qboolean gHoloBackground = qfalse;
+static qboolean gHoloStartingBackground = qfalse; // Holo_Start: this one's the background
+static int gHoloBgNextTry = 0;                    // svs.time to (re)start the background
+static qboolean gHoloBgOff = qfalse;              // stopped with !ht stop: not till the next round
+static qboolean Holo_HasBackground(void);
 
 // g_holotable: on any server (set by MBIIEZ's Holotable plugin).
 static qboolean Holo_Enabled(void)
@@ -2010,8 +1975,28 @@ static qboolean Holo_Running(void)
 	return gHoloActive;
 }
 
+// A scenario NPC in a peaceful group (attacks nobody).
+static qboolean Holo_Peaceful(void* ent)
+{
+	if (!gHoloActive || !ent || !sv.gentities || sv.gentitySize <= 0) {
+		return qfalse;
+	}
+	const intptr_t delta = (byte*)ent - (byte*)sv.gentities;
+	if (delta < 0 || delta % sv.gentitySize) {
+		return qfalse;
+	}
+	const int num = (int)(delta / sv.gentitySize);
+	for (int i = 0; i < HT_MAX_NPCS; i++) {
+		const htNpc_t* h = &gHolo.npcs[i];
+		if (h->ent == num && h->group >= 0 && h->group < gHolo.numGroups) {
+			return gHolo.groups[h->group].attacks == HT_ATTACKS_NONE ? qtrue : qfalse;
+		}
+	}
+	return qfalse;
+}
+
 // The side a scenario NPC fights for (TEAM_RED / TEAM_BLUE), or 0: one that
-// attacks everyone, or not a scenario's.
+// attacks everyone (or nobody), or not a scenario's.
 static int Holo_NpcSide(int num)
 {
 	if (!gHoloActive) {
@@ -2238,7 +2223,7 @@ static qboolean Holo_Load(const char* file, char* err, size_t errSize)
 		g->engage = HtNum(it, "engage", 0.0f);
 		g->routeWalk = !Q_stricmp(HtStr(it, "routePace", "walk"), "run") ? qfalse : qtrue;
 		const char* at = HtStr(it, "attacks", "all");
-		g->attacks = !Q_stricmp(at, "team1") ? TEAM_RED : !Q_stricmp(at, "team2") ? TEAM_BLUE : 0;
+		g->attacks = !Q_stricmp(at, "team1") ? TEAM_RED : !Q_stricmp(at, "team2") ? TEAM_BLUE : !Q_stricmp(at, "none") ? HT_ATTACKS_NONE : 0;
 		const char* b = HtStr(it, "behaviour", "hunt");
 		g->behaviour = !Q_stricmp(b, "route") ? HT_BEHAVE_ROUTE : !Q_stricmp(b, "guard") ? HT_BEHAVE_GUARD :
 			!Q_stricmp(b, "idle") ? HT_BEHAVE_IDLE : HT_BEHAVE_HUNT;
@@ -2665,7 +2650,8 @@ static void Holo_ApplySide(htNpc_t* h)
 		return;
 	}
 	sharedEntity_t* e = SV_GentityNum(h->ent);
-	e->playerState->persistant[PERS_TEAM] = (h->sideDue == TEAM_RED) ? TEAM_BLUE : TEAM_RED;
+	e->playerState->persistant[PERS_TEAM] = (h->sideDue == HT_ATTACKS_NONE) ? TEAM_FREE :
+		(h->sideDue == TEAM_RED) ? TEAM_BLUE : TEAM_RED;
 	if (Holo_SidesUsable()) {
 		Holo_SetSide(e, h->sideDue);
 		h->sideDue = 0;
@@ -2682,6 +2668,13 @@ static void Holo_SetSide(sharedEntity_t* e, int attacks)
 	const int* et = Holo_ClientInt(ps, HOLO_OFS_ENEMYTEAM);
 	if (*pt < 0 || *pt > 3 || *et < 0 || *et > 3) {
 		return; // not what an NPC's team looks like: leave it alone
+	}
+	if (attacks == HT_ATTACKS_NONE) {
+		// Peaceful: neutral, like MBII's bartender - it goes for nobody.
+		*Holo_ClientInt(ps, HOLO_OFS_PLAYERTEAM) = 3; // NPC TEAM_NEUTRAL
+		*Holo_ClientInt(ps, HOLO_OFS_ENEMYTEAM) = 3;
+		ps->persistant[PERS_TEAM] = TEAM_FREE;
+		return;
 	}
 	const int side = (attacks == TEAM_RED) ? TEAM_BLUE : TEAM_RED;
 	*Holo_ClientInt(ps, HOLO_OFS_PLAYERTEAM) = side;
@@ -2711,11 +2704,25 @@ static void Holo_End(const char* how)
 	}
 	Holo_RestorePlayers(qfalse);
 	gHoloActive = qfalse; // anytime spawn off with it: respawn mode goes back next frame
-	// The regulars (a background's, or g_socialNpcs) come back once it's over -
-	// not when it's only reloading, and not on a server that has none.
-	const qboolean regularsBack = (gSocialNpcCount > 0 && Q_stricmpn(how, "reloading", 9)) ? qtrue : qfalse;
+	gHoloBgNextTry = svs.time + 5000; // the background (if any) back in a moment
+	if (gHoloBackground) {
+		gHoloBackground = qfalse;
+		Com_Printf("Holotable: background %s put away (%s)\n", gHolo.name, how);
+		return; // quietly
+	}
+	// The regulars (the map's background, or g_socialNpcs) come back once it's
+	// over - not when it's only reloading, and not on a server that has none.
+	const qboolean regularsBack = ((gSocialNpcCount > 0 || Holo_HasBackground()) && Q_stricmpn(how, "reloading", 9)) ? qtrue : qfalse;
 	SV_SendServerCommand(NULL, "chat \"^5[Holotable] ^7%s ^7- %s.%s\"\n", gHolo.name, how, regularsBack ? " The regulars are back." : "");
 	Com_Printf("Holotable: %s over (%s)\n", gHolo.name, how);
+}
+
+// The background steps aside for another scenario.
+static void Holo_PutAwayBackground(void)
+{
+	if (gHoloActive && gHoloBackground) {
+		Holo_End("another scenario");
+	}
 }
 
 // Damage from a scenario (an explosion): straight to MBII's G_Damage - past
@@ -3547,7 +3554,16 @@ static void Holo_Think(void)
 		Holo_DropDeadEnemy(npc);
 		const float* at = npc->playerState->origin;
 		float d2 = 0.0f;
-		sharedEntity_t* nearest = Holo_NearestTarget(at, &d2, g->attacks);
+		sharedEntity_t* nearest = NULL;
+		if (g->attacks == HT_ATTACKS_NONE) {
+			if (gClearEnemy) {
+				void* old = GVM_BeginNative();
+				gClearEnemy(npc); // peaceful: whoever it picked a fight with, it lets go
+				GVM_EndNative(old);
+			}
+		} else {
+			nearest = Holo_NearestTarget(at, &d2, g->attacks);
+		}
 		const float engage2 = g->engage * g->engage;
 
 		switch (g->behaviour) {
@@ -3794,7 +3810,7 @@ static void Holo_Frame(void)
 		Holo_End("called off");
 		return;
 	}
-	if (svs.time - gHolo.startedAt > gHolo.timeLimit * 1000) {
+	if (!gHoloBackground && svs.time - gHolo.startedAt > gHolo.timeLimit * 1000) {
 		Holo_End("time's up");
 		return;
 	}
@@ -3873,6 +3889,7 @@ static qboolean Holo_Start(client_t* cl, const char* file, const char* label, co
 // another one (everyone back to class select), then starting it.
 static void Holo_Play(client_t* cl, const char* file, const char* label, const char* verb)
 {
+	Holo_PutAwayBackground();
 	cJSON* root = Holo_ReadFile(file);
 	const int mode = root ? Holo_WantedMode(root) : -1;
 	cJSON_Delete(root);
@@ -3925,6 +3942,7 @@ static void Holo_PendingFrame(void)
 		SV_SendServerCommand(NULL, "chat \"^5[Holotable]^7 Couldn't switch to %s - starting %s as it is.\"\n",
 			Holo_ModeName(gHoloPending.mode), gHoloPending.label);
 	}
+	Holo_PutAwayBackground();
 	if (!gHoloActive) {
 		Holo_Start(cl, gHoloPending.file, gHoloPending.label, gHoloPending.verb);
 	}
@@ -3966,6 +3984,8 @@ static qboolean Holo_Start(client_t* cl, const char* file, const char* label, co
 		return qfalse;
 	}
 	gHoloActive = qtrue;
+	gHoloBackground = gHoloStartingBackground;
+	const qboolean quiet = gHoloBackground;
 	gHolo.startedAt = svs.time;
 	gHolo.nextSpawn = svs.time + 1500; // the regulars clear out first
 	for (int i = 0; i < gHolo.numTriggers; i++) {
@@ -3990,6 +4010,10 @@ static qboolean Holo_Start(client_t* cl, const char* file, const char* label, co
 	// one that came with the round: it lives within it).
 	if (extendRound && Holo_ShiftRound(gHolo.timeLimit * 1000)) {
 		gHolo.roundExtendMs = gHolo.timeLimit * 1000;
+	}
+	if (quiet) {
+		Com_Printf("Holotable: background %s (%s)\n", gHolo.name, gHolo.file);
+		return qtrue; // the background: no announcements
 	}
 	SV_SendServerCommand(NULL, "chat \"^5[Holotable] ^7%s ^7%s ^5%s^7!\"\n", by ? by : cl ? cl->name : "An admin", verb, gHolo.name);
 	if (gHolo.joinTeam) {
@@ -4065,6 +4089,10 @@ qboolean SV_SocialHoloCommand(client_t* cl, const char* args)
 	if (!Q_stricmp(a1, "stop")) {
 		if (!Holo_CanRun(cl)) {
 			Holo_Reply(cl, "Only admins and scenario runners can stop a scenario.");
+		} else if (gHoloActive && gHoloBackground) {
+			Holo_End(cl ? va("stopped by %s", cl->name) : "stopped");
+			gHoloBgOff = qtrue;
+			Holo_Reply(cl, "Background stopped - it's back next round (or map).");
 		} else if (!gHoloActive) {
 			Holo_Reply(cl, "No scenario is running.");
 		} else {
@@ -4082,6 +4110,13 @@ qboolean SV_SocialHoloCommand(client_t* cl, const char* args)
 		}
 		if (!gHoloActive) {
 			Holo_Reply(cl, "No scenario is running - ^5!ht <n> play^7 starts one.");
+			return qtrue;
+		}
+		if (gHoloBackground) {
+			// The background: read again from its file in a moment, still quietly.
+			Holo_End("reloading");
+			gHoloBgNextTry = svs.time;
+			Holo_Reply(cl, "Background reloading.");
 			return qtrue;
 		}
 		char file[64], label[64];
@@ -4109,7 +4144,7 @@ qboolean SV_SocialHoloCommand(client_t* cl, const char* args)
 	const char* map = Cvar_VariableString("mapname");
 	if (!a1[0]) {
 		if (gHoloActive) {
-			Holo_Reply(cl, va("Running: ^5%s^7 - ^5!ht stop^7 ends it, ^5!ht restart^7 reloads it.", gHolo.name));
+			Holo_Reply(cl, va("%s: ^5%s^7 - ^5!ht stop^7 ends it, ^5!ht restart^7 reloads it.", gHoloBackground ? "Background" : "Running", gHolo.name));
 		}
 		if (!gHoloListCount) {
 			Holo_Reply(cl, va("No Holotable scenarios for ^3%s^7 yet.", map));
@@ -4146,6 +4181,7 @@ qboolean SV_SocialHoloCommand(client_t* cl, const char* args)
 		Holo_Reply(cl, "Only admins and scenario runners can run scenarios.");
 		return qtrue;
 	}
+	Holo_PutAwayBackground();
 	if (gHoloActive || gHoloPending.waiting) {
 		Holo_Reply(cl, gHoloActive ? "A scenario's already running - ^5!ht stop^7 first." :
 			"A scenario's about to start - the map's reloading for it.");
@@ -4241,119 +4277,6 @@ static qboolean Social_HoloRunning(void)
 	return gHoloActive;
 }
 
-// --- Holotable backgrounds ---------------------------------------------------
-//
-// A map can have a background scenario (holotable_auto.txt, "background <id>"
-// lines, kept by MBIIEZ's Holotable plugin; the one for the map that's on is
-// used). Its "regulars" - NPC types at its points, standing, sitting, idling,
-// tending bar, roaming, or patrolling / pacing its routes - hang about
-// whenever no other scenario is on, as the regulars (Social_NpcFrame): they
-// don't fight, can't be hurt, step out while a scenario plays and are back
-// once it's over. Re-read every few seconds, so a change saved on Holotable
-// shows without a restart.
-
-static int gHoloBgNextAt = -1;        // svs.time to look again (-1 = now)
-
-static qboolean Holo_BackgroundRegulars(char* out, size_t size)
-{
-	static char cache[SOCIAL_NPCS_TEXT];
-	static qboolean have = qfalse;
-	if (gHoloBgNextAt >= 0 && svs.time < gHoloBgNextAt && gHoloBgNextAt - svs.time <= 5000) {
-		if (have) {
-			Q_strncpyz(out, cache, size);
-		}
-		return have;
-	}
-	gHoloBgNextAt = svs.time + 5000;
-	have = qfalse;
-	if (!Holo_Enabled()) {
-		return qfalse;
-	}
-
-	FILE* f = fopen(va("%s/%s/holotable_auto.txt", Cvar_VariableString("fs_homepath"), Cvar_VariableString("fs_game")), "r");
-	if (!f) {
-		return qfalse;
-	}
-	const char* map = Cvar_VariableString("mapname");
-	cJSON* root = NULL;
-	char line[160], id[64];
-	while (!root && fgets(line, sizeof(line), f)) {
-		if (sscanf(line, "background %63s", id) != 1) {
-			continue;
-		}
-		cJSON* r = Holo_ReadFile(va("%s.json", id));
-		if (r && !Q_stricmp(HtStr(r, "map", ""), map)) {
-			root = r;
-		} else {
-			cJSON_Delete(r);
-		}
-	}
-	fclose(f);
-	if (!root) {
-		return qfalse;
-	}
-
-	// Its routes, for patrollers and pacers (points on the floor, like the
-	// regulars' spots: up to where a player's origin would be).
-	const cJSON* it;
-	cJSON_ArrayForEach(it, cJSON_GetObjectItemCaseSensitive(root, "routes")) {
-		vec3_t pts[SOCIAL_ROUTE_POINTS];
-		int count = 0;
-		const cJSON* pt;
-		cJSON_ArrayForEach(pt, cJSON_GetObjectItemCaseSensitive(it, "points")) {
-			if (count < SOCIAL_ROUTE_POINTS) {
-				HtVec(pt, pts[count]);
-				pts[count++][2] += 24.0f;
-			}
-		}
-		const char* rid = HtStr(it, "id", "");
-		if (rid[0] && count) {
-			Social_SetMemoryRoute(va("@%s", rid), pts, count);
-		}
-	}
-
-	char text[SOCIAL_NPCS_TEXT] = "";
-	int n = 0;
-	cJSON_ArrayForEach(it, cJSON_GetObjectItemCaseSensitive(root, "regulars")) {
-		if (n >= SOCIAL_MAX_NPCS) {
-			break;
-		}
-		const char* type = HtStr(it, "type", "");
-		const char* at = HtStr(it, "at", "");
-		const cJSON* spot = NULL;
-		const cJSON* p;
-		cJSON_ArrayForEach(p, cJSON_GetObjectItemCaseSensitive(root, "points")) {
-			if (!spot && at[0] && !Q_stricmp(HtStr(p, "id", ""), at)) {
-				spot = p;
-			}
-		}
-		if (!type[0] || strchr(type, ' ') || strchr(type, ';') || !spot) {
-			continue;
-		}
-		vec3_t org;
-		HtVec(spot, org);
-		const char* pose = HtStr(it, "pose", "stand");
-		const char* route = HtStr(it, "route", "");
-		char flag[64] = "";
-		if ((!Q_stricmp(pose, "patrol") || !Q_stricmp(pose, "pace")) && route[0]) {
-			Com_sprintf(flag, sizeof(flag), "%s:@%s", !Q_stricmp(pose, "pace") ? "pace" : "patrol", route);
-		} else if (!Q_stricmp(pose, "sit") || !Q_stricmp(pose, "idle") || !Q_stricmp(pose, "bartend") || !Q_stricmp(pose, "roam")) {
-			Q_strncpyz(flag, pose, sizeof(flag));
-		}
-		Q_strcat(text, sizeof(text), va("%s%s %.0f %.0f %.0f %.0f %s", n ? ";" : "", type,
-			org[0], org[1], org[2] + 24.0f, HtNum(spot, "yaw", 0.0f), flag));
-		n++;
-	}
-	cJSON_Delete(root);
-	if (!n) {
-		return qfalse; // a background with no regulars: the social plugin's own list, if any
-	}
-	Q_strncpyz(cache, text, sizeof(cache));
-	Q_strncpyz(out, cache, size);
-	have = qtrue;
-	return qtrue;
-}
-
 // --- Holotable auto-play ----------------------------------------------------
 //
 // Scenarios for the map that's on can start without anyone typing !ht, on
@@ -4426,6 +4349,7 @@ static qboolean Holo_AutoStart(qboolean extendRound)
 	char file[64], label[64];
 	Q_strncpyz(file, gHoloList[pick].file, sizeof(file));
 	Q_strncpyz(label, gHoloList[pick].name, sizeof(label));
+	Holo_PutAwayBackground();
 	if (!Holo_Start(NULL, file, label, "starts", "The Holotable", extendRound)) {
 		return qfalse;
 	}
@@ -4440,7 +4364,7 @@ static void Holo_AutoTimerFrame(void)
 {
 	static int enoughSince = 0;
 	if (Holo_AutoMode() != 1 || !g_holotableAutoMinutes || g_holotableAutoMinutes->integer <= 0
-		|| gHoloActive || gHoloPending.waiting || gHoloRoundAt) {
+		|| (gHoloActive && !gHoloBackground) || gHoloPending.waiting || gHoloRoundAt) {
 		gHoloAutoNext = 0;
 		return;
 	}
@@ -4506,16 +4430,78 @@ static void Holo_AutoRoundFrame(void)
 static void Holo_AutoGameInit(void)
 {
 	gHoloRoundFile[0] = '\0';
-	if (gHoloActive && g_holotableAutoRestart && g_holotableAutoRestart->integer) {
+	if (gHoloActive && !gHoloBackground && g_holotableAutoRestart && g_holotableAutoRestart->integer) {
 		Q_strncpyz(gHoloRoundFile, gHolo.file, sizeof(gHoloRoundFile));
 	}
 	gHoloRoundAt = svs.time ? svs.time : 1;
+	gHoloBackground = qfalse; // cleared with everything else
+	gHoloBgOff = qfalse;
+	gHoloBgNextTry = 0;
+}
+
+// --- Holotable backgrounds ---------------------------------------------------
+//
+// A map can have a background scenario: holotable_auto.txt "background <id>"
+// lines (kept by MBIIEZ's Holotable plugin), the one for the map that's on.
+// It's an ordinary scenario - typically peaceful groups (attacks nobody) on
+// routes and spots, the cantina's bartender and customers - that plays
+// quietly whenever no other one does: once the round's under way, a few
+// seconds after another scenario ends, and again if it ever ends itself. Its
+// time limit doesn't apply. Any other scenario puts it away.
+
+// The background scenario for the map that's on, if any.
+static qboolean Holo_BackgroundFile(char* file, size_t fileSize, char* label, size_t labelSize)
+{
+	FILE* f = fopen(va("%s/%s/holotable_auto.txt", Cvar_VariableString("fs_homepath"), Cvar_VariableString("fs_game")), "r");
+	if (!f) {
+		return qfalse;
+	}
+	const char* map = Cvar_VariableString("mapname");
+	qboolean found = qfalse;
+	char line[160], id[64];
+	while (!found && fgets(line, sizeof(line), f)) {
+		if (sscanf(line, "background %63s", id) != 1) {
+			continue;
+		}
+		cJSON* root = Holo_ReadFile(va("%s.json", id));
+		if (root && !Q_stricmp(HtStr(root, "map", ""), map)) {
+			Com_sprintf(file, fileSize, "%s.json", id);
+			Holo_Clean(label, HtStr(root, "name", id), labelSize);
+			found = qtrue;
+		}
+		cJSON_Delete(root);
+	}
+	fclose(f);
+	return found;
+}
+
+static qboolean Holo_HasBackground(void)
+{
+	char file[64], label[64];
+	return (Holo_Enabled() && Holo_BackgroundFile(file, sizeof(file), label, sizeof(label))) ? qtrue : qfalse;
+}
+
+static void Holo_BackgroundFrame(void)
+{
+	if (!Holo_Enabled() || gHoloActive || gHoloPending.waiting || gHoloRoundAt || gHoloBgOff
+		|| svs.time < gHoloBgNextTry || Holo_Players() < 1) {
+		return;
+	}
+	gHoloBgNextTry = svs.time + 5000;
+	char file[64], label[64];
+	if (!Holo_BackgroundFile(file, sizeof(file), label, sizeof(label))) {
+		return;
+	}
+	gHoloStartingBackground = qtrue;
+	Holo_Start(NULL, file, label, "", NULL, qfalse);
+	gHoloStartingBackground = qfalse;
 }
 
 static void Holo_AutoFrame(void)
 {
 	Holo_AutoRoundFrame();
 	Holo_AutoTimerFrame();
+	Holo_BackgroundFrame();
 }
 
 // --- Our NPC types, kept with the engine --------------------------------------
@@ -4575,7 +4561,6 @@ void SV_SocialGameInit(void)
 	// A new round or map frees every entity, scenarios included (one may
 	// start again once the round is under way: Holo_AutoRoundFrame).
 	Holo_AutoGameInit();
-	gHoloBgNextAt = -1; // a new map may have another background
 	gHoloNpcFileTime = Holo_NpcFileTime(); // MBII has just read the NPC files
 	gHoloSidesOk = -1;
 	if (gHoloActive) {
@@ -4707,14 +4692,12 @@ void SV_SocialFrame(void)
 	Social_ApplyTimers();
 	Social_ForceRespawnMode();
 
-	if ((Social_Enabled() || gHoloActive || gSocialNpcCount > 0) && gGDamage && !gHookAttempted) {
+	if ((Social_Enabled() || gHoloActive) && gGDamage && !gHookAttempted) {
 		Social_InstallHook(); // scenarios need it for their sides, social or not
 	}
 	if (Social_Enabled()) {
 		Social_CheckDuels();
-	}
-	if (Social_Enabled() || Holo_Enabled()) {
-		Social_NpcFrame(); // the regulars: g_socialNpcs, or a Holotable background's
+		Social_NpcFrame();
 	}
 	Holo_PendingFrame();
 	Holo_AutoFrame();
