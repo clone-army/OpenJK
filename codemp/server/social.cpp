@@ -2466,10 +2466,10 @@ static struct {
 } gHolo;
 
 // A class the running scenario doesn't allow (by its "sc" class name). Not
-// in Full Authentic: there players build their own classes.
+// in Open mode: there players build their own classes.
 qboolean SV_HoloClassRefused(const char* sc)
 {
-	if (!gHoloActive || !gHolo.numClasses || !sc || !sc[0] || Cvar_VariableIntegerValue("g_Authenticity") == 2) {
+	if (!gHoloActive || !gHolo.numClasses || !sc || !sc[0] || Cvar_VariableIntegerValue("g_Authenticity") == 0) {
 		return qfalse;
 	}
 	for (int i = 0; i < gHolo.numClasses; i++) {
@@ -4306,7 +4306,7 @@ static qboolean Holo_Start(client_t* cl, const char* file, const char* label, co
 	} else if (gHolo.anytime) {
 		SV_SendServerCommand(NULL, "chat \"^5[Holotable]^7 Anytime spawn: back in %ds after dying, and join any time.\"\n", gHolo.respawnSecs);
 	}
-	if (gHolo.numClasses && Cvar_VariableIntegerValue("g_Authenticity") != 2) {
+	if (gHolo.numClasses && Cvar_VariableIntegerValue("g_Authenticity") != 0) {
 		SV_SendServerCommand(NULL, "chat \"^5[Holotable]^7 Only the scenario's classes can be played (%d of them).\"\n", gHolo.numClasses);
 	}
 	Com_Printf("Holotable: %s %s %s (%s)\n", cl ? cl->name : "rcon", verb, gHolo.name, gHolo.file);
