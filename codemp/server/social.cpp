@@ -3644,6 +3644,29 @@ static void Holo_Pace(htNpc_t* h, int pace)
 // the body attacking it till it's gone - or pick one on its own side. Drop
 // either so it picks a live, real enemy. gentity_t's enemy is at 0x584 (from G_SetEnemy).
 #define HOLO_ENEMY_OFS 0x584
+// Peaceful NPCs never keep an enemy: every frame, one picked is let go
+// before it can aim or fire. Neutral (NPC TEAM_NEUTRAL both ways, like
+// MBII's bartender) should be enough, but MBII's AI still has armed neutral
+// NPCs go for each other - its own neutral ones just never carry a weapon.
+static void Holo_PeacefulFrame(void)
+{
+	if (!gClearEnemy) {
+		return;
+	}
+	for (int i = 0; i < HT_MAX_NPCS; i++) {
+		const htNpc_t* h = &gHolo.npcs[i];
+		if (h->group < 0 || h->group >= gHolo.numGroups || gHolo.groups[h->group].attacks != HT_ATTACKS_NONE || !Holo_NpcUp(h)) {
+			continue;
+		}
+		sharedEntity_t* npc = SV_GentityNum(h->ent);
+		if (*(void**)((byte*)npc + HOLO_ENEMY_OFS)) {
+			void* old = GVM_BeginNative();
+			gClearEnemy(npc);
+			GVM_EndNative(old);
+		}
+	}
+}
+
 static void Holo_DropDeadEnemy(sharedEntity_t* npc)
 {
 	if (!gClearEnemy || !sv.gentities || sv.gentitySize <= 0) {
@@ -4084,6 +4107,7 @@ static void Holo_Frame(void)
 		Holo_Think();
 	}
 	Holo_PaceFrame();
+	Holo_PeacefulFrame();
 }
 
 // Loads a scenario file and starts it ("started", or "restarted" by
