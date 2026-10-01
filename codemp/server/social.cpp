@@ -316,6 +316,8 @@ static qboolean Social_AllowPlayerDamage(int damage, int mod)
 static qboolean Social_ScenarioHit(void* targ, void* attacker);
 static qboolean Holo_IsNpc(void* ent);
 static qboolean Holo_Running(void);
+static qboolean Holo_BackgroundRegulars(char* out, size_t size);
+static qboolean Social_IsRegular(void* ent);
 // Both on a side (PERS_TEAM 1/2), and the same / different ones.
 static int Holo_SideOf(void* ent)
 {
@@ -339,6 +341,9 @@ static qboolean Holo_OppositeSides(void* a, void* b)
 
 static void Social_GDamageHook(void* targ, void* inflictor, void* attacker, float* dir, float* point, int damage, int dflags, int mod)
 {
+	if (Social_IsRegular(targ)) {
+		return; // the regulars (a Holotable background's, or g_socialNpcs) can't be hurt, on any server
+	}
 	if (Social_Enabled() && Social_ScenarioHit(targ, attacker)) {
 		((GDamageFn)gTrampoline)(targ, inflictor, attacker, dir, point, damage, dflags | SOCIAL_DAMAGE_NO_TKPOINTS, mod);
 		return;
@@ -920,9 +925,15 @@ qboolean SV_SocialSpawnCommand(client_t* cl, const char* command)
 // yaw for the call, then the NPC's playerState origin set to its spot
 // before it begins. Only engine-known entity fields are touched. Each
 // round's G_InitGame clears every entity, so they're spawned again; and
-// they're held on their spot, since their AI may wander. Damage to NPCs is
-// already blocked on social servers (Social_GDamageHook).
+// they're held on their spot, since their AI may wander. They can't be hurt
+// (Social_GDamageHook).
+//
+// On any server with g_holotable, the map's background Holotable scenario
+// (Holo_BackgroundRegulars) gives the regulars instead: its "regulars", each
+// an NPC type at one of its points with a pose (or patrolling / pacing one of
+// its routes, known here as "@<route id>").
 #define SOCIAL_MAX_NPCS 16
+#define SOCIAL_NPCS_TEXT 4096
 
 typedef struct {
 	char   type[32];
@@ -936,7 +947,7 @@ typedef struct {
 	int    nextAnim;   // idle/bartend: next gesture
 	int    offSince;   // first seen off its spot (0 = on it)
 	int    failures;   // spawns MBII refused, in a row
-	char   route[32];  // patrol: the route it walks
+	char   route[48];  // patrol: the route it walks
 	int    wp;         // ...the point it's heading for
 	vec3_t lastPos;    // where it was last frame (walking legs only if it really moved)
 	float  lookYaw;    // patrol: the way it's looking while stood at a point
@@ -967,16 +978,18 @@ static const char* const kNpcBartendAnims[] = {
 
 static socialNpc_t gSocialNpcs[SOCIAL_MAX_NPCS];
 static int gSocialNpcCount = 0;
-static char gSocialNpcsParsed[MAX_CVAR_VALUE_STRING * 4 + 4] = "\x01"; // never a real value, so the first frame parses
+static char gSocialNpcsParsed[SOCIAL_NPCS_TEXT] = "\x01"; // never a real value, so the first frame parses
 
 static qboolean Social_NpcAlive(const socialNpc_t* n);
 
 static void Social_ParseNpcs(void)
 {
-	char want[MAX_CVAR_VALUE_STRING * 4 + 4];
-	Com_sprintf(want, sizeof(want), "%s;%s;%s;%s",
-		g_socialNpcs ? g_socialNpcs->string : "", g_socialNpcs2 ? g_socialNpcs2->string : "",
-		g_socialNpcs3 ? g_socialNpcs3->string : "", g_socialNpcs4 ? g_socialNpcs4->string : "");
+	char want[SOCIAL_NPCS_TEXT];
+	if (!Holo_BackgroundRegulars(want, sizeof(want))) {
+		Com_sprintf(want, sizeof(want), "%s;%s;%s;%s",
+			g_socialNpcs ? g_socialNpcs->string : "", g_socialNpcs2 ? g_socialNpcs2->string : "",
+			g_socialNpcs3 ? g_socialNpcs3->string : "", g_socialNpcs4 ? g_socialNpcs4->string : "");
+	}
 	if (!strcmp(want, gSocialNpcsParsed)) {
 		return;
 	}
@@ -992,13 +1005,13 @@ static void Social_ParseNpcs(void)
 	}
 	gSocialNpcCount = 0;
 
-	char buf[MAX_CVAR_VALUE_STRING * 4 + 4];
+	char buf[SOCIAL_NPCS_TEXT];
 	Q_strncpyz(buf, want, sizeof(buf));
 	for (char* entry = strtok(buf, ";"); entry && gSocialNpcCount < SOCIAL_MAX_NPCS; entry = strtok(NULL, ";")) {
 		socialNpc_t* n = &gSocialNpcs[gSocialNpcCount];
 		memset(n, 0, sizeof(*n));
-		char flag[48] = "";
-		if (sscanf(entry, "%31s %f %f %f %f %47s", n->type, &n->origin[0], &n->origin[1], &n->origin[2], &n->yaw, flag) >= 5) {
+		char flag[64] = "";
+		if (sscanf(entry, "%31s %f %f %f %f %63s", n->type, &n->origin[0], &n->origin[1], &n->origin[2], &n->yaw, flag) >= 5) {
 			n->ent = -1;
 			n->roam = !Q_stricmp(flag, "roam") ? qtrue : qfalse;
 			qboolean pace = qfalse;
@@ -1085,11 +1098,11 @@ void SV_SocialNpcGesture(const char* type, const char* anim)
 // going). Every half second: a point within 40 units is reached; one it
 // hasn't got any closer to in 8s is skipped, and three skips in a row put
 // it straight on the point, so it can't stay stuck.
-#define SOCIAL_MAX_ROUTES      8
-#define SOCIAL_ROUTE_POINTS    32
+#define SOCIAL_MAX_ROUTES      16
+#define SOCIAL_ROUTE_POINTS    64
 
 typedef struct {
-	char   name[32];
+	char   name[48];
 	vec3_t pts[SOCIAL_ROUTE_POINTS];
 	int    count;
 } socialRoute_t;
@@ -1143,6 +1156,9 @@ static void Social_SaveRoutes(void)
 		return;
 	}
 	for (int i = 0; i < gRouteCount; i++) {
+		if (gRoutes[i].name[0] == '@') {
+			continue; // a Holotable background's: in memory only
+		}
 		for (int p = 0; p < gRoutes[i].count; p++) {
 			fprintf(f, "%s %.0f %.0f %.0f\n", gRoutes[i].name, gRoutes[i].pts[p][0], gRoutes[i].pts[p][1], gRoutes[i].pts[p][2]);
 		}
@@ -1167,6 +1183,38 @@ static socialRoute_t* Social_FindRoute(const char* name, qboolean create)
 	memset(r, 0, sizeof(*r));
 	Q_strncpyz(r->name, name, sizeof(r->name));
 	return r;
+}
+
+// A Holotable background's route, "@<route id>": kept in memory only, never
+// written to social_routes.txt.
+static void Social_SetMemoryRoute(const char* name, const vec3_t* pts, int count)
+{
+	socialRoute_t* r = Social_FindRoute(name, qtrue);
+	if (!r) {
+		return;
+	}
+	r->count = 0;
+	for (int i = 0; i < count && r->count < SOCIAL_ROUTE_POINTS; i++) {
+		VectorCopy(pts[i], r->pts[r->count++]);
+	}
+}
+
+static qboolean Social_IsRegular(void* ent)
+{
+	if (!ent || !sv.gentities || sv.gentitySize <= 0) {
+		return qfalse;
+	}
+	const intptr_t delta = (byte*)ent - (byte*)sv.gentities;
+	if (delta < 0 || delta % sv.gentitySize) {
+		return qfalse;
+	}
+	const int num = (int)(delta / sv.gentitySize);
+	for (int i = 0; i < gSocialNpcCount; i++) {
+		if (gSocialNpcs[i].ent == num && num >= MAX_CLIENTS) {
+			return qtrue;
+		}
+	}
+	return qfalse;
 }
 
 static void Social_Tell(client_t* cl, const char* text)
@@ -4165,6 +4213,119 @@ static qboolean Social_HoloRunning(void)
 	return gHoloActive;
 }
 
+// --- Holotable backgrounds ---------------------------------------------------
+//
+// A map can have a background scenario (holotable_auto.txt, "background <id>"
+// lines, kept by MBIIEZ's Holotable plugin; the one for the map that's on is
+// used). Its "regulars" - NPC types at its points, standing, sitting, idling,
+// tending bar, roaming, or patrolling / pacing its routes - hang about
+// whenever no other scenario is on, as the regulars (Social_NpcFrame): they
+// don't fight, can't be hurt, step out while a scenario plays and are back
+// once it's over. Re-read every few seconds, so a change saved on Holotable
+// shows without a restart.
+
+static int gHoloBgNextAt = -1;        // svs.time to look again (-1 = now)
+
+static qboolean Holo_BackgroundRegulars(char* out, size_t size)
+{
+	static char cache[SOCIAL_NPCS_TEXT];
+	static qboolean have = qfalse;
+	if (gHoloBgNextAt >= 0 && svs.time < gHoloBgNextAt && gHoloBgNextAt - svs.time <= 5000) {
+		if (have) {
+			Q_strncpyz(out, cache, size);
+		}
+		return have;
+	}
+	gHoloBgNextAt = svs.time + 5000;
+	have = qfalse;
+	if (!Holo_Enabled()) {
+		return qfalse;
+	}
+
+	FILE* f = fopen(va("%s/%s/holotable_auto.txt", Cvar_VariableString("fs_homepath"), Cvar_VariableString("fs_game")), "r");
+	if (!f) {
+		return qfalse;
+	}
+	const char* map = Cvar_VariableString("mapname");
+	cJSON* root = NULL;
+	char line[160], id[64];
+	while (!root && fgets(line, sizeof(line), f)) {
+		if (sscanf(line, "background %63s", id) != 1) {
+			continue;
+		}
+		cJSON* r = Holo_ReadFile(va("%s.json", id));
+		if (r && !Q_stricmp(HtStr(r, "map", ""), map)) {
+			root = r;
+		} else {
+			cJSON_Delete(r);
+		}
+	}
+	fclose(f);
+	if (!root) {
+		return qfalse;
+	}
+
+	// Its routes, for patrollers and pacers (points on the floor, like the
+	// regulars' spots: up to where a player's origin would be).
+	const cJSON* it;
+	cJSON_ArrayForEach(it, cJSON_GetObjectItemCaseSensitive(root, "routes")) {
+		vec3_t pts[SOCIAL_ROUTE_POINTS];
+		int count = 0;
+		const cJSON* pt;
+		cJSON_ArrayForEach(pt, cJSON_GetObjectItemCaseSensitive(it, "points")) {
+			if (count < SOCIAL_ROUTE_POINTS) {
+				HtVec(pt, pts[count]);
+				pts[count++][2] += 24.0f;
+			}
+		}
+		const char* rid = HtStr(it, "id", "");
+		if (rid[0] && count) {
+			Social_SetMemoryRoute(va("@%s", rid), pts, count);
+		}
+	}
+
+	char text[SOCIAL_NPCS_TEXT] = "";
+	int n = 0;
+	cJSON_ArrayForEach(it, cJSON_GetObjectItemCaseSensitive(root, "regulars")) {
+		if (n >= SOCIAL_MAX_NPCS) {
+			break;
+		}
+		const char* type = HtStr(it, "type", "");
+		const char* at = HtStr(it, "at", "");
+		const cJSON* spot = NULL;
+		const cJSON* p;
+		cJSON_ArrayForEach(p, cJSON_GetObjectItemCaseSensitive(root, "points")) {
+			if (!spot && at[0] && !Q_stricmp(HtStr(p, "id", ""), at)) {
+				spot = p;
+			}
+		}
+		if (!type[0] || strchr(type, ' ') || strchr(type, ';') || !spot) {
+			continue;
+		}
+		vec3_t org;
+		HtVec(spot, org);
+		const char* pose = HtStr(it, "pose", "stand");
+		const char* route = HtStr(it, "route", "");
+		char flag[64] = "";
+		if ((!Q_stricmp(pose, "patrol") || !Q_stricmp(pose, "pace")) && route[0]) {
+			Com_sprintf(flag, sizeof(flag), "%s:@%s", !Q_stricmp(pose, "pace") ? "pace" : "patrol", route);
+		} else if (!Q_stricmp(pose, "sit") || !Q_stricmp(pose, "idle") || !Q_stricmp(pose, "bartend") || !Q_stricmp(pose, "roam")) {
+			Q_strncpyz(flag, pose, sizeof(flag));
+		}
+		Q_strcat(text, sizeof(text), va("%s%s %.0f %.0f %.0f %.0f %s", n ? ";" : "", type,
+			org[0], org[1], org[2] + 24.0f, HtNum(spot, "yaw", 0.0f), flag));
+		n++;
+	}
+	cJSON_Delete(root);
+	if (!n) {
+		return qfalse; // a background with no regulars: the social plugin's own list, if any
+	}
+	Q_strncpyz(cache, text, sizeof(cache));
+	Q_strncpyz(out, cache, size);
+	have = qtrue;
+	return qtrue;
+}
+
 // --- Holotable auto-play ----------------------------------------------------
 //
 // Scenarios for the map that's on can start without anyone typing !ht, on
@@ -4386,6 +4547,7 @@ void SV_SocialGameInit(void)
 	// A new round or map frees every entity, scenarios included (one may
 	// start again once the round is under way: Holo_AutoRoundFrame).
 	Holo_AutoGameInit();
+	gHoloBgNextAt = -1; // a new map may have another background
 	gHoloNpcFileTime = Holo_NpcFileTime(); // MBII has just read the NPC files
 	gHoloSidesOk = -1;
 	if (gHoloActive) {
@@ -4517,12 +4679,14 @@ void SV_SocialFrame(void)
 	Social_ApplyTimers();
 	Social_ForceRespawnMode();
 
-	if ((Social_Enabled() || gHoloActive) && gGDamage && !gHookAttempted) {
+	if ((Social_Enabled() || gHoloActive || gSocialNpcCount > 0) && gGDamage && !gHookAttempted) {
 		Social_InstallHook(); // scenarios need it for their sides, social or not
 	}
 	if (Social_Enabled()) {
 		Social_CheckDuels();
-		Social_NpcFrame();
+	}
+	if (Social_Enabled() || Holo_Enabled()) {
+		Social_NpcFrame(); // the regulars: g_socialNpcs, or a Holotable background's
 	}
 	Holo_PendingFrame();
 	Holo_AutoFrame();
