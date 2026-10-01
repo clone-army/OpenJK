@@ -247,7 +247,6 @@ void SV_DirectConnect( netadr_t from ) {
 		NET_OutOfBandPrint( NS_SERVER, from, "print\nYou are banned from this server.\n" );
 		return;
 	}
-	SV_GuidSeen( userinfo, ip );
 
 	newcl = &temp;
 	Com_Memset (newcl, 0, sizeof(client_t));

@@ -9,6 +9,12 @@ ja_guid is on it is refused at connect, and one already in a server when the
 file changes (a ban added on the web panel or another server) is dropped
 within a few seconds.
 
+A client's ja_guid is salted with the server's address (cl_guidServerUniq),
+so the same player has a different GUID on every server. A ban follows him
+by IP instead: any GUID seen on an IP that a banned GUID was seen on in the
+last GUIDBAN_LINK_DAYS is banned too, as it connects (or straight away, if
+it's already in a server).
+
 Every drop bumps that line's count. A refused client keeps resending its
 connect every few seconds, so one ban counts at most once a minute.
 
@@ -18,12 +24,11 @@ Only the GUID is needed when editing by hand. "from ip ban" is the IP whose
 ban brought this one in (mbiiez/bansync.py bans the GUIDs seen on an IP when
 it's banned, and lifts them with it), empty otherwise.
 
-So that can work, every connect is noted in guidseen.txt beside it:
+Every connect is noted in guidseen.txt beside it, kept for GUIDSEEN_DAYS:
   ip  GUID  last seen  name
-kept for GUIDSEEN_DAYS.
 
-Both files are read and written under an flock on "<file>.lock", which
-mbiiez/guidbans.py takes as well.
+Both files are read and written under an flock on "<guidbans.txt>.lock",
+which mbiiez/guidbans.py takes as well.
 ===========================================================================
 */
 
@@ -37,6 +42,8 @@ mbiiez/guidbans.py takes as well.
 #define GUIDBAN_MAX				1024
 #define GUIDBAN_RECOUNT_SECONDS	60
 #define GUIDBAN_CHECK_MSEC		5000
+#define GUIDBAN_LINK_DAYS		7
+#define GUIDSEEN_MAX			16384
 #define GUIDSEEN_DAYS			30
 
 typedef struct {
@@ -50,8 +57,17 @@ typedef struct {
 	char	note[256];
 } guidBan_t;
 
+typedef struct {
+	char	ip[NET_ADDRSTRMAXLEN];
+	char	guid[64];
+	long	seen;
+	char	name[MAX_NAME_LENGTH * 2];
+} guidSeen_t;
+
 static guidBan_t	guidBans[GUIDBAN_MAX];
 static int			guidBanCount;
+static guidSeen_t	guidSeen[GUIDSEEN_MAX];
+static int			guidSeenCount;
 static cvar_t		*sv_guidBanFile;
 
 static const char *GuidBan_Path( void ) {
@@ -65,6 +81,17 @@ static const char *GuidBan_Path( void ) {
 	} else {
 		Com_sprintf( path, sizeof( path ), "%s/%s/guidbans.txt", Cvar_VariableString( "fs_basepath" ), FS_GetCurrentGameDir() );
 	}
+	return path;
+}
+
+// guidseen.txt, in the same directory
+static const char *GuidSeen_Path( void ) {
+	static char path[MAX_OSPATH];
+	const char *banPath = GuidBan_Path();
+	const char *slash = strrchr( banPath, '/' );
+	const int dirLen = slash ? (int)( slash - banPath ) + 1 : 0;
+
+	Com_sprintf( path, sizeof( path ), "%.*sguidseen.txt", dirLen, banPath );
 	return path;
 }
 
@@ -83,7 +110,7 @@ static void GuidBan_Unlock( int fd ) {
 	}
 }
 
-// tabs and line breaks would break the file's columns
+// tabs and line breaks would break the files' columns
 static void GuidBan_CopyField( char *dest, const char *src, int size ) {
 	Q_strncpyz( dest, src, size );
 	for ( char *p = dest; *p; p++ ) {
@@ -91,6 +118,12 @@ static void GuidBan_CopyField( char *dest, const char *src, int size ) {
 			*p = ' ';
 		}
 	}
+}
+
+// "1.2.3.4:29070" -> "1.2.3.4"
+static void GuidBan_Addr( char *dest, const char *ip, int size ) {
+	Q_strncpyz( dest, ip, size );
+	dest[strcspn( dest, ":" )] = '\0';
 }
 
 static void GuidBan_Load( void ) {
@@ -151,6 +184,71 @@ static void GuidBan_Save( void ) {
 	fclose( f );
 }
 
+static void GuidSeen_Load( void ) {
+	FILE *f = fopen( GuidSeen_Path(), "r" );
+	char line[512];
+	const long now = (long)time( NULL );
+
+	guidSeenCount = 0;
+	if ( !f ) {
+		return;
+	}
+	while ( guidSeenCount < GUIDSEEN_MAX && fgets( line, sizeof( line ), f ) ) {
+		guidSeen_t *s = &guidSeen[guidSeenCount];
+		Com_Memset( s, 0, sizeof( *s ) );
+		line[strcspn( line, "\r\n" )] = '\0';
+		if ( sscanf( line, "%47[^\t]\t%63[^\t]\t%ld\t%63[^\t]", s->ip, s->guid, &s->seen, s->name ) < 3 ) {
+			continue;
+		}
+		if ( now - s->seen > GUIDSEEN_DAYS * 86400L ) {
+			continue;
+		}
+		guidSeenCount++;
+	}
+	fclose( f );
+}
+
+static void GuidSeen_Save( void ) {
+	char tmp[MAX_OSPATH + 8];
+	Com_sprintf( tmp, sizeof( tmp ), "%s.tmp", GuidSeen_Path() );
+
+	FILE *f = fopen( tmp, "w" );
+	if ( !f ) {
+		return;
+	}
+	for ( int i = 0; i < guidSeenCount; i++ ) {
+		const guidSeen_t *s = &guidSeen[i];
+		fprintf( f, "%s\t%s\t%ld\t%s\n", s->ip, s->guid, s->seen, s->name );
+	}
+	fclose( f );
+	rename( tmp, GuidSeen_Path() );
+}
+
+// note this GUID on this IP now (with guidSeen loaded)
+static void GuidSeen_Note( const char *addr, const char *guid, const char *name ) {
+	guidSeen_t *s = NULL;
+
+	for ( int i = 0; i < guidSeenCount; i++ ) {
+		if ( !strcmp( guidSeen[i].ip, addr ) && !Q_stricmp( guidSeen[i].guid, guid ) ) {
+			s = &guidSeen[i];
+			break;
+		}
+	}
+	if ( !s ) {
+		if ( guidSeenCount >= GUIDSEEN_MAX ) {
+			// full: lose the oldest (the file's kept in the order seen)
+			memmove( &guidSeen[0], &guidSeen[1], ( GUIDSEEN_MAX - 1 ) * sizeof( guidSeen[0] ) );
+			guidSeenCount--;
+		}
+		s = &guidSeen[guidSeenCount++];
+		Com_Memset( s, 0, sizeof( *s ) );
+		Q_strncpyz( s->ip, addr, sizeof( s->ip ) );
+		Q_strncpyz( s->guid, guid, sizeof( s->guid ) );
+	}
+	s->seen = (long)time( NULL );
+	GuidBan_CopyField( s->name, name, sizeof( s->name ) );
+}
+
 static guidBan_t *GuidBan_Find( const char *guid ) {
 	if ( !guid || !guid[0] ) {
 		return NULL;
@@ -163,7 +261,58 @@ static guidBan_t *GuidBan_Find( const char *guid ) {
 	return NULL;
 }
 
-static void GuidBan_CountDrop( guidBan_t *b, const char *name, const char *ip ) {
+// a banned GUID seen on this IP lately, if any (with both lists loaded)
+static guidBan_t *GuidBan_BannedOnIp( const char *addr ) {
+	const long now = (long)time( NULL );
+
+	for ( int i = 0; i < guidSeenCount; i++ ) {
+		const guidSeen_t *s = &guidSeen[i];
+		if ( strcmp( s->ip, addr ) || now - s->seen > GUIDBAN_LINK_DAYS * 86400L ) {
+			continue;
+		}
+		guidBan_t *b = GuidBan_Find( s->guid );
+		if ( b ) {
+			return b;
+		}
+	}
+	return NULL;
+}
+
+static guidBan_t *GuidBan_Add( const char *guid, const char *name, const char *addr, const char *banIp, const char *note ) {
+	if ( guidBanCount >= GUIDBAN_MAX ) {
+		Com_Printf( "GUID bans: the list is full (%d)\n", GUIDBAN_MAX );
+		return NULL;
+	}
+	guidBan_t *b = &guidBans[guidBanCount++];
+	Com_Memset( b, 0, sizeof( *b ) );
+	sscanf( guid, "%63s", b->guid );
+	GuidBan_CopyField( b->name, name, sizeof( b->name ) );
+	GuidBan_CopyField( b->ip, addr, sizeof( b->ip ) );
+	b->added = (long)time( NULL );
+	GuidBan_CopyField( b->banIp, banIp, sizeof( b->banIp ) );
+	GuidBan_CopyField( b->note, note, sizeof( b->note ) );
+	return b;
+}
+
+// this GUID is banned or, seen on the same IP as a banned one, now is
+static guidBan_t *GuidBan_Check( const char *guid, const char *name, const char *addr ) {
+	guidBan_t *b = GuidBan_Find( guid );
+
+	if ( !b ) {
+		const guidBan_t *linked = GuidBan_BannedOnIp( addr );
+		if ( linked ) {
+			char note[256];
+			Com_sprintf( note, sizeof( note ), "same IP (%s) as banned %s", addr, linked->guid );
+			b = GuidBan_Add( guid, name, addr, linked->banIp, note );
+			if ( b ) {
+				Com_Printf( "GUID ban: %s banned too - %s\n", b->guid, note );
+			}
+		}
+	}
+	return b;
+}
+
+static void GuidBan_CountDrop( guidBan_t *b, const char *name, const char *addr ) {
 	const long now = (long)time( NULL );
 
 	if ( now - b->lastDrop >= GUIDBAN_RECOUNT_SECONDS ) {
@@ -171,113 +320,73 @@ static void GuidBan_CountDrop( guidBan_t *b, const char *name, const char *ip ) 
 		b->lastDrop = now;
 	}
 	GuidBan_CopyField( b->name, name, sizeof( b->name ) );
-	GuidBan_CopyField( b->ip, ip, sizeof( b->ip ) );
+	GuidBan_CopyField( b->ip, addr, sizeof( b->ip ) );
 }
 
 /*
 ==================
 SV_GuidBanned
 
-SV_DirectConnect: is this userinfo's ja_guid banned? Counts the drop if so.
+SV_DirectConnect: notes the connect in guidseen.txt, then is this
+userinfo's ja_guid banned (or on a banned GUID's IP)? Counts the drop if so.
 ==================
 */
 qboolean SV_GuidBanned( const char *userinfo, const char *ip ) {
 	const char *guid = Info_ValueForKey( userinfo, "ja_guid" );
+	const char *name = Info_ValueForKey( userinfo, "name" );
+	char addr[NET_ADDRSTRMAXLEN];
 
 	if ( !guid[0] ) {
 		return qfalse;
 	}
+	GuidBan_Addr( addr, ip, sizeof( addr ) );
 
 	const int fd = GuidBan_Lock();
 	GuidBan_Load();
-	guidBan_t *b = GuidBan_Find( guid );
+	GuidSeen_Load();
+	GuidSeen_Note( addr, guid, name );
+	GuidSeen_Save();
+	guidBan_t *b = GuidBan_Check( guid, name, addr );
 	if ( b ) {
-		GuidBan_CountDrop( b, Info_ValueForKey( userinfo, "name" ), ip );
+		GuidBan_CountDrop( b, name, addr );
 		GuidBan_Save();
-		Com_Printf( "GUID ban: refused %s" S_COLOR_WHITE " (%s, %s), drop %d\n", Info_ValueForKey( userinfo, "name" ), ip, b->guid, b->drops );
+		Com_Printf( "GUID ban: refused %s" S_COLOR_WHITE " (%s, %s), drop %d\n", name, addr, b->guid, b->drops );
 	}
 	GuidBan_Unlock( fd );
 	return b ? qtrue : qfalse;
 }
 
-/*
-==================
-SV_GuidSeen
-
-SV_DirectConnect: note this GUID connecting from this IP in guidseen.txt,
-dropping anything older than GUIDSEEN_DAYS.
-==================
-*/
-void SV_GuidSeen( const char *userinfo, const char *ip ) {
-	const char *guid = Info_ValueForKey( userinfo, "ja_guid" );
-	char path[MAX_OSPATH], tmp[MAX_OSPATH + 8], addr[NET_ADDRSTRMAXLEN], name[MAX_NAME_LENGTH * 2];
-	char line[512];
-
-	if ( !guid[0] ) {
-		return;
-	}
-	// the IP without its port
-	Q_strncpyz( addr, ip, sizeof( addr ) );
-	addr[strcspn( addr, ":" )] = '\0';
-	GuidBan_CopyField( name, Info_ValueForKey( userinfo, "name" ), sizeof( name ) );
-
-	Com_sprintf( path, sizeof( path ), "%s", GuidBan_Path() );
-	char *slash = strrchr( path, '/' );
-	Q_strncpyz( slash ? slash + 1 : path, "guidseen.txt", sizeof( path ) - ( slash ? slash + 1 - path : 0 ) );
-	Com_sprintf( tmp, sizeof( tmp ), "%s.tmp", path );
-
-	const long now = (long)time( NULL );
-	const int fd = GuidBan_Lock();
-	FILE *out = fopen( tmp, "w" );
-	if ( out ) {
-		FILE *in = fopen( path, "r" );
-		if ( in ) {
-			while ( fgets( line, sizeof( line ), in ) ) {
-				char lineIp[64], lineGuid[64];
-				long seen;
-				if ( sscanf( line, "%63[^\t]\t%63[^\t]\t%ld", lineIp, lineGuid, &seen ) != 3 ) {
-					continue;
-				}
-				if ( now - seen > GUIDSEEN_DAYS * 86400L ) {
-					continue;
-				}
-				if ( !strcmp( lineIp, addr ) && !Q_stricmp( lineGuid, guid ) ) {
-					continue;	// rewritten below
-				}
-				fputs( line, out );
-			}
-			fclose( in );
-		}
-		fprintf( out, "%s\t%s\t%ld\t%s\n", addr, guid, now, name );
-		fclose( out );
-		rename( tmp, path );
-	}
-	GuidBan_Unlock( fd );
-}
-
-// drop everyone in the server whose GUID is on the list
-static void GuidBan_DropConnected( void ) {
+// drop everyone in the server who's banned (with both lists loaded)
+static void GuidBan_DropConnectedLocked( void ) {
 	qboolean changed = qfalse;
-	const int fd = GuidBan_Lock();
 
-	GuidBan_Load();
 	for ( int i = 0; i < sv_maxclients->integer; i++ ) {
 		client_t *cl = &svs.clients[i];
+		char addr[NET_ADDRSTRMAXLEN];
+
 		if ( cl->state < CS_CONNECTED || cl->netchan.remoteAddress.type == NA_BOT ) {
 			continue;
 		}
-		guidBan_t *b = GuidBan_Find( Info_ValueForKey( cl->userinfo, "ja_guid" ) );
+		GuidBan_Addr( addr, NET_AdrToString( cl->netchan.remoteAddress ), sizeof( addr ) );
+		guidBan_t *b = GuidBan_Check( Info_ValueForKey( cl->userinfo, "ja_guid" ), cl->name, addr );
 		if ( !b ) {
 			continue;
 		}
-		GuidBan_CountDrop( b, cl->name, NET_AdrToString( cl->netchan.remoteAddress ) );
-		Com_Printf( "GUID ban: dropped %s" S_COLOR_WHITE " (%s, %s), drop %d\n", cl->name, b->ip, b->guid, b->drops );
+		GuidBan_CountDrop( b, cl->name, addr );
+		Com_Printf( "GUID ban: dropped %s" S_COLOR_WHITE " (%s, %s), drop %d\n", cl->name, addr, b->guid, b->drops );
 		changed = qtrue;
 		SV_DropClient( cl, "was banned" );
 	}
 	if ( changed ) {
 		GuidBan_Save();
 	}
+}
+
+static void GuidBan_DropConnected( void ) {
+	const int fd = GuidBan_Lock();
+	GuidBan_Load();
+	GuidSeen_Load();
+	GuidBan_DropConnectedLocked();
 	GuidBan_Unlock( fd );
 }
 
@@ -285,7 +394,7 @@ static void GuidBan_DropConnected( void ) {
 ==================
 SV_GuidBanFrame
 
-Every few seconds, if the file has changed, drop anyone on it.
+Every few seconds, if the ban list has changed, drop anyone on it.
 ==================
 */
 void SV_GuidBanFrame( void ) {
@@ -310,7 +419,7 @@ void SV_GuidBanFrame( void ) {
 }
 
 static void SV_BanGuid_f( void ) {
-	char guid[64], name[MAX_NAME_LENGTH * 2] = "", ip[NET_ADDRSTRMAXLEN] = "";
+	char guid[64] = "", name[MAX_NAME_LENGTH * 2] = "", addr[NET_ADDRSTRMAXLEN] = "";
 
 	if ( Cmd_Argc() < 2 ) {
 		Com_Printf( "Usage: banguid <client number | guid> [note]\n" );
@@ -325,37 +434,29 @@ static void SV_BanGuid_f( void ) {
 			return;
 		}
 		client_t *cl = &svs.clients[n];
-		Q_strncpyz( guid, Info_ValueForKey( cl->userinfo, "ja_guid" ), sizeof( guid ) );
+		sscanf( Info_ValueForKey( cl->userinfo, "ja_guid" ), "%63s", guid );
 		if ( !guid[0] ) {
 			Com_Printf( "banguid: client %d has no GUID\n", n );
 			return;
 		}
-		GuidBan_CopyField( name, cl->name, sizeof( name ) );
-		Q_strncpyz( ip, NET_AdrToString( cl->netchan.remoteAddress ), sizeof( ip ) );
+		Q_strncpyz( name, cl->name, sizeof( name ) );
+		GuidBan_Addr( addr, NET_AdrToString( cl->netchan.remoteAddress ), sizeof( addr ) );
 	} else {
 		sscanf( arg, "%63s", guid );
 	}
 
 	const int fd = GuidBan_Lock();
 	GuidBan_Load();
+	GuidSeen_Load();
 	if ( GuidBan_Find( guid ) ) {
 		Com_Printf( "banguid: %s is already banned\n", guid );
-	} else if ( guidBanCount >= GUIDBAN_MAX ) {
-		Com_Printf( "banguid: the list is full (%d)\n", GUIDBAN_MAX );
-	} else {
-		guidBan_t *b = &guidBans[guidBanCount++];
-		Com_Memset( b, 0, sizeof( *b ) );
-		Q_strncpyz( b->guid, guid, sizeof( b->guid ) );
-		Q_strncpyz( b->name, name, sizeof( b->name ) );
-		Q_strncpyz( b->ip, ip, sizeof( b->ip ) );
-		b->added = (long)time( NULL );
-		GuidBan_CopyField( b->note, Cmd_ArgsFrom( 2 ), sizeof( b->note ) );
+	} else if ( GuidBan_Add( guid, name, addr, "", Cmd_ArgsFrom( 2 ) ) ) {
 		GuidBan_Save();
 		Com_Printf( "banguid: banned %s\n", guid );
+		// drops them, and anyone here on their IPs, now
+		GuidBan_DropConnectedLocked();
 	}
 	GuidBan_Unlock( fd );
-
-	GuidBan_DropConnected();
 }
 
 static void SV_UnbanGuid_f( void ) {

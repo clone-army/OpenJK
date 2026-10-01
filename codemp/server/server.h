@@ -624,7 +624,6 @@ void SV_GunrayCheckFrame(void);
 void SV_GuidBanInit( void );
 void SV_GuidBanFrame( void );
 qboolean SV_GuidBanned( const char *userinfo, const char *ip );
-void SV_GuidSeen( const char *userinfo, const char *ip );
 void SV_EconomyPersistCredits( client_t *cl );
 
 //
