@@ -313,6 +313,7 @@ static qboolean Social_AllowPlayerDamage(int damage, int mod)
 
 static qboolean Social_BarFightHit(void* targ, void* attacker);
 static qboolean Holo_IsNpc(void* ent);
+static qboolean Holo_Running(void);
 // Both on a side (PERS_TEAM 1/2), and the same / different ones.
 static int Holo_SideOf(void* ent)
 {
@@ -348,6 +349,16 @@ static void Social_GDamageHook(void* targ, void* inflictor, void* attacker, floa
 			return;
 		}
 		dflags |= SOCIAL_DAMAGE_NO_TKPOINTS;
+	} else if (Holo_Running() && (Holo_IsNpc(targ) || Holo_IsNpc(attacker))) {
+		// A Holotable scenario on any other server: an NPC on a side and the
+		// players / NPCs on that same side can't hurt each other (crossfire,
+		// or MBII's AI picking a friend); everything else as MBII has it.
+		if (Holo_SameSide(targ, attacker)) {
+			return;
+		}
+		if (Holo_IsNpc(targ) && Holo_IsNpc(attacker)) {
+			dflags |= SOCIAL_DAMAGE_NO_TKPOINTS;
+		}
 	}
 	((GDamageFn)gTrampoline)(targ, inflictor, attacker, dir, point, damage, dflags, mod);
 }
@@ -2480,6 +2491,11 @@ qboolean SV_HoloClassRefused(const char* sc)
 	return qtrue;
 }
 
+static qboolean Holo_Running(void)
+{
+	return gHoloActive;
+}
+
 static qboolean Holo_AnytimeSpawn(void)
 {
 	return (gHoloActive && gHolo.anytime) ? qtrue : qfalse;
@@ -3926,8 +3942,9 @@ static void Holo_Pace(htNpc_t* h, int pace)
 }
 
 // MBII's AI can hang on to an enemy that's died - an NPC then stands over
-// the body attacking it till it's gone. Drop a dead (or gone) enemy so it
-// picks a live one. gentity_t's enemy is at 0x584 (from G_SetEnemy).
+// the body attacking it till it's gone - or pick one on its own side. Drop
+// either so it picks a live, real enemy. gentity_t's enemy is at 0x584
+// (from G_SetEnemy).
 #define HOLO_ENEMY_OFS 0x584
 static void Holo_DropDeadEnemy(sharedEntity_t* npc)
 {
@@ -3953,7 +3970,8 @@ static void Holo_DropDeadEnemy(sharedEntity_t* npc)
 	} else {
 		alive = e->r.linked ? qtrue : qfalse; // something else it's after (a turret...): its own business
 	}
-	if (!alive) {
+	// Dead, or one of its own side (MBII's AI picking a friend): let it go.
+	if (!alive || Holo_SameSide(npc, e)) {
 		void* old = GVM_BeginNative();
 		gClearEnemy(npc);
 		GVM_EndNative(old);
@@ -4816,10 +4834,10 @@ void SV_SocialFrame(void)
 	Social_ApplyTimers();
 	Social_ForceRespawnMode();
 
+	if ((Social_Enabled() || gHoloActive) && gGDamage && !gHookAttempted) {
+		Social_InstallHook(); // scenarios need it for their sides, social or not
+	}
 	if (Social_Enabled()) {
-		if (gGDamage && !gHookAttempted) {
-			Social_InstallHook();
-		}
 		Social_CheckDuels();
 		Social_NpcFrame();
 		Social_BarFightFrame();
