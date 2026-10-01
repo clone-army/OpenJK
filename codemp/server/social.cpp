@@ -318,12 +318,20 @@ static qboolean Holo_IsNpc(void* ent);
 static qboolean Holo_Running(void);
 static qboolean Holo_BackgroundRegulars(char* out, size_t size);
 static qboolean Social_IsRegular(void* ent);
-// Both on a side (PERS_TEAM 1/2), and the same / different ones.
+static int Holo_NpcSide(int num);
+// Both on a side (PERS_TEAM 1/2), and the same / different ones. An NPC's
+// side is only what its scenario group gave it: MBII keeps an NPC's own team
+// in PERS_TEAM too, and its numbers overlap the players' (an "enemy" NPC,
+// like DarthVader, is 2 - the blue team's), which made every player on blue
+// that NPC's ally and unhurtable by it.
 static int Holo_SideOf(void* ent)
 {
 	const sharedEntity_t* e = (const sharedEntity_t*)ent;
 	if (!e || !e->playerState) {
 		return 0;
+	}
+	if (e->s.eType == ET_NPC) {
+		return Holo_NpcSide(e->s.number);
 	}
 	const int t = e->playerState->persistant[PERS_TEAM];
 	return (t == TEAM_RED || t == TEAM_BLUE) ? t : 0;
@@ -2000,6 +2008,23 @@ qboolean SV_HoloClassRefused(const char* sc)
 static qboolean Holo_Running(void)
 {
 	return gHoloActive;
+}
+
+// The side a scenario NPC fights for (TEAM_RED / TEAM_BLUE), or 0: one that
+// attacks everyone, or not a scenario's.
+static int Holo_NpcSide(int num)
+{
+	if (!gHoloActive) {
+		return 0;
+	}
+	for (int i = 0; i < HT_MAX_NPCS; i++) {
+		const htNpc_t* h = &gHolo.npcs[i];
+		if (h->ent == num && h->group >= 0 && h->group < gHolo.numGroups) {
+			const int attacks = gHolo.groups[h->group].attacks;
+			return attacks == TEAM_RED ? TEAM_BLUE : attacks == TEAM_BLUE ? TEAM_RED : 0;
+		}
+	}
+	return 0;
 }
 
 static qboolean Holo_AnytimeSpawn(void)
