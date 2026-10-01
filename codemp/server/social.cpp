@@ -2686,7 +2686,10 @@ static void Holo_End(const char* how)
 	}
 	Holo_RestorePlayers(qfalse);
 	gHoloActive = qfalse; // anytime spawn off with it: respawn mode goes back next frame
-	SV_SendServerCommand(NULL, "chat \"^5[Holotable] ^7%s ^7- %s. The regulars are back.\"\n", gHolo.name, how);
+	// The regulars (a background's, or g_socialNpcs) come back once it's over -
+	// not when it's only reloading, and not on a server that has none.
+	const qboolean regularsBack = (gSocialNpcCount > 0 && Q_stricmpn(how, "reloading", 9)) ? qtrue : qfalse;
+	SV_SendServerCommand(NULL, "chat \"^5[Holotable] ^7%s ^7- %s.%s\"\n", gHolo.name, how, regularsBack ? " The regulars are back." : "");
 	Com_Printf("Holotable: %s over (%s)\n", gHolo.name, how);
 }
 
