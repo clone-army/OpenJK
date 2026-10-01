@@ -2374,6 +2374,7 @@ typedef struct {
 	int  value;                   // counter amount, objective number, behaviour...
 	char extra[96];               // a second name: texture swap's new shader, group move's route...
 	int  spawnPt, spawnRt;        // spawn: where this time (-1 = the group's own place)
+	int  route;                   // move: the route to walk (not atRef - the "at" place below sets that)
 } htAction_t;
 typedef struct {
 	char id[40];
@@ -2722,7 +2723,7 @@ static qboolean Holo_Load(const char* file, char* err, size_t errSize)
 			cJSON_Delete(root);
 			return qfalse;
 		}
-		if (g->behaviour == HT_BEHAVE_ROUTE && g->route < 0) {
+		if (g->behaviour == HT_BEHAVE_ROUTE && (g->route < 0 || !gHolo.routes[g->route].count)) {
 			g->behaviour = HT_BEHAVE_HUNT; // no route to walk: straight at them
 		}
 	}
@@ -2827,9 +2828,9 @@ static qboolean Holo_Load(const char* file, char* err, size_t errSize)
 				const char* b = HtStr(a, "behaviour", "hunt");
 				act->value = !Q_stricmp(b, "route") ? HT_BEHAVE_ROUTE : !Q_stricmp(b, "guard") ? HT_BEHAVE_GUARD :
 					!Q_stricmp(b, "idle") ? HT_BEHAVE_IDLE : HT_BEHAVE_HUNT;
-				act->atRef = HT_FIND(gHolo.routes, gHolo.numRoutes, HtStr(a, "route", ""));
+				act->route = HT_FIND(gHolo.routes, gHolo.numRoutes, HtStr(a, "route", ""));
 				act->center = !Q_stricmp(HtStr(a, "pace", "walk"), "run") ? qfalse : qtrue; // walk the route
-				if (act->ref < 0 || (act->value == HT_BEHAVE_ROUTE && act->atRef < 0)) continue;
+				if (act->ref < 0 || (act->value == HT_BEHAVE_ROUTE && (act->route < 0 || !gHolo.routes[act->route].count))) continue;
 			} else if (!Q_stricmp(d, "trigger_on") || !Q_stricmp(d, "trigger_off")) {
 				act->type = !Q_stricmp(d, "trigger_on") ? HT_DO_TRIGGER_ON : HT_DO_TRIGGER_OFF;
 				act->ref = HT_FIND(gHolo.triggers, gHolo.numTriggers, HtStr(a, "trigger", ""));
@@ -3305,6 +3306,12 @@ static void Holo_SetCvarFor(const char* cvar, int value, char* was, size_t wasSi
 
 // Queues a group to spawn - at a point or along a route if given, else at
 // its own place. The NPCs then arrive one at a time (Holo_SpawnOne).
+// A route that can be walked: one of the scenario's, with points.
+static qboolean Holo_RouteOk(int route)
+{
+	return (route >= 0 && route < gHolo.numRoutes && gHolo.routes[route].count > 0) ? qtrue : qfalse;
+}
+
 static void Holo_QueueGroup(int gi, int point, int route)
 {
 	htGroup_t* g = &gHolo.groups[gi];
@@ -3547,7 +3554,7 @@ static void Holo_RunActions(htTrigger_t* t, client_t* who)
 			htGroup_t* g = &gHolo.groups[act->ref];
 			g->behaviour = act->value;
 			if (act->value == HT_BEHAVE_ROUTE) {
-				g->route = act->atRef;
+				g->route = act->route;
 				g->routeWalk = act->center;
 			}
 			const qboolean guardAt = (act->value == HT_BEHAVE_GUARD && Holo_ActionAt(act, who, at)) ? qtrue : qfalse;
@@ -3758,7 +3765,7 @@ static void Holo_SpawnOne(void)
 		h->group = gi;
 		h->spawnedAt = svs.time;
 		VectorCopy(org, h->home);
-		if (g->behaviour == HT_BEHAVE_ROUTE) {
+		if (g->behaviour == HT_BEHAVE_ROUTE && Holo_RouteOk(g->route)) {
 			// Joins its route at the point nearest where it arrived.
 			const htRoute_t* r = &gHolo.routes[g->route];
 			float best = 0.0f;
@@ -3859,7 +3866,7 @@ static int* Holo_ScriptFlags(int ent)
 static qboolean Holo_RouteArrive(htNpc_t* h, sharedEntity_t* e)
 {
 	const htGroup_t* g = &gHolo.groups[h->group];
-	if (!h->onRoute || g->behaviour != HT_BEHAVE_ROUTE || g->route < 0) {
+	if (!h->onRoute || g->behaviour != HT_BEHAVE_ROUTE || !Holo_RouteOk(g->route)) {
 		return qfalse;
 	}
 	const htRoute_t* r = &gHolo.routes[g->route];
@@ -3942,6 +3949,10 @@ static void Holo_Think(void)
 		case HT_BEHAVE_ROUTE: {
 			// Round its route till a player's within engage, then after them;
 			// back to the route when nobody's within engage + 150.
+			if (!Holo_RouteOk(g->route)) {
+				gHolo.groups[h->group].behaviour = HT_BEHAVE_HUNT; // nothing to walk: hunt instead
+				break;
+			}
 			const htRoute_t* r = &gHolo.routes[g->route];
 			if (h->onRoute) {
 				if (nearest && d2 < engage2) {
