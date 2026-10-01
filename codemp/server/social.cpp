@@ -3340,6 +3340,27 @@ static void Holo_RunActions(htTrigger_t* t, client_t* who)
 // there's nothing to spawn or no room, HT_SPAWN_FAILED when the game
 // couldn't (an unknown type - the next one can go straight away).
 enum { HT_SPAWN_NONE, HT_SPAWN_DONE, HT_SPAWN_FAILED };
+// NPC types a scenario never spawns: they take the server down. MBII's
+// boba_fett is its one CLASS_BOBAFETT NPC (the jetpack / flamethrower AI) -
+// six of them in a scenario and the server shut down within seconds,
+// "Cvar_Update: handle 5432 out of range" (2026-10-01).
+static qboolean Holo_TypeRefused(const char* type)
+{
+	static const char* const kRefused[] = { "boba_fett" };
+	static int warnedAt = -100000;
+	for (int i = 0; i < (int)ARRAY_LEN(kRefused); i++) {
+		if (!Q_stricmp(type, kRefused[i])) {
+			if (svs.time - warnedAt > 30000 || svs.time < warnedAt) {
+				warnedAt = svs.time;
+				SV_SendServerCommand(NULL, "chat \"^5[Holotable]^7 Not spawning ^3%s^7 - that NPC crashes the server. Pick another type for it on Holotable.\"\n", type);
+			}
+			Com_Printf("Holotable: refused NPC \"%s\" (it crashes the server)\n", type);
+			return qtrue;
+		}
+	}
+	return qfalse;
+}
+
 static int Holo_SpawnOne(void)
 {
 	// Anyone in the game to spawn from - MBII's NPC spawn takes a client;
@@ -3405,6 +3426,17 @@ static int Holo_SpawnOne(void)
 			org[0] += 40.0f * (n / r->count);
 		}
 		org[2] += 24.0f; // a point on the floor: drop them in just above it
+
+		if (Holo_TypeRefused(type)) {
+			// As a spawn MBII refused: on to the next.
+			if (g->leaderDue) {
+				g->leaderDue = qfalse;
+			} else {
+				g->queued--;
+			}
+			g->spawned++;
+			return HT_SPAWN_FAILED;
+		}
 
 		playerState_t* pps = spawner->gentity->playerState;
 		const float savedYaw = pps->viewangles[YAW];
