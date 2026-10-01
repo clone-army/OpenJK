@@ -1838,6 +1838,7 @@ typedef struct {
 	int  attacks;                 // 0 = everyone; TEAM_RED / TEAM_BLUE = only that side (it fights for the other); HT_ATTACKS_NONE = nobody
 	qboolean routeWalk;           // walks its route (else runs it); after someone, it runs either way
 	int  followClient;            // HT_BEHAVE_FOLLOW: the player it follows (-1 = nobody)
+	char followClass[40];         // ...or (set) whoever's nearest playing this class ("sc" token)
 	// running
 	int  queued;                  // still to spawn
 	int  spawned;
@@ -2364,7 +2365,10 @@ static qboolean Holo_Load(const char* file, char* err, size_t errSize)
 				act->ref = HT_FIND(gHolo.groups, gHolo.numGroups, HtStr(a, "group", ""));
 				const char* b = HtStr(a, "behaviour", "hunt");
 				act->value = !Q_stricmp(b, "route") ? HT_BEHAVE_ROUTE : !Q_stricmp(b, "guard") ? HT_BEHAVE_GUARD :
-					!Q_stricmp(b, "idle") ? HT_BEHAVE_IDLE : !Q_stricmp(b, "follow") ? HT_BEHAVE_FOLLOW : HT_BEHAVE_HUNT;
+					!Q_stricmp(b, "idle") ? HT_BEHAVE_IDLE : (!Q_stricmp(b, "follow") || !Q_stricmp(b, "follow_class")) ? HT_BEHAVE_FOLLOW : HT_BEHAVE_HUNT;
+				// follow_class: the class to follow (extra); follow: the player who set it off (extra empty)
+				Q_strncpyz(act->extra, !Q_stricmp(b, "follow_class") ? HtStr(a, "class", "") : "", sizeof(act->extra));
+				if (!Q_stricmp(b, "follow_class") && !act->extra[0]) continue;
 				act->route = HT_FIND(gHolo.routes, gHolo.numRoutes, HtStr(a, "route", ""));
 				act->center = !Q_stricmp(HtStr(a, "pace", "walk"), "run") ? qfalse : qtrue; // walk the route
 				if (act->ref < 0 || (act->value == HT_BEHAVE_ROUTE && (act->route < 0 || !gHolo.routes[act->route].count))) continue;
@@ -3139,9 +3143,15 @@ static void Holo_RunActions(htTrigger_t* t, client_t* who)
 			// New orders for a group, and every one of it that's up.
 			htGroup_t* g = &gHolo.groups[act->ref];
 			g->behaviour = act->value;
-			if (act->value == HT_BEHAVE_FOLLOW) {
+			if (act->value == HT_BEHAVE_FOLLOW && act->extra[0]) {
+				// A class: whoever's nearest playing it (Holo_FollowClassTarget).
+				Q_strncpyz(g->followClass, act->extra, sizeof(g->followClass));
+				g->followClient = -1;
+				Com_Printf("Holotable: group %s follows class %s\n", g->id, g->followClass);
+			} else if (act->value == HT_BEHAVE_FOLLOW) {
 				// The player who set the trigger off - or, for one no player
 				// sets off, whoever's nearest the group.
+				g->followClass[0] = '\0';
 				g->followClient = -1;
 				if (who && Holo_PlayerIn((int)(who - svs.clients))) {
 					g->followClient = (int)(who - svs.clients);
@@ -3576,6 +3586,40 @@ static void Holo_DropDeadEnemy(sharedEntity_t* npc)
 	}
 }
 
+// A player's class token ("sc" in their player configstring - what
+// scenarios' class limits go by).
+static qboolean Holo_PlaysClass(int c, const char* sc)
+{
+	char cs[MAX_INFO_STRING];
+	SV_GetConfigstring(MB2_CS_PLAYERS + c, cs, sizeof(cs));
+	return (cs[0] && !Q_stricmp(Info_ValueForKey(cs, "sc"), sc)) ? qtrue : qfalse;
+}
+
+// A group following a class: the player it has while they're alive and
+// still on it, else whoever's nearest that is (none: -1, and it waits).
+static void Holo_FollowClassTarget(htGroup_t* g, const vec3_t from)
+{
+	if (!g->followClass[0]) {
+		return;
+	}
+	const int c = g->followClient;
+	if (c >= 0 && c < sv_maxclients->integer && Holo_PlayerIn(c) && Holo_PlaysClass(c, g->followClass)) {
+		return;
+	}
+	g->followClient = -1;
+	float best = 0.0f;
+	for (int i = 0; i < sv_maxclients->integer; i++) {
+		if (!Holo_PlayerIn(i) || !Holo_PlaysClass(i, g->followClass)) {
+			continue;
+		}
+		const float d = DistanceSquared(svs.clients[i].gentity->playerState->origin, from);
+		if (g->followClient < 0 || d < best) {
+			g->followClient = i;
+			best = d;
+		}
+	}
+}
+
 static void Holo_Think(void)
 {
 	for (int i = 0; i < HT_MAX_NPCS; i++) {
@@ -3609,6 +3653,7 @@ static void Holo_Think(void)
 			// to catch up (Holo_PaceFrame keeps its goal on them). One that
 			// attacks everyone goes for them instead; one on a side still
 			// takes on enemies who come close, then carries on following.
+			Holo_FollowClassTarget(&gHolo.groups[h->group], at);
 			const int c = g->followClient;
 			if (c < 0 || c >= sv_maxclients->integer || !Holo_PlayerIn(c)) {
 				Holo_Pace(h, 0);
