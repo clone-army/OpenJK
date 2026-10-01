@@ -3667,7 +3667,11 @@ static void Holo_RunActions(htTrigger_t* t, client_t* who)
 }
 
 // One NPC from the next group with any waiting, in turn.
-static void Holo_SpawnOne(void)
+// Spawns the next queued NPC (groups taking turns): HT_SPAWN_NONE when
+// there's nothing to spawn or no room, HT_SPAWN_FAILED when the game
+// couldn't (an unknown type - the next one can go straight away).
+enum { HT_SPAWN_NONE, HT_SPAWN_DONE, HT_SPAWN_FAILED };
+static int Holo_SpawnOne(void)
 {
 	// Anyone in the game to spawn from - MBII's NPC spawn takes a client;
 	// the NPC is moved to its spot straight after. Bots will do.
@@ -3678,7 +3682,7 @@ static void Holo_SpawnOne(void)
 		}
 	}
 	if (!spawner || !gNPCSpawnType) {
-		return;
+		return HT_SPAWN_NONE;
 	}
 	int slot = -1;
 	for (int i = 0; i < HT_MAX_NPCS && slot < 0; i++) {
@@ -3687,7 +3691,7 @@ static void Holo_SpawnOne(void)
 		}
 	}
 	if (slot < 0) {
-		return; // full: wait for some to go down
+		return HT_SPAWN_NONE; // full: wait for some to go down
 	}
 	for (int k = 0; k < gHolo.numGroups; k++) {
 		const int gi = (gHolo.spawnTurn + k) % gHolo.numGroups;
@@ -3749,7 +3753,7 @@ static void Holo_SpawnOne(void)
 		g->spawned++;
 		if (!e) {
 			Com_Printf("Holotable: couldn't spawn NPC \"%s\"\n", type);
-			return;
+			return HT_SPAWN_FAILED;
 		}
 		if (e->playerState) {
 			VectorCopy(org, e->playerState->origin);
@@ -3779,8 +3783,9 @@ static void Holo_SpawnOne(void)
 			h->onRoute = (r->count > 0) ? qtrue : qfalse;
 		}
 		Com_Printf("Holotable: %s - %s (entity %d)\n", g->name, type, e->s.number);
-		return;
+		return HT_SPAWN_DONE;
 	}
+	return HT_SPAWN_NONE;
 }
 
 static client_t* Holo_NearestPlayer(const vec3_t from, float* distSq, int onlyTeam)
@@ -4210,8 +4215,11 @@ static void Holo_Frame(void)
 		}
 	}
 	if (svs.time >= gHolo.nextSpawn) {
-		gHolo.nextSpawn = svs.time + 600;
-		Holo_SpawnOne();
+		// One NPC a quarter second; one the game won't spawn doesn't hold
+		// up the rest.
+		gHolo.nextSpawn = svs.time + 250;
+		for (int tries = 0; tries < 8 && Holo_SpawnOne() == HT_SPAWN_FAILED; tries++) {
+		}
 	}
 	if (svs.time >= gHolo.nextThink) {
 		gHolo.nextThink = svs.time + 1000;
