@@ -455,6 +455,9 @@ void SV_SpawnServer( char *server, qboolean killBots, ForceReload_e eForceReload
 	char		systemInfo[16384];
 	const char	*p;
 
+	// A Holotable scenario's teams (g_siegeTeam1/2) end with their map.
+	SV_HoloMapChange( server );
+
 	SV_StopAutoRecordDemos();
 
 	SV_SendMapChange();
