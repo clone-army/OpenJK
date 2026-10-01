@@ -158,6 +158,10 @@ static int (*gSoundIndex)(const char* name) = NULL;
 static void (*gSoundAtLoc)(float* loc, int channel, int soundIndex) = NULL;
 static void (*gTeleportPlayer)(void* player, float* origin, float* angles) = NULL;
 static void (*gUseTargets2)(void* ent, void* activator, const char* target) = NULL;
+// MBII ends a round with this: (winning team - 1, 2, or 0 for a draw,
+// ENTITYNUM_NONE, 0), as its own calls do. gSiegeRoundEnded: already over.
+static void (*gSiegeRoundComplete)(int team, int client, int unused) = NULL;
+static int* gSiegeRoundEnded = NULL;
 static void* (*gNPCSpawnType)(void* ent, char* type, char* targetname, int isVehicle, int asIfPlayer, int siegeTeam) = NULL;
 static void (*gFreeEntity)(void* ent) = NULL;
 static void (*gSetEnemy)(void* self, void* enemy) = NULL;
@@ -2313,7 +2317,7 @@ enum { HT_BEHAVE_HUNT, HT_BEHAVE_ROUTE, HT_BEHAVE_GUARD, HT_BEHAVE_IDLE };
 enum { HT_WHEN_START, HT_WHEN_TIMER, HT_WHEN_ENTER, HT_WHEN_GROUP_DEAD, HT_WHEN_ALL_DEAD, HT_WHEN_AFTER,
 	HT_WHEN_ALL_IN_AREA, HT_WHEN_GROUP_LEFT, HT_WHEN_PLAYERS, HT_WHEN_PLAYER_DIED, HT_WHEN_NPC_KILLED };
 enum { HT_DO_SPAWN, HT_DO_MESSAGE, HT_DO_CENTER, HT_DO_SOUND, HT_DO_MUSIC, HT_DO_END, HT_DO_SAY,
-	HT_DO_TELL, HT_DO_EXPLODE, HT_DO_EFFECT, HT_DO_SHAKE, HT_DO_TELEPORT, HT_DO_USE, HT_DO_DESPAWN };
+	HT_DO_TELL, HT_DO_EXPLODE, HT_DO_EFFECT, HT_DO_SHAKE, HT_DO_TELEPORT, HT_DO_USE, HT_DO_DESPAWN, HT_DO_WIN };
 enum { HT_AT_NONE, HT_AT_POINT, HT_AT_AREA, HT_AT_PLAYER }; // where an action happens
 
 typedef struct { char id[40]; vec3_t org; float yaw; } htPoint_t;
@@ -2714,6 +2718,12 @@ static qboolean Holo_Load(const char* file, char* err, size_t errSize)
 				act->type = HT_DO_USE;
 				Q_strncpyz(act->target, HtStr(a, "target", ""), sizeof(act->target));
 				if (!act->target[0]) continue;
+			} else if (!Q_stricmp(d, "win")) {
+				// Ends the round: that side wins (or a draw).
+				act->type = HT_DO_WIN;
+				const char* team = HtStr(a, "team", "team1");
+				act->ref = !Q_stricmp(team, "team2") ? TEAM_BLUE : !Q_stricmp(team, "draw") ? 0 : TEAM_RED;
+				Holo_Clean(act->text, HtStr(a, "text", ""), sizeof(act->text));
 			} else if (!Q_stricmp(d, "despawn")) {
 				act->type = HT_DO_DESPAWN;
 				act->ref = HT_FIND(gHolo.groups, gHolo.numGroups, HtStr(a, "group", ""));
@@ -3180,6 +3190,27 @@ static void Holo_RunActions(htTrigger_t* t, client_t* who)
 			}
 			Holo_End("finished");
 			break;
+		case HT_DO_WIN: {
+			// The scenario's over (NPCs gone, settings back), then MBII ends
+			// the round as if that side had won it - scores, its round-over
+			// message, the next round.
+			const int team = act->ref;
+			char how[64];
+			Com_sprintf(how, sizeof(how), team ? "%s win the round" : "the round's a draw", team ? gHolo.teamNames[team] : "");
+			if (act->text[0]) {
+				SV_SendServerCommand(NULL, "cp \"%s\"\n", act->text);
+			}
+			Holo_End(how);
+			if (!gSiegeRoundComplete || (gSiegeRoundEnded && *gSiegeRoundEnded)) {
+				Com_Printf("Holotable: can't end the round (%s)\n", gSiegeRoundComplete ? "it's already over" : "MBII's SiegeRoundComplete not found");
+				break;
+			}
+			void* old = GVM_BeginNative();
+			gSiegeRoundComplete(team, ENTITYNUM_NONE, 0);
+			GVM_EndNative(old);
+			Com_Printf("Holotable: round ended - %s\n", how);
+			break;
+		}
 		}
 	}
 }
@@ -3946,6 +3977,8 @@ void SV_SocialGameInit(void)
 		gSoundAtLoc = (void (*)(float*, int, int))Sys_LoadFunction(dll, "G_SoundAtLoc");
 		gTeleportPlayer = (void (*)(void*, float*, float*))Sys_LoadFunction(dll, "TeleportPlayer");
 		gUseTargets2 = (void (*)(void*, void*, const char*))Sys_LoadFunction(dll, "G_UseTargets2");
+		gSiegeRoundComplete = (void (*)(int, int, int))Sys_LoadFunction(dll, "SiegeRoundComplete");
+		gSiegeRoundEnded = (int*)Sys_LoadFunction(dll, "gSiegeRoundEnded");
 		gNPCSpawnType = (void* (*)(void*, char*, char*, int, int, int))Sys_LoadFunction(dll, "NPC_SpawnType");
 		gFreeEntity = (void (*)(void*))Sys_LoadFunction(dll, "G_FreeEntity");
 		gSetEnemy = (void (*)(void*, void*))Sys_LoadFunction(dll, "G_SetEnemy");
