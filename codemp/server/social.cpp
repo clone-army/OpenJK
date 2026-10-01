@@ -138,6 +138,7 @@ static const byte kGDamagePrologue[] = { 0x55, 0x57, 0x56, 0x53, 0x81, 0xEC };
 #define SOCIAL_PROLOGUE_LEN 10
 
 static void* gSocialDll = NULL;
+static void* gSocialProbe = NULL; // vmMain's address in that module
 static qboolean* gBNewRespawnMode = NULL;
 static socialRespawnTimers_t* gRespawnTimers = NULL;
 static socialRespawnTimers_t gOriginalTimers;
@@ -4759,8 +4760,15 @@ void SV_SocialGameInit(void)
 		return; // legacy/QVM game, nothing to look up
 	}
 
-	if (dll != gSocialDll) {
+	// A map change unloads the game module and loads it again, and the new
+	// handle can match the old one while the module sits somewhere else - so
+	// a symbol's address, not the handle, says whether to look them all up
+	// again. (Missing that left these pointing into the old image: a crash
+	// the first frame after changing to a big map like mb2_veh_boc.)
+	void* probe = Sys_LoadFunction(dll, "vmMain");
+	if (dll != gSocialDll || probe != gSocialProbe) {
 		gSocialDll = dll;
+		gSocialProbe = probe;
 		gBNewRespawnMode = (qboolean*)Sys_LoadFunction(dll, "bNewRespawnMode");
 		gRespawnTimers = (socialRespawnTimers_t*)Sys_LoadFunction(dll, "ctfcqRespawnTimers");
 		gGDamage = (byte*)Sys_LoadFunction(dll, "G_Damage");
