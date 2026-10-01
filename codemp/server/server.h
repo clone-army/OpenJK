@@ -671,6 +671,7 @@ qboolean SV_SocialBarFightCommand(client_t* cl, const char* args);
 qboolean SV_SocialHoloCommand(client_t* cl, const char* args);
 void SV_HoloDebugSpawn(const char* type);
 void SV_HoloDebugDump(int num);
+qboolean SV_HoloClassRefused(const char* sc);
 void SV_HoloClientThink(client_t* cl, usercmd_t* cmd);
 void SV_SocialEnsureNpcFiles(void);
 qboolean SV_SocialWaypointCommand(client_t* cl, const char* args);
