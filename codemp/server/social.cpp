@@ -2438,6 +2438,8 @@ static struct {
 	char balanceWas[16];          // g_balance before it was turned off
 	int  roundExtendMs;           // added to the round clock at the start
 	int  nextTeamCheck;
+	char classes[256][40];        // the classes (.mbch names) that can be played; none = any
+	int  numClasses;
 	int  warnedAt[MAX_CLIENTS];
 	qboolean playerUp[MAX_CLIENTS];   // for "a player dies"
 	// Counters, the countdown, frozen players, and server settings changed
@@ -2460,6 +2462,21 @@ static struct {
 	qboolean npcUp[HT_MAX_NPCS];      // for "an NPC is killed"
 	int  pointSpawns[HT_MAX_POINTS];  // NPCs spawned at each point so far (where the next one goes)
 } gHolo;
+
+// A class the running scenario doesn't allow (by its "sc" class name). Not
+// in Full Authentic: there players build their own classes.
+qboolean SV_HoloClassRefused(const char* sc)
+{
+	if (!gHoloActive || !gHolo.numClasses || !sc || !sc[0] || Cvar_VariableIntegerValue("g_Authenticity") == 2) {
+		return qfalse;
+	}
+	for (int i = 0; i < gHolo.numClasses; i++) {
+		if (!Q_stricmp(sc, gHolo.classes[i])) {
+			return qfalse;
+		}
+	}
+	return qtrue;
+}
 
 static qboolean Holo_AnytimeSpawn(void)
 {
@@ -2613,6 +2630,14 @@ static qboolean Holo_Load(const char* file, char* err, size_t errSize)
 	const char* jt = HtStr(root, "joinTeam", "any");
 	gHolo.joinTeam = !Q_stricmp(jt, "team1") ? TEAM_RED : !Q_stricmp(jt, "team2") ? TEAM_BLUE : 0;
 	gHolo.anytime = cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(root, "anytimeSpawn")) ? qtrue : qfalse;
+	// Classes players can pick, when the scenario limits them.
+	const cJSON* cls;
+	const cJSON* classes = cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(root, "limitClasses")) ? cJSON_GetObjectItemCaseSensitive(root, "classes") : NULL;
+	cJSON_ArrayForEach(cls, classes) {
+		if (cJSON_IsString(cls) && cls->valuestring[0] && gHolo.numClasses < (int)ARRAY_LEN(gHolo.classes)) {
+			Q_strncpyz(gHolo.classes[gHolo.numClasses++], cls->valuestring, sizeof(gHolo.classes[0]));
+		}
+	}
 	gHolo.respawnSecs = Q_max(1, Q_min(60, (int)HtNum(root, "respawnSeconds", 5.0f)));
 
 	const cJSON* it;
@@ -4224,6 +4249,9 @@ static qboolean Holo_Start(client_t* cl, const char* file, const char* label, co
 			gHolo.teamNames[gHolo.joinTeam], gHolo.anytime ? va(", respawning after %ds", gHolo.respawnSecs) : "");
 	} else if (gHolo.anytime) {
 		SV_SendServerCommand(NULL, "chat \"^5[Holotable]^7 Anytime spawn: back in %ds after dying, and join any time.\"\n", gHolo.respawnSecs);
+	}
+	if (gHolo.numClasses && Cvar_VariableIntegerValue("g_Authenticity") != 2) {
+		SV_SendServerCommand(NULL, "chat \"^5[Holotable]^7 Only the scenario's classes can be played (%d of them).\"\n", gHolo.numClasses);
 	}
 	Com_Printf("Holotable: %s %s %s (%s)\n", cl ? cl->name : "rcon", verb, gHolo.name, gHolo.file);
 	return qtrue;

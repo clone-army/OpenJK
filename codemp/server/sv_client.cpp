@@ -3752,12 +3752,21 @@ void SV_GunrayCheckFrame( void ) {
 		if ( !blockedName && !Q_stricmp( model, "gunray/default" ) ) {
 			blockedName = "Nute Gunray";
 		}
+		// Or one a running Holotable scenario leaves out.
+		const qboolean holoRefused = ( !blockedName && SV_HoloClassRefused( sc ) ) ? qtrue : qfalse;
+		if ( holoRefused ) {
+			blockedName = sc;
+		}
 		isGunray = ( blockedName && atoi( team ) != TEAM_SPECTATOR ) ? qtrue : qfalse;
 
 		if ( isGunray && !wasGunray[i] ) {
 			Com_Printf( "[GunrayDebug] %s (slot %d) picked %s (model=%s, sc=%s) - forcing to spectator in 5s\n",
 				cl->name, i, blockedName, model, sc );
-			SV_SendServerCommand( NULL, "chat \"^1%s^7 %s is disabled on this server, please choose another class.\"\n", cl->name, blockedName );
+			if ( holoRefused ) {
+				SV_SendServerCommand( cl, "chat \"^5[Holotable]^7 That class isn't part of this scenario - please choose another.\"\n" );
+			} else {
+				SV_SendServerCommand( NULL, "chat \"^1%s^7 %s is disabled on this server, please choose another class.\"\n", cl->name, blockedName );
+			}
 			cl->gunraySpecTime = svs.time + 5000;
 		} else if ( !isGunray && wasGunray[i] ) {
 			Com_Printf( "[GunrayDebug] %s (slot %d) is no longer on a blocked class - cancelling pending spectator force\n", cl->name, i );
