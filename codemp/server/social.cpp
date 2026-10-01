@@ -174,6 +174,7 @@ static const char* (*gBuildShaderStateConfig)(void) = NULL;
 
 static int* gSiegeRoundEnded = NULL;
 static void* (*gNPCSpawnType)(void* ent, char* type, char* targetname, int isVehicle, int asIfPlayer, int siegeTeam) = NULL;
+static void (*gNPCLoadParms)(void) = NULL; // reads every ext_data/NPCs/*.npc into MBII's NPC type buffer
 static void (*gFreeEntity)(void* ent) = NULL;
 static void (*gSetEnemy)(void* self, void* enemy) = NULL;
 static void (*gClearEnemy)(void* self) = NULL;
@@ -3853,9 +3854,37 @@ static void Holo_PendingFrame(void)
 	}
 }
 
+// Holotable saves scenarios' own NPC types into holotable.npc, but MBII only
+// reads NPC files as a map or round loads - so a type saved since couldn't
+// be spawned ("Couldn't spawn NPC ..."). When the file's changed since they
+// were read, MBII reads them all again (NPC_LoadParms only refills its type
+// buffer; NPCs already about keep what they have).
+static time_t gHoloNpcFileTime = 0;
+
+static time_t Holo_NpcFileTime(void)
+{
+	struct stat st;
+	const char* path = va("%s/%s/ext_data/NPCs/holotable.npc", Cvar_VariableString("fs_basepath"), Cvar_VariableString("fs_game"));
+	return stat(path, &st) == 0 ? st.st_mtime : 0;
+}
+
+static void Holo_ReloadNpcTypes(void)
+{
+	const time_t now = Holo_NpcFileTime();
+	if (now == gHoloNpcFileTime || !gNPCLoadParms) {
+		return;
+	}
+	gHoloNpcFileTime = now;
+	void* old = GVM_BeginNative();
+	gNPCLoadParms();
+	GVM_EndNative(old);
+	Com_Printf("Holotable: holotable.npc has changed - NPC types read again\n");
+}
+
 static qboolean Holo_Start(client_t* cl, const char* file, const char* label, const char* verb, const char* by, qboolean extendRound)
 {
 	char err[128] = "";
+	Holo_ReloadNpcTypes();
 	if (!Holo_Load(file, err, sizeof(err))) {
 		Holo_Reply(cl, va("^1Can't run %s^7: %s", label, err));
 		return qfalse;
@@ -4357,6 +4386,7 @@ void SV_SocialGameInit(void)
 	// A new round or map frees every entity, scenarios included (one may
 	// start again once the round is under way: Holo_AutoRoundFrame).
 	Holo_AutoGameInit();
+	gHoloNpcFileTime = Holo_NpcFileTime(); // MBII has just read the NPC files
 	gHoloSidesOk = -1;
 	if (gHoloActive) {
 		Holo_RestorePlayers(qtrue);
@@ -4411,6 +4441,7 @@ void SV_SocialGameInit(void)
 		gBuildShaderStateConfig = (const char* (*)(void))Sys_LoadFunction(dll, "BuildShaderStateConfig");
 
 		gNPCSpawnType = (void* (*)(void*, char*, char*, int, int, int))Sys_LoadFunction(dll, "NPC_SpawnType");
+		gNPCLoadParms = (void (*)(void))Sys_LoadFunction(dll, "NPC_LoadParms");
 		gFreeEntity = (void (*)(void*))Sys_LoadFunction(dll, "G_FreeEntity");
 		gSetEnemy = (void (*)(void*, void*))Sys_LoadFunction(dll, "G_SetEnemy");
 		gClearEnemy = (void (*)(void*))Sys_LoadFunction(dll, "G_ClearEnemy");
