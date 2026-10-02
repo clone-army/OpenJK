@@ -186,6 +186,8 @@ static void (*gGlobalUse)(void* self, void* other, void* activator) = NULL;
 // made here.
 static void* (*gGSpawn)(void) = NULL;
 static int (*gModelIndex)(const char* name) = NULL;
+enum { HT_PL_PROP, HT_PL_ITEM, HT_PL_VEHICLE, HT_PL_EFFECT, HT_PL_SOUND };
+
 // Items: MBII's own map loading - G_ParseSpawnVars reads one entity's keys
 // (through the engine's entity parser), G_SpawnGEntityFromSpawnVars spawns
 // it, as if the map had it.
@@ -1983,9 +1985,12 @@ static struct {
 	int  respawnPt[3], respawnRt[3], respawnTurn[3];
 	int  props[128];                  // props and items placed (entity numbers), taken away at the end
 	int  numProps;
-	// Props and items the scenario has from its start (placed in the editor).
-	struct { qboolean item; char name[96]; vec3_t org; float yaw; vec3_t mins, maxs; } placed[96];
+	// What the scenario has from its start (placed in the editor): props,
+	// items, vehicles, looping effects and looping sounds.
+	struct { int kind; char name[96]; vec3_t org; float yaw; vec3_t mins, maxs; int every, nextAt; } placed[96];
 	int  numPlaced;
+	int  vehicles[32];                // vehicles placed (removed at the end if nobody's riding)
+	int  numVehicles;
 	qboolean respawnSeen[MAX_CLIENTS];
 } gHolo;
 
@@ -2226,20 +2231,33 @@ static qboolean Holo_Load(const char* file, char* err, size_t errSize)
 			HtVec(pt, r->pts[r->count++]);
 		}
 	}
-	// Props and items there from the start.
-	for (int pass = 0; pass < 2; pass++) {
-		cJSON_ArrayForEach(it, cJSON_GetObjectItemCaseSensitive(root, pass ? "items" : "props")) {
+	// Props, items, vehicles, looping effects and sounds there from the start.
+	static const struct { const char* list; const char* key; int kind; } kPlaced[] = {
+		{ "props", "model", HT_PL_PROP }, { "items", "item", HT_PL_ITEM }, { "vehicles", "vehicle", HT_PL_VEHICLE },
+		{ "effects", "effect", HT_PL_EFFECT }, { "sounds", "sound", HT_PL_SOUND },
+	};
+	for (size_t pass = 0; pass < ARRAY_LEN(kPlaced); pass++) {
+		cJSON_ArrayForEach(it, cJSON_GetObjectItemCaseSensitive(root, kPlaced[pass].list)) {
 			if (gHolo.numPlaced >= (int)ARRAY_LEN(gHolo.placed)) break;
-			const char* name = HtStr(it, pass ? "item" : "model", "");
-			if (pass ? Q_stricmpn(name, "item_", 5) && Q_stricmpn(name, "weapon_", 7) && Q_stricmpn(name, "ammo_", 5) && Q_stricmpn(name, "holdable_", 9)
-					 : (Q_stricmpn(name, "models/", 7) || !Q_stristr(name, ".md3"))) {
+			const int kind = kPlaced[pass].kind;
+			const char* name = HtStr(it, kPlaced[pass].key, "");
+			qboolean ok = name[0] ? qtrue : qfalse;
+			if (kind == HT_PL_PROP) {
+				ok = (!Q_stricmpn(name, "models/", 7) && Q_stristr(name, ".md3")) ? qtrue : qfalse;
+			} else if (kind == HT_PL_ITEM) {
+				ok = (!Q_stricmpn(name, "item_", 5) || !Q_stricmpn(name, "weapon_", 7) || !Q_stricmpn(name, "ammo_", 5) || !Q_stricmpn(name, "holdable_", 9)) ? qtrue : qfalse;
+			} else if (kind == HT_PL_SOUND) {
+				ok = !Q_stricmpn(name, "sound/", 6) ? qtrue : qfalse;
+			}
+			if (!ok) {
 				continue;
 			}
 			auto& p = gHolo.placed[gHolo.numPlaced++];
-			p.item = pass ? qtrue : qfalse;
+			p.kind = kind;
 			Holo_Clean(p.name, name, sizeof(p.name));
 			HtVec(it, p.org);
 			p.yaw = HtNum(it, "yaw", 0.0f);
+			p.every = (int)(1000.0f * Q_max(0.2f, Q_min(60.0f, HtNum(it, "every", 1.0f))));
 			const cJSON* mn = cJSON_GetObjectItemCaseSensitive(it, "mins");
 			const cJSON* mx = cJSON_GetObjectItemCaseSensitive(it, "maxs");
 			for (int k = 0; k < 3; k++) {
@@ -2832,6 +2850,23 @@ static void Holo_End(const char* how)
 		}
 	}
 	gHolo.numProps = 0;
+	for (int i = 0; i < gHolo.numVehicles; i++) {
+		const int num = gHolo.vehicles[i];
+		if (num < MAX_CLIENTS || num >= sv.num_entities || !gFreeEntity || !SV_GentityNum(num)->r.linked) {
+			continue;
+		}
+		qboolean ridden = qfalse;
+		for (int c = 0; c < sv_maxclients->integer && !ridden; c++) {
+			const client_t* cl = &svs.clients[c];
+			ridden = (cl->state == CS_ACTIVE && cl->gentity && cl->gentity->playerState && cl->gentity->playerState->m_iVehicleNum == num) ? qtrue : qfalse;
+		}
+		if (!ridden) {
+			void* old = GVM_BeginNative();
+			gFreeEntity(SV_GentityNum(num));
+			GVM_EndNative(old);
+		}
+	}
+	gHolo.numVehicles = 0;
 	if (gHolo.music) {
 		SV_JukeboxFightEnd();
 	}
@@ -3127,23 +3162,116 @@ static int Holo_PlaceItem(const char* classname, const vec3_t floor)
 	return -1;
 }
 
-// The scenario's own props and items, as it starts.
-static void Holo_PlaceAll(void)
+// A vehicle (swoop, speeder...) at the spot - MBII's NPC spawn as a vehicle,
+// facing yaw (-1000 = whichever way). Returns its entity, or -1.
+static int Holo_SpawnVehicle(const char* type, const vec3_t spot, float yaw)
 {
-	int props = 0, items = 0, failed = 0;
-	for (int i = 0; i < gHolo.numPlaced; i++) {
-		const auto& p = gHolo.placed[i];
-		const int num = p.item ? Holo_PlaceItem(p.name, p.org) : Holo_PlaceModel(p.name, p.mins, p.maxs, p.yaw, p.org);
-		if (num < 0) {
-			failed++;
-		} else if (p.item) {
-			items++;
-		} else {
-			props++;
+	client_t* spawner = Social_AnyPlayer();
+	for (int i = 0; i < sv_maxclients->integer && !spawner; i++) {
+		if (svs.clients[i].state == CS_ACTIVE && svs.clients[i].gentity && svs.clients[i].gentity->playerState) {
+			spawner = &svs.clients[i];
 		}
 	}
+	if (!spawner || !gNPCSpawnType) {
+		Com_Printf("Holotable: no one in the game to spawn vehicle \"%s\" through\n", type);
+		return -1;
+	}
+	vec3_t at = { spot[0], spot[1], spot[2] + 24.0f };
+	playerState_t* pps = spawner->gentity->playerState;
+	const float savedYaw = pps->viewangles[YAW];
+	if (yaw > -999.0f) {
+		pps->viewangles[YAW] = yaw;
+	}
+	void* old = GVM_BeginNative();
+	sharedEntity_t* e = (sharedEntity_t*)gNPCSpawnType(spawner->gentity, (char*)type, NULL, 1 /* vehicle */, 0, 0);
+	GVM_EndNative(old);
+	pps->viewangles[YAW] = savedYaw;
+	if (!e) {
+		Com_Printf("Holotable: couldn't spawn vehicle \"%s\"\n", type);
+		return -1;
+	}
+	if (e->playerState) {
+		VectorCopy(at, e->playerState->origin);
+	}
+	VectorCopy(at, e->s.origin);
+	VectorCopy(at, e->s.pos.trBase);
+	VectorCopy(at, e->r.currentOrigin);
+	Com_Printf("Holotable: vehicle %s (entity %d)\n", type, e->s.number);
+	return e->s.number;
+}
+
+// A looping sound at the spot: an entity with nothing but its loopSound, as
+// a map's looping target_speaker - heard round it, all the time.
+static int Holo_PlaceSound(const char* path, const vec3_t spot)
+{
+	if (!gGSpawn || !gSoundIndex || gHolo.numProps >= (int)ARRAY_LEN(gHolo.props)) {
+		return -1;
+	}
+	void* old = GVM_BeginNative();
+	sharedEntity_t* e = (sharedEntity_t*)gGSpawn();
+	const int snd = e ? gSoundIndex(path) : 0;
+	GVM_EndNative(old);
+	if (!e) {
+		return -1;
+	}
+	vec3_t at = { spot[0], spot[1], spot[2] + 32.0f };
+	e->s.eType = ET_GENERAL;
+	e->s.loopSound = snd;
+	e->s.loopIsSoundset = qfalse;
+	VectorCopy(at, e->s.pos.trBase);
+	VectorCopy(at, e->s.origin);
+	VectorCopy(at, e->r.currentOrigin);
+	e->s.pos.trType = TR_STATIONARY;
+	e->r.contents = 0;
+	e->r.svFlags = 0;
+	SV_LinkEntity(e);
+	gHolo.props[gHolo.numProps++] = e->s.number;
+	return e->s.number;
+}
+
+// Looping effects: each played again every so often while it runs.
+static void Holo_EffectsFrame(void)
+{
+	if (!gEffectIndex || !gPlayEffectID) {
+		return;
+	}
+	for (int i = 0; i < gHolo.numPlaced; i++) {
+		auto& p = gHolo.placed[i];
+		if (p.kind != HT_PL_EFFECT || svs.time < p.nextAt) {
+			continue;
+		}
+		p.nextAt = svs.time + p.every;
+		vec3_t at = { p.org[0], p.org[1], p.org[2] + 4.0f }, up = { 0.0f, 0.0f, 1.0f };
+		void* old = GVM_BeginNative();
+		gPlayEffectID(gEffectIndex(p.name), at, up);
+		GVM_EndNative(old);
+	}
+}
+
+// The scenario's own props, items, vehicles and sounds, as it starts
+// (effects start playing from the next frame).
+static void Holo_PlaceAll(void)
+{
+	int placed = 0, failed = 0;
+	for (int i = 0; i < gHolo.numPlaced; i++) {
+		auto& p = gHolo.placed[i];
+		int num = -1;
+		switch (p.kind) {
+		case HT_PL_PROP:    num = Holo_PlaceModel(p.name, p.mins, p.maxs, p.yaw, p.org); break;
+		case HT_PL_ITEM:    num = Holo_PlaceItem(p.name, p.org); break;
+		case HT_PL_SOUND:   num = Holo_PlaceSound(p.name, p.org); break;
+		case HT_PL_EFFECT:  num = 0; p.nextAt = 0; break;
+		case HT_PL_VEHICLE:
+			num = (gHolo.numVehicles < (int)ARRAY_LEN(gHolo.vehicles)) ? Holo_SpawnVehicle(p.name, p.org, p.yaw) : -1;
+			if (num >= 0) {
+				gHolo.vehicles[gHolo.numVehicles++] = num;
+			}
+			break;
+		}
+		(num < 0 ? failed : placed)++;
+	}
 	if (gHolo.numPlaced) {
-		Com_Printf("Holotable: placed %d props and %d items%s\n", props, items, failed ? va(" (%d couldn't be)", failed) : "");
+		Com_Printf("Holotable: placed %d things%s\n", placed, failed ? va(" (%d couldn't be)", failed) : "");
 	}
 }
 
@@ -3370,36 +3498,10 @@ static void Holo_RunActions(htTrigger_t* t, client_t* who)
 		case HT_DO_VEHICLE: {
 			// A vehicle (swoop, speeder...) at the spot, for players to take.
 			// Not removed when the scenario ends: someone may be riding it.
-			client_t* spawner = Social_AnyPlayer();
-			for (int i = 0; i < sv_maxclients->integer && !spawner; i++) {
-				if (svs.clients[i].state == CS_ACTIVE && svs.clients[i].gentity && svs.clients[i].gentity->playerState) {
-					spawner = &svs.clients[i];
-				}
-			}
-			if (!spawner || !gNPCSpawnType || !Holo_ActionAt(act, who, at)) {
+			if (!Holo_ActionAt(act, who, at)) {
 				break;
 			}
-			at[2] += 24.0f;
-			playerState_t* pps = spawner->gentity->playerState;
-			const float savedYaw = pps->viewangles[YAW];
-			if (act->atKind == HT_AT_POINT) {
-				pps->viewangles[YAW] = gHolo.points[act->atRef].yaw;
-			}
-			void* old = GVM_BeginNative();
-			sharedEntity_t* e = (sharedEntity_t*)gNPCSpawnType(spawner->gentity, (char*)act->extra, NULL, 1 /* vehicle */, 0, 0);
-			GVM_EndNative(old);
-			pps->viewangles[YAW] = savedYaw;
-			if (e) {
-				if (e->playerState) {
-					VectorCopy(at, e->playerState->origin);
-				}
-				VectorCopy(at, e->s.origin);
-				VectorCopy(at, e->s.pos.trBase);
-				VectorCopy(at, e->r.currentOrigin);
-				Com_Printf("Holotable: vehicle %s (entity %d)\n", act->extra, e->s.number);
-			} else {
-				Com_Printf("Holotable: couldn't spawn vehicle \"%s\"\n", act->extra);
-			}
+			Holo_SpawnVehicle(act->extra, at, act->atKind == HT_AT_POINT ? gHolo.points[act->atRef].yaw : -1000.0f);
 			break;
 		}
 		case HT_DO_PICKUP:
@@ -4404,6 +4506,7 @@ static void Holo_Frame(void)
 		gHolo.speedPct = 0;
 	}
 	Holo_RespawnFrame();
+	Holo_EffectsFrame();
 	if (svs.time >= gHolo.nextTriggers) {
 		gHolo.nextTriggers = svs.time + 250;
 		Holo_CheckTriggers();
