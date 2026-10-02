@@ -1828,7 +1828,7 @@ enum { HT_BEHAVE_HUNT, HT_BEHAVE_ROUTE, HT_BEHAVE_GUARD, HT_BEHAVE_IDLE, HT_BEHA
 #define HT_ATTACKS_NONE -1 // a group's attacks: nobody - peaceful, and can't be hurt
 enum { HT_WHEN_START, HT_WHEN_TIMER, HT_WHEN_ENTER, HT_WHEN_GROUP_DEAD, HT_WHEN_ALL_DEAD, HT_WHEN_AFTER,
 	HT_WHEN_ALL_IN_AREA, HT_WHEN_GROUP_LEFT, HT_WHEN_PLAYERS, HT_WHEN_PLAYER_DIED, HT_WHEN_NPC_KILLED,
-	HT_WHEN_COUNTER, HT_WHEN_COUNTDOWN_END, HT_WHEN_GROUP_IN_AREA };
+	HT_WHEN_COUNTER, HT_WHEN_COUNTDOWN_END, HT_WHEN_GROUP_IN_AREA, HT_WHEN_USE };
 enum { HT_DO_SPAWN, HT_DO_MESSAGE, HT_DO_CENTER, HT_DO_SOUND, HT_DO_MUSIC, HT_DO_END, HT_DO_SAY,
 	HT_DO_TELL, HT_DO_EXPLODE, HT_DO_EFFECT, HT_DO_SHAKE, HT_DO_TELEPORT, HT_DO_USE, HT_DO_DESPAWN, HT_DO_WIN,
 	HT_DO_RESPAWN, HT_DO_BREAK, HT_DO_PROP,
@@ -1903,6 +1903,20 @@ typedef struct {
 	byte inside[MAX_CLIENTS];     // enter_area: who was in it last check
 	qboolean off;                 // turned off (starts off, or an action turned it off)
 	int  compare;                 // counter: -1 at most, 0 exactly, 1 at least
+	// use: a player holds use at a point (within useRadius) or in an area
+	int  usePt, useArea;          // where (-1 = not that)
+	float useRadius;
+	int  holdMs;                  // how long to hold use (0 = just press it)
+	qboolean useBar;              // a progress bar on their screen while they hold it
+	char useLabel[64];            // ...and what it says
+	char useSound[128];           // a sound while they hold it ("" = none)...
+	int  useSoundEveryMs;         // ...this often
+	int  useTeam;                 // 0 = anyone; TEAM_RED / TEAM_BLUE = only that side
+	int  useHeld[MAX_CLIENTS];    // how long each has held it so far
+	int  useSoundAt[MAX_CLIENTS]; // when each next hears the sound
+	int  useShownAt[MAX_CLIENTS]; // when each's bar was last sent
+	qboolean usePressed[MAX_CLIENTS]; // use held at their last command (for "just press it")
+	int  useDoneBy;               // who's just finished it (client + 1), for the trigger check
 } htTrigger_t;
 typedef struct {
 	int  ent;                     // -1 = free slot
@@ -2346,7 +2360,21 @@ static qboolean Holo_Load(const char* file, char* err, size_t errSize)
 			!Q_stricmp(w, "group_left") ? HT_WHEN_GROUP_LEFT : !Q_stricmp(w, "players") ? HT_WHEN_PLAYERS :
 			!Q_stricmp(w, "player_died") ? HT_WHEN_PLAYER_DIED : !Q_stricmp(w, "npc_killed") ? HT_WHEN_NPC_KILLED :
 			!Q_stricmp(w, "counter") ? HT_WHEN_COUNTER : !Q_stricmp(w, "countdown_end") ? HT_WHEN_COUNTDOWN_END :
-			!Q_stricmp(w, "group_in_area") ? HT_WHEN_GROUP_IN_AREA : HT_WHEN_START;
+			!Q_stricmp(w, "group_in_area") ? HT_WHEN_GROUP_IN_AREA : !Q_stricmp(w, "use") ? HT_WHEN_USE : HT_WHEN_START;
+		if (t->when == HT_WHEN_USE) {
+			const char* at = HtStr(it, "at", "");
+			t->usePt = HT_FIND(gHolo.points, gHolo.numPoints, at);
+			t->useArea = (t->usePt < 0) ? HT_FIND(gHolo.areas, gHolo.numAreas, at) : -1;
+			t->useRadius = Q_max(16.0f, Q_min(1024.0f, HtNum(it, "radius", 64.0f)));
+			t->holdMs = (int)(1000.0f * Q_max(0.0f, Q_min(120.0f, HtNum(it, "hold", 3.0f))));
+			const cJSON* bar = cJSON_GetObjectItemCaseSensitive(it, "bar");
+			t->useBar = (bar && cJSON_IsFalse(bar)) ? qfalse : qtrue;
+			Holo_Clean(t->useLabel, HtStr(it, "label", ""), sizeof(t->useLabel));
+			Holo_Clean(t->useSound, HtStr(it, "sound", ""), sizeof(t->useSound));
+			t->useSoundEveryMs = (int)(1000.0f * Q_max(0.2f, Q_min(30.0f, HtNum(it, "soundEvery", 1.0f))));
+			const char* team = HtStr(it, "team", "any");
+			t->useTeam = !Q_stricmp(team, "team1") ? TEAM_RED : !Q_stricmp(team, "team2") ? TEAM_BLUE : 0;
+		}
 		t->off = cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(it, "startOff")) ? qtrue : qfalse;
 		const char* cmp = HtStr(it, "compare", ">=");
 		t->compare = !Q_stricmp(cmp, "<=") ? -1 : !Q_stricmp(cmp, "==") ? 0 : 1;
@@ -4340,6 +4368,14 @@ static void Holo_CheckTriggers(void)
 		case HT_WHEN_TIMER:
 			go = (svs.time >= t->nextAt) ? qtrue : qfalse;
 			break;
+		case HT_WHEN_USE:
+			// Whoever's just finished using it (Holo_UseThink).
+			if (t->useDoneBy > 0 && t->useDoneBy <= sv_maxclients->integer) {
+				who = &svs.clients[t->useDoneBy - 1];
+				go = qtrue;
+			}
+			t->useDoneBy = 0;
+			break;
 		case HT_WHEN_ENTER:
 			// Whoever's just walked in.
 			for (int c = 0; c < sv_maxclients->integer && t->ref >= 0; c++) {
@@ -4999,9 +5035,95 @@ void SV_HoloDebugDump(int num)
 // about, but not move, jump or shoot.
 static void Holo_SpeedThink(client_t* cl);
 
+// A player holding use at a "use" trigger's spot: their progress (bar and
+// sound as it fills), and the trigger flagged once it's full. Letting go
+// or walking away starts it over.
+static void Holo_UseThink(client_t* cl, const usercmd_t* cmd, int c)
+{
+	static int lastCmdTime[MAX_CLIENTS];
+	const int dt = Q_max(0, Q_min(250, cmd->serverTime - lastCmdTime[c]));
+	lastCmdTime[c] = cmd->serverTime;
+	const qboolean holding = (cmd->buttons & BUTTON_USE) ? qtrue : qfalse;
+	const qboolean up = Holo_PlayerIn(c);
+	const playerState_t* ps = up ? cl->gentity->playerState : NULL;
+	for (int i = 0; i < gHolo.numTriggers; i++) {
+		htTrigger_t* t = &gHolo.triggers[i];
+		if (t->when != HT_WHEN_USE) {
+			continue;
+		}
+		const qboolean pressedBefore = t->usePressed[c];
+		t->usePressed[c] = holding;
+		qboolean here = (up && !t->off && !(t->fired && !t->repeat) && !t->useDoneBy &&
+			!(t->repeat && t->lastFiredAt && svs.time - t->lastFiredAt < t->cooldownMs) &&
+			(!t->useTeam || ps->persistant[PERS_TEAM] == t->useTeam)) ? qtrue : qfalse;
+		if (here && t->usePt >= 0) {
+			const float* p = gHolo.points[t->usePt].org;
+			here = (Distance(p, ps->origin) <= t->useRadius && fabsf(ps->origin[2] - p[2]) < 96.0f) ? qtrue : qfalse;
+		} else if (here && t->useArea >= 0) {
+			here = Holo_InArea(&gHolo.areas[t->useArea], c);
+		} else {
+			here = qfalse;
+		}
+		if (!here || !holding) {
+			if (t->useHeld[c] > 0 && t->useBar) {
+				SV_SendServerCommand(cl, "cp \" \"\n"); // their bar away
+			}
+			t->useHeld[c] = 0;
+			t->useSoundAt[c] = 0;
+			continue;
+		}
+		if (!t->holdMs) {
+			// Just press it: on the press, not while it's held down.
+			if (!pressedBefore) {
+				t->useDoneBy = c + 1;
+			}
+			continue;
+		}
+		t->useHeld[c] += dt;
+		if (t->useSound[0] && gSoundAtLoc && gSoundIndex && svs.time >= t->useSoundAt[c]) {
+			t->useSoundAt[c] = svs.time + t->useSoundEveryMs;
+			vec3_t at;
+			VectorCopy(ps->origin, at);
+			void* old = GVM_BeginNative();
+			gSoundAtLoc(at, 0 /* CHAN_AUTO */, gSoundIndex(t->useSound));
+			GVM_EndNative(old);
+		}
+		const int pct = Q_min(100, t->useHeld[c] * 100 / t->holdMs);
+		if (t->useHeld[c] >= t->holdMs) {
+			t->useDoneBy = c + 1;
+			t->useHeld[c] = 0;
+			t->useSoundAt[c] = 0;
+			if (t->useBar) {
+				SV_SendServerCommand(cl, "cp \"%s%s^2Done\"\n", t->useLabel, t->useLabel[0] ? "\n" : "");
+			}
+		} else if (t->useBar && svs.time - t->useShownAt[c] >= 150) {
+			t->useShownAt[c] = svs.time;
+			char bar[64];
+			const int full = pct / 5;
+			int n = 0;
+			n += Com_sprintf(bar + n, sizeof(bar) - n, "^2");
+			for (int k = 0; k < 20 && n < (int)sizeof(bar) - 4; k++) {
+				if (k == full) {
+					n += Com_sprintf(bar + n, sizeof(bar) - n, "^9");
+				}
+				bar[n++] = '|';
+				bar[n] = 0;
+			}
+			SV_SendServerCommand(cl, "cp \"%s%s%s ^7%d%%\"\n", t->useLabel, t->useLabel[0] ? "\n" : "", bar, pct);
+		}
+		break; // one thing used at a time
+	}
+}
+
 void SV_HoloClientThink(client_t* cl, usercmd_t* cmd)
 {
 	Holo_SpeedThink(cl);
+	{
+		const int uc = cl - svs.clients;
+		if (gHoloActive && uc >= 0 && uc < MAX_CLIENTS && svs.time >= gHolo.frozenUntil[uc]) {
+			Holo_UseThink(cl, cmd, uc);
+		}
+	}
 	const int c = cl - svs.clients;
 	if (!gHoloActive || c < 0 || c >= MAX_CLIENTS || svs.time >= gHolo.frozenUntil[c]) {
 		return;
