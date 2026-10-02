@@ -178,6 +178,9 @@ static void (*gNPCLoadParms)(void) = NULL; // reads every ext_data/NPCs/*.npc in
 static void (*gFreeEntity)(void* ent) = NULL;
 static void (*gSetEnemy)(void* self, void* enemy) = NULL;
 static void (*gClearEnemy)(void* self) = NULL;
+// MBII's GlobalUse(self, other, activator): an entity's own use - as a
+// button wired to it would.
+static void (*gGlobalUse)(void* self, void* other, void* activator) = NULL;
 static void (*gSetMoveGoal)(void* ent, float* point, int radius, int isNavGoal, int combatPoint, void* targetEnt) = NULL;
 static void (*gSoundOnEnt)(void* ent, int channel, const char* path) = NULL;
 static void (*gSaveNPCGlobals)(void) = NULL;
@@ -1816,6 +1819,7 @@ enum { HT_WHEN_START, HT_WHEN_TIMER, HT_WHEN_ENTER, HT_WHEN_GROUP_DEAD, HT_WHEN_
 	HT_WHEN_COUNTER, HT_WHEN_COUNTDOWN_END, HT_WHEN_GROUP_IN_AREA };
 enum { HT_DO_SPAWN, HT_DO_MESSAGE, HT_DO_CENTER, HT_DO_SOUND, HT_DO_MUSIC, HT_DO_END, HT_DO_SAY,
 	HT_DO_TELL, HT_DO_EXPLODE, HT_DO_EFFECT, HT_DO_SHAKE, HT_DO_TELEPORT, HT_DO_USE, HT_DO_DESPAWN, HT_DO_WIN,
+	HT_DO_RESPAWN, HT_DO_BREAK,
 	HT_DO_GIVE, HT_DO_KNOCKDOWN, HT_DO_KILL, HT_DO_HEAL, HT_DO_FREEZE, HT_DO_VEHICLE, HT_DO_ADDTIME, HT_DO_MOVE, HT_DO_SIDE, HT_DO_ARM,
 	HT_DO_TRIGGER_ON, HT_DO_TRIGGER_OFF, HT_DO_COUNTER, HT_DO_COUNTDOWN, HT_DO_OBJECTIVE, HT_DO_PICKUP,
 	HT_DO_TEXTURE, HT_DO_GRAVITY, HT_DO_SPEED };
@@ -1963,6 +1967,10 @@ static struct {
 	int  numRemaps;
 	qboolean npcUp[HT_MAX_NPCS];      // for "an NPC is killed"
 	int  pointSpawns[HT_MAX_POINTS];  // NPCs spawned at each point so far (where the next one goes)
+	// Where each side respawns (by TEAM_RED / TEAM_BLUE): a point or a route
+	// (-1 both = the map's own spawns), and who's been seen in the game.
+	int  respawnPt[3], respawnRt[3], respawnTurn[3];
+	qboolean respawnSeen[MAX_CLIENTS];
 } gHolo;
 
 // A class the running scenario doesn't allow (by its "sc" class name). Not
@@ -2345,6 +2353,22 @@ static qboolean Holo_Load(const char* file, char* err, size_t errSize)
 				act->type = HT_DO_USE;
 				Q_strncpyz(act->target, HtStr(a, "target", ""), sizeof(act->target));
 				if (!act->target[0]) continue;
+			} else if (!Q_stricmp(d, "respawn")) {
+				// Where a side (or both) respawns from now on.
+				act->type = HT_DO_RESPAWN;
+				const char* team = HtStr(a, "team", "both");
+				act->ref = !Q_stricmp(team, "team1") ? TEAM_RED : !Q_stricmp(team, "team2") ? TEAM_BLUE : 0;
+				const char* where = HtStr(a, "where", "");
+				act->spawnPt = HT_FIND(gHolo.points, gHolo.numPoints, where);
+				act->spawnRt = (act->spawnPt < 0) ? HT_FIND(gHolo.routes, gHolo.numRoutes, where) : -1;
+			} else if (!Q_stricmp(d, "break")) {
+				// A breakable on the map - by its brush model ("*12", so ones
+				// without a name too), and its name if it has one.
+				act->type = HT_DO_BREAK;
+				const char* m = HtStr(a, "model", "");
+				act->value = (m[0] == '*') ? atoi(m + 1) : 0;
+				Q_strncpyz(act->target, HtStr(a, "target", ""), sizeof(act->target));
+				if (act->value <= 0 && !act->target[0]) continue;
 			} else if (!Q_stricmp(d, "win")) {
 				// Ends the round: that side wins (or a draw).
 				act->type = HT_DO_WIN;
@@ -3062,6 +3086,40 @@ static void Holo_RunActions(htTrigger_t* t, client_t* who)
 			} else if (who && Holo_PlayerIn(who - svs.clients)) {
 				Holo_Teleport(who, at, yaw, 0);
 			}
+			break;
+		}
+		case HT_DO_RESPAWN:
+			for (int t = TEAM_RED; t <= TEAM_BLUE; t++) {
+				if (!act->ref || act->ref == t) {
+					gHolo.respawnPt[t] = act->spawnPt;
+					gHolo.respawnRt[t] = act->spawnRt;
+					gHolo.respawnTurn[t] = 0;
+				}
+			}
+			break;
+		case HT_DO_BREAK: {
+			// Used, as a button wired to it would - that breaks a breakable
+			// whatever its health, and fires what it targets once (it's
+			// removed on its next think). Damage only if MBII's use isn't
+			// there to call.
+			client_t* byCl = (who && who->gentity) ? who : Social_AnyPlayer();
+			sharedEntity_t* by = (byCl && byCl->gentity) ? byCl->gentity : SV_GentityNum(ENTITYNUM_WORLD);
+			int found = 0;
+			for (int i = MAX_CLIENTS; act->value > 0 && i < sv.num_entities; i++) {
+				sharedEntity_t* e = SV_GentityNum(i);
+				if (!e->r.linked || !e->r.bmodel || e->s.modelindex != act->value) {
+					continue;
+				}
+				found++;
+				if (gGlobalUse) {
+					void* old = GVM_BeginNative();
+					gGlobalUse(e, by, by);
+					GVM_EndNative(old);
+				} else {
+					Holo_Damage(e, e->r.currentOrigin, 100000);
+				}
+			}
+			Com_Printf("Holotable: broke *%d (%d found)\n", act->value, found);
 			break;
 		}
 		case HT_DO_USE:
@@ -4096,6 +4154,35 @@ static void Holo_CheckTriggers(void)
 	gHolo.countdownDone = qfalse; // every trigger waiting for it has had it
 }
 
+// Players who've just spawned, on a side whose respawn a scenario moved:
+// to that point (spread round it) or the route's points in turn.
+static void Holo_RespawnFrame(void)
+{
+	for (int c = 0; c < sv_maxclients->integer; c++) {
+		const qboolean up = Holo_PlayerIn(c);
+		const qboolean fresh = (up && !gHolo.respawnSeen[c]) ? qtrue : qfalse;
+		gHolo.respawnSeen[c] = up;
+		if (!fresh) {
+			continue;
+		}
+		client_t* cl = &svs.clients[c];
+		const int t = cl->gentity->playerState->persistant[PERS_TEAM];
+		if (t != TEAM_RED && t != TEAM_BLUE) {
+			continue;
+		}
+		const int k = gHolo.respawnTurn[t]++;
+		if (gHolo.respawnPt[t] >= 0) {
+			const htPoint_t* p = &gHolo.points[gHolo.respawnPt[t]];
+			Holo_Teleport(cl, p->org, p->yaw, k % 8);
+		} else if (Holo_RouteOk(gHolo.respawnRt[t])) {
+			const htRoute_t* r = &gHolo.routes[gHolo.respawnRt[t]];
+			const float* at = r->pts[k % r->count];
+			const float* nxt = r->pts[(k + 1) % r->count];
+			Holo_Teleport(cl, at, RAD2DEG(atan2f(nxt[1] - at[1], nxt[0] - at[0])), (k / r->count) % 8);
+		}
+	}
+}
+
 static void Holo_Frame(void)
 {
 	if (!gHoloActive) {
@@ -4130,6 +4217,7 @@ static void Holo_Frame(void)
 	if (gHolo.speedPct && gHolo.speedUntil && svs.time >= gHolo.speedUntil) {
 		gHolo.speedPct = 0;
 	}
+	Holo_RespawnFrame();
 	if (svs.time >= gHolo.nextTriggers) {
 		gHolo.nextTriggers = svs.time + 250;
 		Holo_CheckTriggers();
@@ -4357,6 +4445,10 @@ static qboolean Holo_Start(client_t* cl, const char* file, const char* label, co
 	}
 	for (int c = 0; c < sv_maxclients->integer; c++) {
 		gHolo.playerUp[c] = Holo_PlayerIn(c);
+		gHolo.respawnSeen[c] = gHolo.playerUp[c]; // only spawns from now on are moved
+	}
+	for (int t = 0; t < 3; t++) {
+		gHolo.respawnPt[t] = gHolo.respawnRt[t] = -1; // the map's own spawns
 	}
 	for (int gi = 0; gi < gHolo.numGroups; gi++) {
 		if (gHolo.groups[gi].spawnAtStart) {
@@ -4999,6 +5091,7 @@ void SV_SocialGameInit(void)
 		gFreeEntity = (void (*)(void*))Sys_LoadFunction(dll, "G_FreeEntity");
 		gSetEnemy = (void (*)(void*, void*))Sys_LoadFunction(dll, "G_SetEnemy");
 		gClearEnemy = (void (*)(void*))Sys_LoadFunction(dll, "G_ClearEnemy");
+		gGlobalUse = (void (*)(void*, void*, void*))Sys_LoadFunction(dll, "GlobalUse");
 		gSetMoveGoal = (void (*)(void*, float*, int, int, int, void*))Sys_LoadFunction(dll, "NPC_SetMoveGoal");
 		gSoundOnEnt = (void (*)(void*, int, const char*))Sys_LoadFunction(dll, "G_SoundOnEnt");
 		gSaveNPCGlobals = (void (*)(void))Sys_LoadFunction(dll, "SaveNPCGlobals");
