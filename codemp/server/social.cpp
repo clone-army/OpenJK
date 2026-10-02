@@ -181,6 +181,11 @@ static void (*gClearEnemy)(void* self) = NULL;
 // MBII's GlobalUse(self, other, activator): an entity's own use - as a
 // button wired to it would.
 static void (*gGlobalUse)(void* self, void* other, void* activator) = NULL;
+// Props: a blank entity (G_Spawn) with a model registered for the clients
+// (G_ModelIndex). MBII's misc_model_breakable is an empty stub, so they're
+// made here.
+static void* (*gGSpawn)(void) = NULL;
+static int (*gModelIndex)(const char* name) = NULL;
 static void (*gSetMoveGoal)(void* ent, float* point, int radius, int isNavGoal, int combatPoint, void* targetEnt) = NULL;
 static void (*gSoundOnEnt)(void* ent, int channel, const char* path) = NULL;
 static void (*gSaveNPCGlobals)(void) = NULL;
@@ -1819,7 +1824,7 @@ enum { HT_WHEN_START, HT_WHEN_TIMER, HT_WHEN_ENTER, HT_WHEN_GROUP_DEAD, HT_WHEN_
 	HT_WHEN_COUNTER, HT_WHEN_COUNTDOWN_END, HT_WHEN_GROUP_IN_AREA };
 enum { HT_DO_SPAWN, HT_DO_MESSAGE, HT_DO_CENTER, HT_DO_SOUND, HT_DO_MUSIC, HT_DO_END, HT_DO_SAY,
 	HT_DO_TELL, HT_DO_EXPLODE, HT_DO_EFFECT, HT_DO_SHAKE, HT_DO_TELEPORT, HT_DO_USE, HT_DO_DESPAWN, HT_DO_WIN,
-	HT_DO_RESPAWN, HT_DO_BREAK,
+	HT_DO_RESPAWN, HT_DO_BREAK, HT_DO_PROP,
 	HT_DO_GIVE, HT_DO_KNOCKDOWN, HT_DO_KILL, HT_DO_HEAL, HT_DO_FREEZE, HT_DO_VEHICLE, HT_DO_ADDTIME, HT_DO_MOVE, HT_DO_SIDE, HT_DO_ARM,
 	HT_DO_TRIGGER_ON, HT_DO_TRIGGER_OFF, HT_DO_COUNTER, HT_DO_COUNTDOWN, HT_DO_OBJECTIVE, HT_DO_PICKUP,
 	HT_DO_TEXTURE, HT_DO_GRAVITY, HT_DO_SPEED };
@@ -1869,6 +1874,7 @@ typedef struct {
 	char extra[96];               // a second name: texture swap's new shader, group move's route...
 	int  spawnPt, spawnRt;        // spawn: where this time (-1 = the group's own place)
 	int  route;                   // move: the route to walk (not atRef - the "at" place below sets that)
+	vec3_t propMins, propMaxs;    // prop: its box (from the model), round its origin
 } htAction_t;
 typedef struct {
 	char id[40];
@@ -1970,6 +1976,8 @@ static struct {
 	// Where each side respawns (by TEAM_RED / TEAM_BLUE): a point or a route
 	// (-1 both = the map's own spawns), and who's been seen in the game.
 	int  respawnPt[3], respawnRt[3], respawnTurn[3];
+	int  props[32];                   // props placed (entity numbers), taken away at the end
+	int  numProps;
 	qboolean respawnSeen[MAX_CLIENTS];
 } gHolo;
 
@@ -2369,6 +2377,20 @@ static qboolean Holo_Load(const char* file, char* err, size_t errSize)
 				act->value = (m[0] == '*') ? atoi(m + 1) : 0;
 				Q_strncpyz(act->target, HtStr(a, "target", ""), sizeof(act->target));
 				if (act->value <= 0 && !act->target[0]) continue;
+			} else if (!Q_stricmp(d, "prop")) {
+				// A model placed as a solid object (a misc_model_breakable):
+				// crates, barrels, barriers... health 0 = can't be broken.
+				act->type = HT_DO_PROP;
+				Holo_Clean(act->extra, HtStr(a, "model", ""), sizeof(act->extra));
+				act->value = (int)HtNum(a, "yaw", -1000.0f); // -1000 = the point's facing
+				act->damage = Q_max(0.0f, Q_min(5000.0f, HtNum(a, "health", 0.0f)));
+				const cJSON* mn = cJSON_GetObjectItemCaseSensitive(a, "mins");
+				const cJSON* mx = cJSON_GetObjectItemCaseSensitive(a, "maxs");
+				for (int k = 0; k < 3; k++) {
+					act->propMins[k] = (float)(cJSON_IsArray(mn) && cJSON_GetArrayItem(mn, k) ? cJSON_GetArrayItem(mn, k)->valuedouble : -16.0);
+					act->propMaxs[k] = (float)(cJSON_IsArray(mx) && cJSON_GetArrayItem(mx, k) ? cJSON_GetArrayItem(mx, k)->valuedouble : 16.0);
+				}
+				if (Q_strncmp(act->extra, "models/", 7) || !strstr(act->extra, ".md3")) continue;
 			} else if (!Q_stricmp(d, "win")) {
 				// Ends the round: that side wins (or a draw).
 				act->type = HT_DO_WIN;
@@ -2466,7 +2488,7 @@ static qboolean Holo_Load(const char* file, char* err, size_t errSize)
 			} else {
 				act->atKind = HT_AT_NONE;
 			}
-			if ((act->type == HT_DO_EXPLODE || act->type == HT_DO_EFFECT || act->type == HT_DO_TELEPORT) && act->atKind == HT_AT_NONE) {
+			if ((act->type == HT_DO_EXPLODE || act->type == HT_DO_EFFECT || act->type == HT_DO_TELEPORT || act->type == HT_DO_PROP) && act->atKind == HT_AT_NONE) {
 				continue; // needs somewhere
 			}
 			if (act->type == HT_DO_TELEPORT && act->atKind == HT_AT_PLAYER) {
@@ -2771,6 +2793,15 @@ static void Holo_End(const char* how)
 		}
 		gHolo.npcs[i].ent = -1;
 	}
+	for (int i = 0; i < gHolo.numProps; i++) {
+		const int num = gHolo.props[i];
+		if (num >= MAX_CLIENTS && num < sv.num_entities && gFreeEntity && SV_GentityNum(num)->r.linked) {
+			void* old = GVM_BeginNative();
+			gFreeEntity(SV_GentityNum(num));
+			GVM_EndNative(old);
+		}
+	}
+	gHolo.numProps = 0;
 	if (gHolo.music) {
 		SV_JukeboxFightEnd();
 	}
@@ -2983,6 +3014,52 @@ static void Holo_QueueGroup(int gi, int point, int route)
 
 static client_t* Holo_NearestPlayer(const vec3_t from, float* distSq, int onlyTeam);
 
+// Places a prop: a blank game entity showing the model, with a solid box -
+// players, NPCs and shots stop at it. Its bottom sits on the floor. The box
+// can't turn, so a turned prop gets the box round it. Returns the entity,
+// or -1.
+static int Holo_SpawnProp(const htAction_t* act, const vec3_t floor)
+{
+	if (!gGSpawn || !gModelIndex || gHolo.numProps >= (int)ARRAY_LEN(gHolo.props)) {
+		return -1;
+	}
+	void* old = GVM_BeginNative();
+	sharedEntity_t* e = (sharedEntity_t*)gGSpawn();
+	const int model = e ? gModelIndex(act->extra) : 0;
+	GVM_EndNative(old);
+	if (!e) {
+		return -1;
+	}
+	vec3_t org = { floor[0], floor[1], floor[2] - act->propMins[2] };
+	const float yaw = (float)act->value;
+	e->s.eType = ET_GENERAL;
+	e->s.modelindex = model;
+	VectorCopy(org, e->s.pos.trBase);
+	VectorCopy(org, e->s.origin);
+	VectorCopy(org, e->r.currentOrigin);
+	e->s.pos.trType = TR_STATIONARY;
+	VectorSet(e->s.apos.trBase, 0.0f, yaw, 0.0f);
+	VectorCopy(e->s.apos.trBase, e->s.angles);
+	VectorCopy(e->s.apos.trBase, e->r.currentAngles);
+	e->s.apos.trType = TR_STATIONARY;
+	// The box, turned with it and boxed again (corners round the yaw).
+	const float c = cosf(DEG2RAD(yaw)), sn = sinf(DEG2RAD(yaw));
+	vec3_t mins = { 99999.0f, 99999.0f, act->propMins[2] }, maxs = { -99999.0f, -99999.0f, act->propMaxs[2] };
+	for (int k = 0; k < 4; k++) {
+		const float x = (k & 1) ? act->propMaxs[0] : act->propMins[0], y = (k & 2) ? act->propMaxs[1] : act->propMins[1];
+		const float rx = x * c - y * sn, ry = x * sn + y * c;
+		mins[0] = Q_min(mins[0], rx); maxs[0] = Q_max(maxs[0], rx);
+		mins[1] = Q_min(mins[1], ry); maxs[1] = Q_max(maxs[1], ry);
+	}
+	VectorCopy(mins, e->r.mins);
+	VectorCopy(maxs, e->r.maxs);
+	e->r.contents = CONTENTS_SOLID;
+	e->r.svFlags = 0;
+	SV_LinkEntity(e);
+	gHolo.props[gHolo.numProps++] = e->s.number;
+	return e->s.number;
+}
+
 static void Holo_RunActions(htTrigger_t* t, client_t* who)
 {
 	for (int a = 0; a < t->numActions && gHoloActive; a++) {
@@ -3085,6 +3162,28 @@ static void Holo_RunActions(htTrigger_t* t, client_t* who)
 				}
 			} else if (who && Holo_PlayerIn(who - svs.clients)) {
 				Holo_Teleport(who, at, yaw, 0);
+			}
+			break;
+		}
+		case HT_DO_PROP: {
+			vec3_t at;
+			if (!Holo_ActionAt(act, who, at)) {
+				break;
+			}
+			at[2] -= (act->atKind == HT_AT_PLAYER) ? 24.0f : 16.0f; // back down to the floor it stands on
+			htAction_t placed = *act;
+			if (placed.value == -1000) {
+				// No facing given: a point's own, else straight.
+				placed.value = (act->atKind == HT_AT_POINT) ? (int)gHolo.points[act->atRef].yaw : 0;
+			}
+			const int num = Holo_SpawnProp(&placed, at);
+			if (num >= 0) {
+				const sharedEntity_t* pe = SV_GentityNum(num);
+				Com_Printf("Holotable: prop %s at %.0f %.0f %.0f -> entity %d (contents %d, box %.0f %.0f %.0f / %.0f %.0f %.0f)\n",
+					act->extra, at[0], at[1], at[2], num, pe->r.contents,
+					pe->r.absmin[0], pe->r.absmin[1], pe->r.absmin[2], pe->r.absmax[0], pe->r.absmax[1], pe->r.absmax[2]);
+			} else {
+				Com_Printf("Holotable: prop %s at %.0f %.0f %.0f not placed\n", act->extra, at[0], at[1], at[2]);
 			}
 			break;
 		}
@@ -5092,6 +5191,8 @@ void SV_SocialGameInit(void)
 		gSetEnemy = (void (*)(void*, void*))Sys_LoadFunction(dll, "G_SetEnemy");
 		gClearEnemy = (void (*)(void*))Sys_LoadFunction(dll, "G_ClearEnemy");
 		gGlobalUse = (void (*)(void*, void*, void*))Sys_LoadFunction(dll, "GlobalUse");
+		gGSpawn = (void* (*)(void))Sys_LoadFunction(dll, "G_Spawn");
+		gModelIndex = (int (*)(const char*))Sys_LoadFunction(dll, "G_ModelIndex");
 		gSetMoveGoal = (void (*)(void*, float*, int, int, int, void*))Sys_LoadFunction(dll, "NPC_SetMoveGoal");
 		gSoundOnEnt = (void (*)(void*, int, const char*))Sys_LoadFunction(dll, "G_SoundOnEnt");
 		gSaveNPCGlobals = (void (*)(void))Sys_LoadFunction(dll, "SaveNPCGlobals");
