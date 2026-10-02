@@ -4506,17 +4506,32 @@ qboolean SV_SocialHoloCommand(client_t* cl, const char* args)
 
 	Holo_RefreshList();
 	const char* map = Cvar_VariableString("mapname");
-	if (!a1[0]) {
-		if (gHoloActive) {
+	if (!a1[0] || !Q_stricmp(a1, "page") || !Q_stricmp(a1, "list")) {
+		// A page at a time: chat only shows a handful of lines. Numbered
+		// across the pages, so "!ht <n> play" goes by the same numbers - and
+		// all of them in the console too.
+		const int perPage = 5;
+		const int pages = Q_max(1, (gHoloListCount + perPage - 1) / perPage);
+		const int page = Q_max(1, Q_min(pages, a2[0] ? atoi(a2) : 1));
+		if (gHoloActive && page == 1) {
 			Holo_Reply(cl, va("%s: ^5%s^7 - ^5!ht stop^7 ends it, ^5!ht restart^7 reloads it.", gHoloBackground ? "Background" : "Running", gHolo.name));
 		}
 		if (!gHoloListCount) {
 			Holo_Reply(cl, va("No Holotable scenarios for ^3%s^7 yet.", map));
 			return qtrue;
 		}
-		Holo_Reply(cl, va("Scenarios for ^3%s^7 (^5!ht <n> play^7):", map));
-		for (int i = 0; i < gHoloListCount; i++) {
+		Holo_Reply(cl, va("Scenarios for ^3%s^7 (^5!ht <n> play^7)%s:", map, pages > 1 ? va(" - page %d of %d", page, pages) : ""));
+		for (int i = (page - 1) * perPage; i < gHoloListCount && i < page * perPage; i++) {
 			Holo_Reply(cl, va("^5%d^7. %s%s%s", i + 1, gHoloList[i].name, gHoloList[i].desc[0] ? " ^9- " : "", gHoloList[i].desc));
+		}
+		if (page < pages) {
+			Holo_Reply(cl, va("^5!ht page %d^7 for more - or open your console (^5~^7) for them all.", page + 1));
+		}
+		if (cl) {
+			SV_SendServerCommand(cl, "print \"Holotable scenarios for %s (!ht <n> play):\n\"", map);
+			for (int i = 0; i < gHoloListCount; i++) {
+				SV_SendServerCommand(cl, "print \"%d. %s%s%s\n\"", i + 1, gHoloList[i].name, gHoloList[i].desc[0] ? " - " : "", gHoloList[i].desc);
+			}
 		}
 		return qtrue;
 	}
