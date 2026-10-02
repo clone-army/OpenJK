@@ -464,6 +464,7 @@ extern	cvar_t* g_socialAdmins;
 extern	cvar_t* g_socialRespawnTime;
 extern	cvar_t* g_socialDuels;
 extern	cvar_t* g_socialRoundTime;
+extern	cvar_t* g_specKickRounds;
 extern	cvar_t* g_socialBots;
 
 // Used by smod extension to check if password is correct
@@ -673,6 +674,9 @@ void SV_HoloDebugSpawn(const char* type);
 void SV_HoloDebugDump(int num);
 qboolean SV_HoloClassRefused(const char* sc);
 void SV_HoloMapChange(const char* map);
+qboolean SV_SocialIsAdmin(client_t* cl);
+void SV_SpecKickRoundStart( void );
+void SV_SpecKickFrame( void );
 void SV_HoloClientThink(client_t* cl, usercmd_t* cmd);
 void SV_SocialEnsureNpcFiles(void);
 qboolean SV_SocialWaypointCommand(client_t* cl, const char* args);
