@@ -130,6 +130,7 @@ cvar_t* g_socialAdmins;
 cvar_t* g_socialRespawnTime;
 cvar_t* g_socialDuels;
 cvar_t* g_socialRoundTime;
+cvar_t* g_specKickRounds;
 cvar_t* g_socialBots;
 
 // Used by smod extension to check if password is correct
@@ -1372,6 +1373,9 @@ void SV_Frame( int msec ) {
 
 	// social mode: keep respawn-anytime overrides applied
 	SV_SocialFrame();
+
+	// g_specKickRounds: the round's spectator count, once it's due
+	SV_SpecKickFrame();
 
 	// TEMP DIAGNOSTIC: detect players on the Nute Gunray siege class (see
 	// SV_GunrayCheckFrame in sv_client.cpp) - logging only for now, no
