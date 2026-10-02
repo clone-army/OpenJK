@@ -2796,6 +2796,30 @@ static void Holo_SetSide(sharedEntity_t* e, int attacks);
 // started as the map loads - after a mode change - has its NPCs in before
 // anyone's picked a class: they'd otherwise keep their .npc file's
 // TEAM_FREE and attack everyone.)
+// MBII's own idea of an NPC's team, which its team-kill check (OnSameTeam)
+// goes by in siege: the client's session team (gclient +0x7b0) and the
+// entity's team owner (+0x11c). An NPC gets both from the player it was
+// spawned through - so every scenario NPC was on that player's team, and
+// killing one from it counted as a team kill. Set to its side, or none
+// (TEAM_FREE) for a group that attacks everyone or nobody. MBII hands a new
+// NPC its spawner's team on its first think, so it's kept set (Holo_Think).
+#define HOLO_OFS_SESSIONTEAM 0x7b0
+#define HOLO_OFS_TEAMOWNER   0x11c
+static void Holo_SetMbTeam(sharedEntity_t* e, int team)
+{
+	if (!e || !e->playerState) {
+		return;
+	}
+	int* st = Holo_ClientInt(e->playerState, HOLO_OFS_SESSIONTEAM);
+	int* to = (int*)((byte*)e + HOLO_OFS_TEAMOWNER);
+	if (*st >= 0 && *st <= 3) {
+		*st = team;
+	}
+	if (*to >= 0 && *to <= 3) {
+		*to = team;
+	}
+}
+
 static void Holo_ApplySide(htNpc_t* h)
 {
 	if (!h->sideDue || !Holo_NpcUp(h)) {
@@ -2804,6 +2828,7 @@ static void Holo_ApplySide(htNpc_t* h)
 	sharedEntity_t* e = SV_GentityNum(h->ent);
 	e->playerState->persistant[PERS_TEAM] = (h->sideDue == HT_ATTACKS_NONE) ? TEAM_FREE :
 		(h->sideDue == TEAM_RED) ? TEAM_BLUE : TEAM_RED;
+	Holo_SetMbTeam(e, e->playerState->persistant[PERS_TEAM]);
 	if (Holo_SidesUsable()) {
 		Holo_SetSide(e, h->sideDue);
 		h->sideDue = 0;
@@ -2830,7 +2855,12 @@ static void Holo_SetHostile(sharedEntity_t* e)
 
 static void Holo_SetSide(sharedEntity_t* e, int attacks)
 {
-	if (!attacks || !e || !e->playerState || !Holo_SidesUsable()) {
+	if (!e || !e->playerState) {
+		return;
+	}
+	// MBII's team for its team-kill check, whatever else happens.
+	Holo_SetMbTeam(e, (!attacks || attacks == HT_ATTACKS_NONE) ? TEAM_FREE : (attacks == TEAM_RED) ? TEAM_BLUE : TEAM_RED);
+	if (!attacks || !Holo_SidesUsable()) {
 		return;
 	}
 	playerState_t* ps = e->playerState;
@@ -3870,6 +3900,9 @@ static int Holo_SpawnOne(void)
 		h->spawnedAt = svs.time;
 		h->sideDue = g->attacks;
 		Holo_ApplySide(h);
+		if (!g->attacks) {
+			Holo_SetMbTeam(e, TEAM_FREE); // attacks everyone: nobody's team-mate
+		}
 		VectorCopy(org, h->home);
 		if (g->behaviour == HT_BEHAVE_ROUTE && Holo_RouteOk(g->route)) {
 			// Joins its route at the point nearest where it arrived.
@@ -4159,6 +4192,7 @@ static void Holo_Think(void)
 		sharedEntity_t* npc = SV_GentityNum(h->ent);
 		Holo_ApplySide(h);
 		Holo_ArmNpc(h, npc);
+		Holo_SetMbTeam(npc, (!g->attacks || g->attacks == HT_ATTACKS_NONE) ? TEAM_FREE : (g->attacks == TEAM_RED) ? TEAM_BLUE : TEAM_RED);
 		Holo_DropDeadEnemy(npc);
 		const float* at = npc->playerState->origin;
 		float d2 = 0.0f;
