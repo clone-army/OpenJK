@@ -1233,14 +1233,6 @@ static qboolean Social_AdminFileHas(const char* handle)
 }
 
 // Logged into an account in economy_admins.dat, or listed in g_socialAdmins.
-static qboolean Social_IsAdmin(client_t* cl);
-
-// For the rest of the server (spectator kick): an account admin.
-qboolean SV_SocialIsAdmin(client_t* cl)
-{
-	return (cl && Social_IsAdmin(cl)) ? qtrue : qfalse;
-}
-
 static qboolean Social_IsAdmin(client_t* cl)
 {
 	if (!cl->economyHandle[0]) {
