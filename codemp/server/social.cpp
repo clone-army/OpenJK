@@ -186,6 +186,11 @@ static void (*gGlobalUse)(void* self, void* other, void* activator) = NULL;
 // made here.
 static void* (*gGSpawn)(void) = NULL;
 static int (*gModelIndex)(const char* name) = NULL;
+// Items: MBII's own map loading - G_ParseSpawnVars reads one entity's keys
+// (through the engine's entity parser), G_SpawnGEntityFromSpawnVars spawns
+// it, as if the map had it.
+static qboolean (*gParseSpawnVars)(qboolean inSubBSP) = NULL;
+static void (*gSpawnFromSpawnVars)(qboolean inSubBSP) = NULL;
 static void (*gSetMoveGoal)(void* ent, float* point, int radius, int isNavGoal, int combatPoint, void* targetEnt) = NULL;
 static void (*gSoundOnEnt)(void* ent, int channel, const char* path) = NULL;
 static void (*gSaveNPCGlobals)(void) = NULL;
@@ -1976,8 +1981,11 @@ static struct {
 	// Where each side respawns (by TEAM_RED / TEAM_BLUE): a point or a route
 	// (-1 both = the map's own spawns), and who's been seen in the game.
 	int  respawnPt[3], respawnRt[3], respawnTurn[3];
-	int  props[32];                   // props placed (entity numbers), taken away at the end
+	int  props[128];                  // props and items placed (entity numbers), taken away at the end
 	int  numProps;
+	// Props and items the scenario has from its start (placed in the editor).
+	struct { qboolean item; char name[96]; vec3_t org; float yaw; vec3_t mins, maxs; } placed[96];
+	int  numPlaced;
 	qboolean respawnSeen[MAX_CLIENTS];
 } gHolo;
 
@@ -2216,6 +2224,28 @@ static qboolean Holo_Load(const char* file, char* err, size_t errSize)
 		cJSON_ArrayForEach(pt, cJSON_GetObjectItemCaseSensitive(it, "points")) {
 			if (r->count >= HT_MAX_ROUTE_PTS) break;
 			HtVec(pt, r->pts[r->count++]);
+		}
+	}
+	// Props and items there from the start.
+	for (int pass = 0; pass < 2; pass++) {
+		cJSON_ArrayForEach(it, cJSON_GetObjectItemCaseSensitive(root, pass ? "items" : "props")) {
+			if (gHolo.numPlaced >= (int)ARRAY_LEN(gHolo.placed)) break;
+			const char* name = HtStr(it, pass ? "item" : "model", "");
+			if (pass ? Q_stricmpn(name, "item_", 5) && Q_stricmpn(name, "weapon_", 7) && Q_stricmpn(name, "ammo_", 5) && Q_stricmpn(name, "holdable_", 9)
+					 : (Q_stricmpn(name, "models/", 7) || !Q_stristr(name, ".md3"))) {
+				continue;
+			}
+			auto& p = gHolo.placed[gHolo.numPlaced++];
+			p.item = pass ? qtrue : qfalse;
+			Holo_Clean(p.name, name, sizeof(p.name));
+			HtVec(it, p.org);
+			p.yaw = HtNum(it, "yaw", 0.0f);
+			const cJSON* mn = cJSON_GetObjectItemCaseSensitive(it, "mins");
+			const cJSON* mx = cJSON_GetObjectItemCaseSensitive(it, "maxs");
+			for (int k = 0; k < 3; k++) {
+				p.mins[k] = (float)(cJSON_IsArray(mn) && cJSON_GetArrayItem(mn, k) ? cJSON_GetArrayItem(mn, k)->valuedouble : -16.0);
+				p.maxs[k] = (float)(cJSON_IsArray(mx) && cJSON_GetArrayItem(mx, k) ? cJSON_GetArrayItem(mx, k)->valuedouble : 16.0);
+			}
 		}
 	}
 	cJSON_ArrayForEach(it, cJSON_GetObjectItemCaseSensitive(root, "counters")) {
@@ -2514,8 +2544,8 @@ static qboolean Holo_Load(const char* file, char* err, size_t errSize)
 	for (int gi = 0; gi < gHolo.numGroups; gi++) {
 		startsSpawned = (startsSpawned || gHolo.groups[gi].spawnAtStart) ? qtrue : qfalse;
 	}
-	if (!gHolo.numTriggers && !startsSpawned) {
-		Q_strncpyz(err, "nothing happens in it - no triggers, and no group spawns at the start", errSize);
+	if (!gHolo.numTriggers && !startsSpawned && !gHolo.numPlaced) {
+		Q_strncpyz(err, "nothing happens in it - no triggers, no group spawns at the start, and nothing placed", errSize);
 		return qfalse;
 	}
 	return qtrue;
@@ -3018,20 +3048,19 @@ static client_t* Holo_NearestPlayer(const vec3_t from, float* distSq, int onlyTe
 // players, NPCs and shots stop at it. Its bottom sits on the floor. The box
 // can't turn, so a turned prop gets the box round it. Returns the entity,
 // or -1.
-static int Holo_SpawnProp(const htAction_t* act, const vec3_t floor)
+static int Holo_PlaceModel(const char* name, const vec3_t propMins, const vec3_t propMaxs, float yaw, const vec3_t floor)
 {
 	if (!gGSpawn || !gModelIndex || gHolo.numProps >= (int)ARRAY_LEN(gHolo.props)) {
 		return -1;
 	}
 	void* old = GVM_BeginNative();
 	sharedEntity_t* e = (sharedEntity_t*)gGSpawn();
-	const int model = e ? gModelIndex(act->extra) : 0;
+	const int model = e ? gModelIndex(name) : 0;
 	GVM_EndNative(old);
 	if (!e) {
 		return -1;
 	}
-	vec3_t org = { floor[0], floor[1], floor[2] - act->propMins[2] };
-	const float yaw = (float)act->value;
+	vec3_t org = { floor[0], floor[1], floor[2] - propMins[2] };
 	e->s.eType = ET_GENERAL;
 	e->s.modelindex = model;
 	VectorCopy(org, e->s.pos.trBase);
@@ -3044,9 +3073,9 @@ static int Holo_SpawnProp(const htAction_t* act, const vec3_t floor)
 	e->s.apos.trType = TR_STATIONARY;
 	// The box, turned with it and boxed again (corners round the yaw).
 	const float c = cosf(DEG2RAD(yaw)), sn = sinf(DEG2RAD(yaw));
-	vec3_t mins = { 99999.0f, 99999.0f, act->propMins[2] }, maxs = { -99999.0f, -99999.0f, act->propMaxs[2] };
+	vec3_t mins = { 99999.0f, 99999.0f, propMins[2] }, maxs = { -99999.0f, -99999.0f, propMaxs[2] };
 	for (int k = 0; k < 4; k++) {
-		const float x = (k & 1) ? act->propMaxs[0] : act->propMins[0], y = (k & 2) ? act->propMaxs[1] : act->propMins[1];
+		const float x = (k & 1) ? propMaxs[0] : propMins[0], y = (k & 2) ? propMaxs[1] : propMins[1];
 		const float rx = x * c - y * sn, ry = x * sn + y * c;
 		mins[0] = Q_min(mins[0], rx); maxs[0] = Q_max(maxs[0], rx);
 		mins[1] = Q_min(mins[1], ry); maxs[1] = Q_max(maxs[1], ry);
@@ -3058,6 +3087,64 @@ static int Holo_SpawnProp(const htAction_t* act, const vec3_t floor)
 	SV_LinkEntity(e);
 	gHolo.props[gHolo.numProps++] = e->s.number;
 	return e->s.number;
+}
+
+static int Holo_SpawnProp(const htAction_t* act, const vec3_t floor)
+{
+	return Holo_PlaceModel(act->extra, act->propMins, act->propMaxs, (float)act->value, floor);
+}
+
+// Places an item (weapon_, ammo_, item_, holdable_) as if the map had it:
+// MBII's own spawner is handed a one-entity "map". Returns the entity, or
+// -1. (The new one's found by its entity number - MBII sets it on spawning
+// and clears it on freeing; it's linked a moment later.)
+static int Holo_PlaceItem(const char* classname, const vec3_t floor)
+{
+	if (!gParseSpawnVars || !gSpawnFromSpawnVars || gHolo.numProps >= (int)ARRAY_LEN(gHolo.props)) {
+		return -1;
+	}
+	char text[256];
+	Com_sprintf(text, sizeof(text), "{ \"classname\" \"%s\" \"origin\" \"%.0f %.0f %.0f\" }", classname, floor[0], floor[1], floor[2] + 16.0f);
+	static qboolean was[MAX_GENTITIES];
+	const int before = sv.num_entities;
+	for (int i = MAX_CLIENTS; i < before; i++) {
+		was[i] = (SV_GentityNum(i)->s.number == i) ? qtrue : qfalse;
+	}
+	char* saved = sv.entityParsePoint;
+	sv.entityParsePoint = text;
+	void* old = GVM_BeginNative();
+	if (gParseSpawnVars(qfalse)) {
+		gSpawnFromSpawnVars(qfalse);
+	}
+	GVM_EndNative(old);
+	sv.entityParsePoint = saved;
+	for (int i = MAX_CLIENTS; i < sv.num_entities; i++) {
+		if (SV_GentityNum(i)->s.number == i && (i >= before || !was[i])) {
+			gHolo.props[gHolo.numProps++] = i;
+			return i;
+		}
+	}
+	return -1;
+}
+
+// The scenario's own props and items, as it starts.
+static void Holo_PlaceAll(void)
+{
+	int props = 0, items = 0, failed = 0;
+	for (int i = 0; i < gHolo.numPlaced; i++) {
+		const auto& p = gHolo.placed[i];
+		const int num = p.item ? Holo_PlaceItem(p.name, p.org) : Holo_PlaceModel(p.name, p.mins, p.maxs, p.yaw, p.org);
+		if (num < 0) {
+			failed++;
+		} else if (p.item) {
+			items++;
+		} else {
+			props++;
+		}
+	}
+	if (gHolo.numPlaced) {
+		Com_Printf("Holotable: placed %d props and %d items%s\n", props, items, failed ? va(" (%d couldn't be)", failed) : "");
+	}
 }
 
 static void Holo_RunActions(htTrigger_t* t, client_t* who)
@@ -4554,6 +4641,7 @@ static qboolean Holo_Start(client_t* cl, const char* file, const char* label, co
 			Holo_QueueGroup(gi, -1, -1);
 		}
 	}
+	Holo_PlaceAll();
 	Holo_ReadTeamNames();
 	if (gHolo.joinTeam) {
 		// One side only: MBII's team balance would refuse to stack it.
@@ -5193,6 +5281,8 @@ void SV_SocialGameInit(void)
 		gGlobalUse = (void (*)(void*, void*, void*))Sys_LoadFunction(dll, "GlobalUse");
 		gGSpawn = (void* (*)(void))Sys_LoadFunction(dll, "G_Spawn");
 		gModelIndex = (int (*)(const char*))Sys_LoadFunction(dll, "G_ModelIndex");
+		gParseSpawnVars = (qboolean (*)(qboolean))Sys_LoadFunction(dll, "G_ParseSpawnVars");
+		gSpawnFromSpawnVars = (void (*)(qboolean))Sys_LoadFunction(dll, "G_SpawnGEntityFromSpawnVars");
 		gSetMoveGoal = (void (*)(void*, float*, int, int, int, void*))Sys_LoadFunction(dll, "NPC_SetMoveGoal");
 		gSoundOnEnt = (void (*)(void*, int, const char*))Sys_LoadFunction(dll, "G_SoundOnEnt");
 		gSaveNPCGlobals = (void (*)(void))Sys_LoadFunction(dll, "SaveNPCGlobals");
