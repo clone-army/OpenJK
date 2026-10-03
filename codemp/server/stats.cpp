@@ -38,7 +38,8 @@ running), not anything imported from that dump - only the *behavioral*
 understanding above (what AddScore/G_Damage/player_die actually do) comes
 from it, which holds regardless of exact enum numbering.
 
-Shared file, cross-process locking: same rationale and the same tradeoff
+Shared file, cross-process locking: mutations hold a single transaction lock.
+Legacy implementation rationale (superseded below): same tradeoff
 (each mutation reloads-then-saves as its own atomic, flock()'d step, not
 combined into one lock spanning both) as economy_accounts.dat - see
 SV_EconomyAccountsSave's comment in sv_client.cpp for the full reasoning.
@@ -78,12 +79,37 @@ struct statsClientState_t {
 static statsClientState_t gStatsState[MAX_CLIENTS];
 static qboolean gStatsWasEnabled = qfalse;
 
-// --- Shared file I/O (mirrors SV_EconomyAccountsPath/Load/Save in sv_client.cpp) ---
+// Hold one exclusive lock across each reload, mutation and save.
 
 static void Stats_Path( char *out, int outSize ) {
 	Com_sprintf( out, outSize, "%s/%s/%s",
 		Cvar_VariableString( "fs_basepath" ), Cvar_VariableString( "fs_game" ), STATS_FILE );
 }
+
+// Same-inode lock shared with MBIIEZ sync; never release between read and write.
+static int gStatsTxnFd = -1;
+class StatsTransaction {
+public:
+    StatsTransaction() {
+        char path[MAX_OSPATH];
+        Stats_Path( path, sizeof( path ) );
+        gStatsTxnFd = open( path, O_RDWR | O_CREAT, 0600 );
+        if ( gStatsTxnFd >= 0 && flock( gStatsTxnFd, LOCK_EX ) != 0 ) {
+            close( gStatsTxnFd );
+            gStatsTxnFd = -1;
+        }
+    }
+    ~StatsTransaction() {
+        if ( gStatsTxnFd >= 0 ) {
+            flock( gStatsTxnFd, LOCK_UN );
+            close( gStatsTxnFd );
+            gStatsTxnFd = -1;
+        }
+    }
+    bool valid() const { return gStatsTxnFd >= 0; }
+    StatsTransaction( const StatsTransaction& ) = delete;
+    StatsTransaction& operator=( const StatsTransaction& ) = delete;
+};
 
 static void Stats_Load( void ) {
 	char filepath[MAX_QPATH];
@@ -95,13 +121,13 @@ static void Stats_Load( void ) {
 
 	Stats_Path( filepath, sizeof( filepath ) );
 
-	fd = open( filepath, O_RDONLY );
+	fd = gStatsTxnFd >= 0 ? gStatsTxnFd : open( filepath, O_RDONLY );
 	if ( fd < 0 ) {
 		return;
 	}
 
-	if ( flock( fd, LOCK_SH ) != 0 ) {
-		close( fd );
+	if ( gStatsTxnFd < 0 && flock( fd, LOCK_SH ) != 0 ) {
+		if ( gStatsTxnFd < 0 ) close( fd );
 		return;
 	}
 
@@ -109,15 +135,15 @@ static void Stats_Load( void ) {
 	lseek( fd, 0, SEEK_SET );
 
 	if ( filelen <= 0 ) {
-		flock( fd, LOCK_UN );
-		close( fd );
+		if ( gStatsTxnFd < 0 ) flock( fd, LOCK_UN );
+		if ( gStatsTxnFd < 0 ) close( fd );
 		return;
 	}
 
 	buf = (char *)Z_Malloc( (int)filelen + 1, TAG_TEMP_WORKSPACE );
 	filelen = read( fd, buf, (size_t)filelen );
-	flock( fd, LOCK_UN );
-	close( fd );
+	if ( gStatsTxnFd < 0 ) flock( fd, LOCK_UN );
+	if ( gStatsTxnFd < 0 ) close( fd );
 
 	if ( filelen <= 0 ) {
 		Z_Free( buf );
@@ -170,13 +196,13 @@ static void Stats_Save( void ) {
 
 	Stats_Path( filepath, sizeof( filepath ) );
 
-	fd = open( filepath, O_WRONLY | O_CREAT, 0644 );
+	fd = gStatsTxnFd >= 0 ? gStatsTxnFd : open( filepath, O_WRONLY | O_CREAT, 0600 );
 	if ( fd < 0 ) {
 		return;
 	}
 
-	if ( flock( fd, LOCK_EX ) != 0 ) {
-		close( fd );
+	if ( gStatsTxnFd < 0 && flock( fd, LOCK_EX ) != 0 ) {
+		if ( gStatsTxnFd < 0 ) close( fd );
 		return;
 	}
 
@@ -191,8 +217,8 @@ static void Stats_Save( void ) {
 		if ( write( fd, line, (size_t)len ) != len ) { /* best-effort; nothing else to do here */ }
 	}
 
-	flock( fd, LOCK_UN );
-	close( fd );
+	if ( gStatsTxnFd < 0 ) flock( fd, LOCK_UN );
+	if ( gStatsTxnFd < 0 ) close( fd );
 }
 
 static statsRecord_t *Stats_Find( const char *key ) {
@@ -261,6 +287,8 @@ static const char *Stats_DisplayName( client_t *cl ) {
 
 static void Stats_RecordKill( const char *killerKey, const char *victimKey ) {
 	statsRecord_t *killer, *victim;
+	StatsTransaction transaction;
+	if ( !transaction.valid() ) return;
 	Stats_Load();
 	killer = Stats_FindOrCreate( killerKey );
 	if ( killer ) {
@@ -275,6 +303,8 @@ static void Stats_RecordKill( const char *killerKey, const char *victimKey ) {
 
 static void Stats_RecordSuicide( const char *key ) {
 	statsRecord_t *rec;
+	StatsTransaction transaction;
+	if ( !transaction.valid() ) return;
 	Stats_Load();
 	rec = Stats_FindOrCreate( key );
 	if ( rec ) {
@@ -286,6 +316,8 @@ static void Stats_RecordSuicide( const char *key ) {
 
 static void Stats_RecordDeath( const char *key ) {
 	statsRecord_t *rec;
+	StatsTransaction transaction;
+	if ( !transaction.valid() ) return;
 	Stats_Load();
 	rec = Stats_FindOrCreate( key );
 	if ( rec ) {
@@ -299,6 +331,8 @@ static void Stats_AddPlaytime( const char *key, int seconds ) {
 	if ( seconds <= 0 ) {
 		return;
 	}
+	StatsTransaction transaction;
+	if ( !transaction.valid() ) return;
 	Stats_Load();
 	rec = Stats_FindOrCreate( key );
 	if ( rec ) {
@@ -377,6 +411,7 @@ void SV_StatsFrame( void ) {
 		}
 		return;
 	}
+	if ( !gStatsWasEnabled ) Com_Printf( "MBIIEZ_STATS_TRANSACTION_V1\n" );
 	gStatsWasEnabled = qtrue;
 
 	for ( i = 0; i < sv_maxclients->integer; i++ ) {

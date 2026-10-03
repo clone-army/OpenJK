@@ -1,0 +1,55 @@
+name: CADED Linux binary
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: caded-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install i386 build dependencies
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y cmake gcc-multilib g++-multilib libjpeg-dev:i386 libpng-dev:i386 zlib1g-dev:i386
+          curl --fail --location https://github.com/gsl-lite/gsl-lite/archive/refs/tags/v0.41.0.tar.gz | tar xz --strip-components=1 -C lib/gsl-lite
+      - name: Build dedicated engine (never install or restart games)
+        run: |
+          cmake -S . -B build -DBuildMPDed=ON -DBuildMPEngine=OFF -DBuildMPRdVanilla=OFF -DBuildMPCGame=OFF -DBuildMPUI=OFF -DBuildSPEngine=OFF -DBuildSPGame=OFF -DBuildSPRdVanilla=OFF -DCMAKE_TOOLCHAIN_FILE="$PWD/cmake/Toolchains/linux-i686.cmake"
+          cmake --build build -j2
+          mkdir -p dist
+          install -m755 build/mbiided.i386 dist/caded.i386
+          file dist/caded.i386 | tee dist/binary-info.txt
+          grep -q 'ELF 32-bit.*Intel 80386' dist/binary-info.txt
+          ldd dist/caded.i386 | tee dist/runtime-libraries.txt
+          if grep -q 'not found' dist/runtime-libraries.txt; then exit 1; fi
+          grep -aq 'MBIIEZ_STATS_TRANSACTION_V1' dist/caded.i386
+          printf '%s\n' "$GITHUB_SHA" > dist/COMMIT
+          tar czf caded-linux-i386.tar.gz -C dist caded.i386 COMMIT binary-info.txt runtime-libraries.txt
+          sha256sum caded-linux-i386.tar.gz > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: caded-linux-i386
+          path: |
+            caded-linux-i386.tar.gz
+            SHA256SUMS
+      - name: Publish commit release
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="caded-${GITHUB_SHA:0:12}"
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" --target "$GITHUB_SHA" --title "CADED Linux ${GITHUB_SHA:0:12}" --notes "Linux i386 dedicated engine. Commit: $GITHUB_SHA. Includes checksum and runtime dependency list." --latest
+          fi
+          gh release upload "$tag" caded-linux-i386.tar.gz SHA256SUMS --clobber

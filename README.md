@@ -33,6 +33,15 @@ You can also use the cvars directly in a server config (`seta g_chaosEnable 1`) 
 
 ---
 
+## Prebuilt Linux engine
+
+Every push to `main` builds the dedicated i386 engine in GitHub Actions and publishes
+`caded-linux-i386.tar.gz` and `SHA256SUMS` on the [latest release](https://github.com/clone-army/OpenJK/releases/latest).
+The archive includes the source commit and runtime dependency list. MBIIEZ's engine installer
+can download it, verify the checksum, and install it without restarting any game.
+The new stats transaction lock allows safe MBIIEZ stats imports while the new binary is running;
+existing processes keep their old binary until their next planned restart.
+
 ## Building and installing
 
 On the server (Linux, 32-bit build like MBII itself):
