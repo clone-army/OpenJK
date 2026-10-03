@@ -9,6 +9,7 @@ KOTOR's card game, played in chat between two logged-in players:
   !pazaak accept | decline     answer a challenge
   !pz play <n>                 play side card n (at most one per turn)
   !pz end                      end your turn - you'll be dealt another card
+                               next turn (over 20 it's a bust: warned first)
   !pz stand                    keep your total for the rest of the set
   !pz auto                     let the server play your turn
   !pz forfeit                  give up the match
@@ -49,6 +50,7 @@ typedef struct {
 	int      setsPlayed;
 	int      turn;                  // 0 or 1
 	qboolean playedThisTurn;
+	qboolean bustWarned;            // "!pz end" over 20 this turn: warned once, the next one busts
 	int      turnDeadline;
 } pazaakGame_t;
 
@@ -250,6 +252,7 @@ static void Pz_BeginTurn(pazaakGame_t* g)
 	g->total[me] += card;
 	g->tableCards[me]++;
 	g->playedThisTurn = qfalse;
+	g->bustWarned = qfalse;
 	g->turnDeadline = svs.time + PZ_TURN_MS;
 
 	Pz_Print(Pz_Client(g->player[1 - me]), va("%s ^7draws %d - total ^3%d^7.", Pz_Name(g, me), card, g->total[me]));
@@ -458,7 +461,7 @@ qboolean SV_PazaakCommand(client_t* cl, const char* args)
 
 	if (argc < 1) {
 		Pz_Print(cl, "^5!pazaak <player> <credits> ^7to challenge someone. Closest to 20 without going over wins the set, and the first to 2 sets wins the pot.");
-		Pz_Print(cl, "In a game: ^5!pz play <n>^7, ^5!pz end^7, ^5!pz stand^7, ^5!pz auto ^7(it picks for you), ^5!pz forfeit^7.");
+		Pz_Print(cl, "In a game: ^5!pz play <n>^7, ^5!pz end ^7(end your turn, draw again next turn), ^5!pz stand ^7(keep your total for the set), ^5!pz auto ^7(it picks for you), ^5!pz forfeit^7.");
 		Pz_Print(cl, "^5!pazaak ^7and ^5!pz ^7work the same for everything.");
 		return qtrue;
 	}
@@ -489,6 +492,18 @@ qboolean SV_PazaakCommand(client_t* cl, const char* args)
 			return qtrue;
 		}
 		if (!Q_stricmp(a, "end")) {
+			// Ending your turn over 20 is a bust - the set's lost. Easy to do
+			// by accident after a big draw, so it's checked first.
+			if (g->total[side] > PZ_TARGET && !g->bustWarned) {
+				g->bustWarned = qtrue;
+				Pz_Print(cl, va("^1You're on %d - over 20.^7 Ending your turn now loses the set. Play a minus side card (%s^7), or ^5!pz end ^7again to take the bust.",
+					g->total[side], Pz_HandText(g, side)));
+				return qtrue;
+			}
+			if (g->total[side] <= PZ_TARGET) {
+				Pz_Print(cl, g->stood[1 - side] ? "Turn ended - they're standing, so it's straight back to you."
+					: "Turn ended - you'll draw again on your next turn.");
+			}
 			Pz_NextTurn(g);
 		} else if (!Q_stricmp(a, "stand")) {
 			Pz_Stand(g);
