@@ -334,6 +334,7 @@ if(BuildMPEngine OR BuildMPDed)
 		"${MPDir}/server/cJSON.c"
 		"${MPDir}/server/stats.h"
 		"${MPDir}/server/stats.cpp"
+		"${MPDir}/server/game_results.cpp"
 		"${MPDir}/server/sv_bot.cpp"
 		"${MPDir}/server/sv_ccmds.cpp"
 		"${MPDir}/server/sv_smod.cpp"		

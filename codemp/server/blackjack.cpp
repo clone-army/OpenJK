@@ -122,6 +122,10 @@ static void Bj_Settle(int slot, bjHand_t* h, int payout, const char* resultText,
 	Q_strncpyz(result, resultText, sizeof(result));
 	Q_strncpyz(banner, bannerText, sizeof(banner));
 
+	SV_GameResult("blackjack", h->handle, cl ? cl->name : h->handle,
+		payout > h->bet ? "win" : payout == h->bet ? "push" : "loss", h->bet, payout - h->bet, "dealer",
+		va("you %d (%d cards), dealer %d", Bj_Value(h->player, h->numPlayer), h->numPlayer, Bj_Value(h->dealer, h->numDealer)));
+
 	if (payout > 0) {
 		if (cl) {
 			cl->economyCredits += payout;

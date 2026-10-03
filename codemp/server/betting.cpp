@@ -155,6 +155,15 @@ static void Bet_Resolve(betDuel_t* duel, int winner)
 		client_t* cl = &svs.clients[b->bettor];
 		const qboolean here = (cl->state == CS_ACTIVE && !Q_stricmp(cl->economyHandle, b->account)) ? qtrue : qfalse;
 
+		// For the web panel: every bet as it settles.
+		{
+			const int bonus = Q_min(b->amount, g_betWinBonus ? Q_max(0, g_betWinBonus->integer) : 20);
+			const int share = (winningSide > 0) ? (int)((long long)b->amount * (pot - winningSide) / winningSide) : 0;
+			const int net = (winner < 0) ? 0 : (b->side == winner) ? bonus + share : (b->amount * refundPct / 100) - b->amount;
+			SV_GameResult("bet", b->account, here ? cl->name : b->account,
+				winner < 0 ? "refund" : (b->side == winner ? "win" : "loss"), b->amount, net,
+				va("%s vs %s", duel->handle[0], duel->handle[1]), va("backed %s", duel->handle[b->side]));
+		}
 		if (winner < 0) {
 			Bet_Pay(b, b->amount);
 			if (here) {

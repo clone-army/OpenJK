@@ -180,6 +180,8 @@ static void Raffle_Draw(time_t now)
 	if (gRaffle.entryCount < Raffle_MinEntrants()) {
 		for (int i = 0; i < gRaffle.entryCount; i++) {
 			SV_EconomyAddCreditsToAccount(gRaffle.entries[i].handle, gRaffle.entries[i].paid);
+			SV_GameResult("raffle", gRaffle.entries[i].handle, gRaffle.entries[i].handle, "refund", gRaffle.entries[i].paid, 0, "",
+				"too few entered");
 		}
 		Raffle_Announce(va("Only %d %s entered - the raffle needs at least %d. Everyone's credits have been refunded.",
 			gRaffle.entryCount, gRaffle.entryCount == 1 ? "person" : "people", Raffle_MinEntrants()));
@@ -200,6 +202,11 @@ static void Raffle_Draw(time_t now)
 	// Into the account itself: a logged-in session picks the change up
 	// through the economy's normal sync, and it counts if they've left.
 	SV_EconomyAddCreditsToAccount(winner->handle, gRaffle.pool);
+	for (int i = 0; i < gRaffle.entryCount; i++) {
+		const raffleEntry_t* e = &gRaffle.entries[i];
+		SV_GameResult("raffle", e->handle, e->handle, e == winner ? "win" : "loss", e->paid,
+			e == winner ? gRaffle.pool - e->paid : -e->paid, "", va("%d of %d tickets, pool %d", e->tickets, total, gRaffle.pool));
+	}
 
 	// Show the winner's in-game name if they're still here.
 	const char* name = winner->handle;

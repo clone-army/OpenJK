@@ -133,6 +133,12 @@ static void Pz_Payout(client_t* cl, int amount)
 static void Pz_EndMatch(pazaakGame_t* g, int winner, const char* how)
 {
 	const int pot = g->bet * 2;
+	for (int s = 0; s < 2; s++) {
+		const char* name = Pz_Present(g->player[s], g->handle[s]) ? Pz_Name(g, s) : g->handle[s];
+		SV_GameResult("pazaak", g->handle[s], name, winner < 0 ? "refund" : (s == winner ? "win" : "loss"),
+			g->bet, winner < 0 ? 0 : (s == winner ? g->bet : -g->bet), g->handle[1 - s],
+			va("sets %d-%d%s", g->setsWon[s], g->setsWon[1 - s], how));
+	}
 	if (winner < 0) {
 		// No result: everyone gets their stake back.
 		for (int s = 0; s < 2; s++) {
