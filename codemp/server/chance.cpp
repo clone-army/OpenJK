@@ -120,6 +120,8 @@ static void Chance_Answer(client_t* cl, const char* answer)
 	SV_EconomyPersistCredits(winner);
 	SV_EconomyResultBanner(winner, rolledRed ? "Chance: ^1RED" : "Chance: ^4BLUE", bet);
 	SV_EconomyResultBanner(loser, rolledRed ? "Chance: ^1RED" : "Chance: ^4BLUE", -bet);
+	SV_GameResultClient(winner, "chance", "win", bet, bet, loser->economyHandle, rolledRed ? "rolled red" : "rolled blue");
+	SV_GameResultClient(loser, "chance", "loss", bet, -bet, winner->economyHandle, rolledRed ? "rolled red" : "rolled blue");
 
 	SV_SendServerCommand(NULL, "chat \"^3[Chance] ^7%s ^7(%s^7) vs %s ^7(%s^7) for ^2%d ^7credits... it's %s^7! %s ^7wins!\"\n",
 		cl->name, pickedRed ? "^1red" : "^4blue", challenger->name, pickedRed ? "^4blue" : "^1red", bet * 2,

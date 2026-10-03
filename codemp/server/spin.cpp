@@ -1269,6 +1269,8 @@ void SV_Spin(client_t* cl) {
 	if (spins == 20) {
 		response = "Something went wrong with your spin. We did 20 spins and you won nothing — report to admin";
 	}
+	SV_GameResultClient(cl, "spin", spins == 20 ? "none" : "prize", 0, 0, "",
+		!Q_stricmpn(response, "You win ", 8) ? response + 8 : response);
 
 	Cvar_Set("sv_cheats", "0");
 

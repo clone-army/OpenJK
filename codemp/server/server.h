@@ -673,6 +673,11 @@ void SV_HoloDebugSpawn(const char* type);
 void SV_HoloDebugDump(int num);
 qboolean SV_HoloClassRefused(const char* sc);
 void SV_HoloMapChange(const char* map);
+// game_results.cpp: one line per settled game, for the web panel.
+void SV_GameResult( const char *game, const char *account, const char *name, const char *result,
+	int stake, int net, const char *vs, const char *details );
+void SV_GameResultClient( client_t *cl, const char *game, const char *result, int stake, int net,
+	const char *vs, const char *details );
 void SV_HoloClientThink(client_t* cl, usercmd_t* cmd);
 void SV_SocialEnsureNpcFiles(void);
 qboolean SV_SocialWaypointCommand(client_t* cl, const char* args);
