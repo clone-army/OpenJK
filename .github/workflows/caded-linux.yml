@@ -34,6 +34,7 @@ jobs:
           ldd dist/caded.i386 | tee dist/runtime-libraries.txt
           if grep -q 'not found' dist/runtime-libraries.txt; then exit 1; fi
           grep -aq 'MBIIEZ_STATS_TRANSACTION_V1' dist/caded.i386
+          grep -aq 'MBIIEZ_SHARED_LEDGER_V2' dist/caded.i386
           printf '%s\n' "$GITHUB_SHA" > dist/COMMIT
           tar czf caded-linux-i386.tar.gz -C dist caded.i386 COMMIT binary-info.txt runtime-libraries.txt
           sha256sum caded-linux-i386.tar.gz > SHA256SUMS

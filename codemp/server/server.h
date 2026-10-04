@@ -261,6 +261,7 @@ typedef struct client_s {
 	qboolean		economySpawnBannerShown;
 	int				economyCreditsSynced;	// account's stored balance as of this session's last read/write (see SV_EconomyMergeExternal)
 	char			economyHandle[24];	// non-empty if logged into a persisted !register/!login account this session
+	char economySharedSession[33]; // server-side shared wallet authentication; never sent to players
 
 	// Set by the spawnvehicle admin command right after teleporting a
 	// player, instead of firing "npc spawn vehicle <name>" immediately in

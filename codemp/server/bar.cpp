@@ -67,6 +67,7 @@ effect is dropped without touching anything.
 */
 
 #include "server.h"
+#include "shared_ledger.h"
 #include <ctype.h>
 #include "sv_gameapi.h"
 #include "sys/sys_loadlib.h"
@@ -628,7 +629,7 @@ qboolean SV_BarCommand(client_t* cl, const char* args)
 		return qtrue;
 	}
 
-	cl->economyCredits -= Bar_Cost(drink);
+	if (!SV_SharedSpend(cl,Bar_Cost(drink))) return qtrue;
 	SV_EconomyPersistCredits(cl);
 
 	if (kBarDrinks[drink].effect == BAR_CURE) {

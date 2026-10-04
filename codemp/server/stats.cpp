@@ -50,6 +50,7 @@ same narrow last-write-wins window matters even less.
 
 #include "server.h"
 #include "stats.h"
+#include "shared_ledger.h"
 
 #include <fcntl.h>
 #include <unistd.h>
@@ -289,6 +290,7 @@ static void Stats_RecordKill( const char *killerKey, const char *victimKey ) {
 	statsRecord_t *killer, *victim;
 	StatsTransaction transaction;
 	if ( !transaction.valid() ) return;
+    if(SV_SharedEnabled()){SV_SharedKill(killerKey,victimKey);return;}
 	Stats_Load();
 	killer = Stats_FindOrCreate( killerKey );
 	if ( killer ) {
@@ -305,6 +307,7 @@ static void Stats_RecordSuicide( const char *key ) {
 	statsRecord_t *rec;
 	StatsTransaction transaction;
 	if ( !transaction.valid() ) return;
+    if(SV_SharedEnabled()){SV_SharedStats(key,0,1,1,0);return;}
 	Stats_Load();
 	rec = Stats_FindOrCreate( key );
 	if ( rec ) {
@@ -318,6 +321,7 @@ static void Stats_RecordDeath( const char *key ) {
 	statsRecord_t *rec;
 	StatsTransaction transaction;
 	if ( !transaction.valid() ) return;
+    if(SV_SharedEnabled()){SV_SharedStats(key,0,1,0,0);return;}
 	Stats_Load();
 	rec = Stats_FindOrCreate( key );
 	if ( rec ) {
@@ -333,6 +337,7 @@ static void Stats_AddPlaytime( const char *key, int seconds ) {
 	}
 	StatsTransaction transaction;
 	if ( !transaction.valid() ) return;
+    if(SV_SharedEnabled()){SV_SharedStats(key,0,0,0,seconds);return;}
 	Stats_Load();
 	rec = Stats_FindOrCreate( key );
 	if ( rec ) {

@@ -32,6 +32,7 @@ music comes back by itself. G_InitGame resets it every round anyway.
 */
 
 #include "server.h"
+#include "shared_ledger.h"
 
 typedef struct {
 	const char* name;
@@ -188,7 +189,7 @@ static void Jukebox_Play(client_t* cl, int index)
 	}
 
 	const jukeboxTrack_t* t = &kJukeboxTracks[index];
-	cl->economyCredits -= cost;
+	if (!SV_SharedSpend(cl,cost)) return;
 	SV_EconomyPersistCredits(cl);
 	Jukebox_NoteMapMusic();
 	if (Jukebox_Autoplay()) {

@@ -22,6 +22,7 @@ g_economyBartenderEnable, which the plugin sets only when it has a key.
 */
 
 #include "server.h"
+#include "shared_ledger.h"
 #include <time.h>
 
 #define BARTENDER_MAX_PENDING    32
@@ -208,7 +209,7 @@ qboolean SV_BartenderCommand(client_t* cl, const char* args)
 	Q_strncpyz(question, args, sizeof(question));
 	Bartender_Clean(question);
 
-	cl->economyCredits -= cost;
+	if (!SV_SharedSpend(cl,cost)) return qtrue;
 	SV_EconomyPersistCredits(cl);
 	gBtAskedToday++;
 	gBtNextAsk[slot] = svs.time + 1000 * (g_bartenderCooldown ? Q_max(0, g_bartenderCooldown->integer) : 0);

@@ -21,6 +21,7 @@ an open raffle doesn't lose anyone's credits: it picks up where it left off
 */
 
 #include "server.h"
+#include "shared_ledger.h"
 #include <time.h>
 
 #define RAFFLE_MAX_ENTRIES  256
@@ -284,7 +285,7 @@ qboolean SV_RaffleCommand(client_t* cl, const char* args)
 		e->paid = 0;
 	}
 
-	cl->economyCredits -= cost;
+	if (!SV_SharedSpend(cl,cost)) { if(e->tickets==0 && e->paid==0 && e==&gRaffle.entries[gRaffle.entryCount-1]) --gRaffle.entryCount; return qtrue; }
 	SV_EconomyPersistCredits(cl);
 	e->tickets += count;
 	e->paid += cost;

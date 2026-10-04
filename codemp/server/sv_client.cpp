@@ -28,6 +28,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "qcommon/stringed_ingame.h"
 #include "qcommon/md5.h"
 #include "spin.h"
+#include "shared_ledger.h"
 
 #include <ctype.h>
 
@@ -1575,6 +1576,10 @@ static int SV_EconomyDailyClaim( const char *handle, qboolean recordOnly, qboole
 		return 0;
 	}
 
+    if(SV_SharedEnabled()) {
+        cJSON *event=cJSON_CreateObject();cJSON_AddStringToObject(event,"kind","daily_claim");cJSON_AddStringToObject(event,"handle",handle);cJSON_AddNumberToObject(event,"claimed",now);
+        SV_SharedEvent(event);cJSON_Delete(event);fclose(f);return 0;
+    }
 	while ( count < ECONOMY_DAILY_MAX && fgets( line, sizeof( line ), f ) ) {
 		if ( sscanf( line, "%23s %ld", entries[count].handle, &entries[count].claimed ) == 2 ) {
 			if ( !Q_stricmp( entries[count].handle, handle ) ) {
@@ -1876,6 +1881,14 @@ static void SV_EconomyMergeExternal( client_t *cl, economyAccount_t *acct ) {
 
 // Picks up any outside change to a logged-in session's balance.
 static void SV_EconomySyncCredits( client_t *cl ) {
+    if (SV_SharedEnabled()) {
+        int balance;
+        if (cl->economyHandle[0] && SV_SharedBalance(cl->economyHandle,&balance)) {
+            const int unsaved=Q_max(0,cl->economyCredits-cl->economyCreditsSynced);
+            cl->economyCredits=balance+unsaved;cl->economyCreditsSynced=balance;
+        }
+        return;
+    }
 	economyAccount_t *acct;
 
 	if ( !cl->economyHandle[0] ) {
@@ -1989,10 +2002,36 @@ client_t *SV_EconomyFindPlayer( client_t *asker, const char *query ) {
 // Adds to an account's stored balance directly (raffle winnings, Pazaak
 // payouts to someone who's left). A logged-in session picks the change up
 // through SV_EconomyMergeExternal like any other outside change.
+qboolean SV_EconomyStandalonePair(client_t *a,client_t *b,int amount) {
+    SV_EconomyBegin();
+    if(SV_SharedEnabled()){SV_EconomyEnd();return SV_SharedSpendPair(a,b,amount);}
+    economyAccount_t *first=SV_EconomyFindAccount(a->economyHandle),*second=SV_EconomyFindAccount(b->economyHandle);
+    if(!first||!second||first==second){SV_EconomyEnd();return qfalse;}
+    SV_EconomyMergeExternal(a,first);SV_EconomyMergeExternal(b,second);
+    if(a->economyCredits<amount||b->economyCredits<amount){SV_EconomyEnd();return qfalse;}
+    a->economyCredits-=amount;b->economyCredits-=amount;
+    first->credits=a->economyCredits;second->credits=b->economyCredits;
+    a->economyCreditsSynced=first->credits;b->economyCreditsSynced=second->credits;
+    SV_EconomyAccountsSave();SV_EconomyEnd();return qtrue;
+}
+
+qboolean SV_EconomyStandaloneDebit(client_t *cl,int amount) {
+    SV_EconomyBegin();
+    if(SV_SharedEnabled()){SV_EconomyEnd();return SV_SharedSpend(cl,amount);}
+    economyAccount_t *acct=SV_EconomyFindAccount(cl->economyHandle);
+    if(!acct){SV_EconomyEnd();return qfalse;}
+    SV_EconomyMergeExternal(cl,acct);
+    if(cl->economyCredits<amount){SV_EconomyEnd();return qfalse;}
+    cl->economyCredits-=amount;acct->credits=cl->economyCredits;cl->economyCreditsSynced=acct->credits;
+    SV_EconomyAccountsSave();SV_EconomyEnd();return qtrue;
+}
+
 qboolean SV_EconomyAddCreditsToAccount( const char *handle, int amount ) {
+    if (SV_SharedEnabled()) return SV_SharedCredits(handle,amount);
 	economyAccount_t *acct;
 
 	SV_EconomyBegin();
+    if(SV_SharedEnabled()){SV_EconomyEnd();return SV_SharedCredits(handle,amount);}
 	acct = SV_EconomyFindAccount( handle );
 	if ( acct ) {
 		acct->credits += amount;
@@ -2003,6 +2042,13 @@ qboolean SV_EconomyAddCreditsToAccount( const char *handle, int amount ) {
 }
 
 void SV_EconomyPersistCredits( client_t *cl ) {
+    if (SV_SharedEnabled()) {
+        if (!cl->economyHandle[0]) return;
+        const int delta=cl->economyCredits-cl->economyCreditsSynced;
+        if (delta>0 && SV_SharedCredits(cl->economyHandle,delta)) cl->economyCreditsSynced=cl->economyCredits;
+        else if (delta<0 && !SV_SharedSpend(cl,-delta)) cl->economyCredits=cl->economyCreditsSynced;
+        return;
+    }
 	economyAccount_t *acct;
 
 	if ( !cl->economyHandle[0] ) {
@@ -2010,6 +2056,7 @@ void SV_EconomyPersistCredits( client_t *cl ) {
 	}
 
 	SV_EconomyBegin();
+    if(SV_SharedEnabled()){SV_EconomyEnd();SV_EconomyPersistCredits(cl);return;}
 	acct = SV_EconomyFindAccount( cl->economyHandle );
 	if ( acct ) {
 		SV_EconomyMergeExternal( cl, acct );
@@ -2459,6 +2506,10 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 		return qtrue;
 	}
 
+    if(SV_SharedEnabled() && cl->economyHandle[0] && !cl->economySharedSession[0]) {
+        SV_EconomyPersistCredits(cl);cl->economyHandle[0]=0;cl->economyCredits=cl->economyCreditsSynced=0;
+        SV_EconomyPrint(cl,"Shared accounts are enabled. Use !login <handle> <pin> to sign in once.");
+    }
 	if ( SV_EconomyEnabled() ) {
 		SV_EconomySyncCredits( cl );
 	}
@@ -2590,7 +2641,7 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 			return qtrue;
 		}
 
-		cl->economyCredits -= SV_EconomyItemCost( i );
+		if (!SV_SharedSpend(cl,SV_EconomyItemCost(i))) return qtrue;
 
 		if ( svEconomyItemDefs[i].winIndex >= 0 ) {
 			SV_SpinForceGiveWin( cl, svEconomyItemDefs[i].winIndex );
@@ -2652,9 +2703,10 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 			return qtrue;
 		}
 
-		cl->economyCredits -= amount;
+		if (!SV_SharedSpend(cl,amount,SV_SharedEnabled() ? target->economyHandle : nullptr)) return qtrue;
 		SV_EconomyPersistCredits( cl );
 		target->economyCredits += amount;
+        if (SV_SharedEnabled()) target->economyCreditsSynced += amount;
 		SV_EconomyPersistCredits( target );
 
 		SV_EconomyPrint( cl, va( "You gifted %d credits to %s^7. New balance: %d", amount, target->name, cl->economyCredits ) );
@@ -2708,7 +2760,7 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 				for ( int s = 0; s < ECONOMY_BOUNTY_BACKERS && !stake; s++ ) {
 					if ( !target->economyBountyStakes[s].handle[0] ) {
 						stake = &target->economyBountyStakes[s];
-						Q_strncpyz( stake->handle, cl->economyHandle, sizeof( stake->handle ) );
+
 					}
 				}
 				if ( !stake ) {
@@ -2716,10 +2768,11 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 						target->name, ECONOMY_BOUNTY_BACKERS ) );
 					return qtrue;
 				}
+                if (!SV_SharedSpend(cl,amount)) return qtrue;
+                Q_strncpyz(stake->handle,cl->economyHandle,sizeof(stake->handle));
 				stake->amount += amount;
 			}
 
-			cl->economyCredits -= amount;
 			target->economyBounty += amount;
 			target->economyBountyPlacerNum = (int)( cl - svs.clients );
 			Q_strncpyz( target->economyBountyPlacerName, cl->name, sizeof( target->economyBountyPlacerName ) );
@@ -2804,6 +2857,11 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 			return qtrue;
 		}
 
+        if (SV_SharedEnabled()) {
+            const int welcome=(SV_EconomyEnabled() && g_economyRegisterBonus) ? Q_max(0,g_economyRegisterBonus->integer) : 0;
+            SV_SharedLogin(cl,"register",firstArg,secondArg,welcome);
+            return qtrue;
+        }
 		{
 			const int bonus = ( SV_EconomyEnabled() && g_economyRegisterBonus ) ? Q_max( 0, g_economyRegisterBonus->integer ) : 0;
 			economyAccount_t *acct = NULL;
@@ -2816,6 +2874,7 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 			}
 
 			SV_EconomyBegin();
+            if(SV_SharedEnabled()){SV_EconomyEnd();SV_SharedLogin(cl,"register",firstArg,secondArg,bonus);return qtrue;}
 			if ( SV_EconomyFindAccount( firstArg ) ) {
 				problem = "That handle is taken. Choose another.";
 			} else if ( svEconomyAccountCount >= ECONOMY_MAX_ACCOUNTS ) {
@@ -2871,6 +2930,18 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 			return qtrue;
 		}
 
+        if (SV_SharedEnabled()) {
+            const int daily=(SV_EconomyEnabled() && g_economyDailyBonus) ? Q_max(0,g_economyDailyBonus->integer) : 0;
+            if (SV_SharedLogin(cl,"login",firstArg,secondArg,daily)) {
+                for (int otherIndex=0;otherIndex<sv_maxclients->integer;++otherIndex) {
+                    client_t *other=&svs.clients[otherIndex];
+                    if (other!=cl && !Q_stricmp(other->economyHandle,cl->economyHandle)) {
+                        other->economyHandle[0]='\0';other->economyCredits=other->economyCreditsSynced=0;
+                    }
+                }
+            }
+            return qtrue;
+        }
 		// Lockouts are wall-clock seconds (time()), since the file is shared
 		// by every server: they used to be svs.time, each process's own
 		// uptime in milliseconds, so a lockout meant hours on one server and
@@ -2879,6 +2950,7 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 		// and each lockout doubles, up to an hour: a 4-digit PIN would
 		// otherwise fall to a patient script in under a day.
 		SV_EconomyBegin();
+        if(SV_SharedEnabled()){SV_EconomyEnd();SV_SharedLogin(cl,"login",firstArg,secondArg,g_economyDailyBonus ? Q_max(0,g_economyDailyBonus->integer) : 0);return qtrue;}
 		acct = SV_EconomyFindAccount( firstArg );
 		if ( !acct ) {
 			Q_strncpyz( result, "No account with that handle.", sizeof( result ) );
