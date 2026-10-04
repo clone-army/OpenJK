@@ -28,6 +28,7 @@ Switched on with g_economyPazaakEnable.
 */
 
 #include "server.h"
+#include "shared_ledger.h"
 
 #define PZ_TARGET           20
 #define PZ_TABLE_MAX        9
@@ -370,6 +371,7 @@ static void Pz_Answer(client_t* cl, qboolean accept)
 		return;
 	}
 
+	if (!SV_SharedSpendPair(challenger,cl,bet)) { Pz_Print(cl,"Shared funds unavailable; no game started."); return; }
 	memset(g, 0, sizeof(*g));
 	g->active = qtrue;
 	g->player[0] = from;
@@ -379,7 +381,7 @@ static void Pz_Answer(client_t* cl, qboolean accept)
 	g->bet = bet;
 	for (int s = 0; s < 2; s++) {
 		client_t* p = Pz_Client(g->player[s]);
-		p->economyCredits -= bet;
+		// Both stakes were reserved atomically before the game was created.
 		SV_EconomyPersistCredits(p);
 		for (int i = 0; i < PZ_HAND_SIZE; i++) {
 			g->hand[s][i] = Q_irand(1, 6) * (Q_irand(0, 1) ? 1 : -1);

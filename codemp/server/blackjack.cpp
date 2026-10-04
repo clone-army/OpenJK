@@ -19,6 +19,7 @@ g_economyBlackjackEnable; g_blackjackMaxBet caps one hand's bet.
 */
 
 #include "server.h"
+#include "shared_ledger.h"
 
 #define BJ_TURN_MS      30000
 #define BJ_MAX_CARDS    12
@@ -188,7 +189,7 @@ static void Bj_Deal(client_t* cl, const char* amountStr)
 		return;
 	}
 
-	cl->economyCredits -= bet;
+	if (!SV_SharedSpend(cl,bet)) return;
 	SV_EconomyPersistCredits(cl);
 
 	memset(h, 0, sizeof(*h));
@@ -278,7 +279,7 @@ qboolean SV_BlackjackCommand(client_t* cl, const char* args)
 		} else if (cl->economyCredits < h->bet) {
 			Bj_Print(cl, va("Doubling needs another %d credits - you've got %d.", h->bet, cl->economyCredits));
 		} else {
-			cl->economyCredits -= h->bet;
+			if (!SV_SharedSpend(cl,h->bet)) return qtrue;
 			SV_EconomyPersistCredits(cl);
 			h->bet *= 2;
 			h->player[h->numPlayer++] = Bj_Draw(h);

@@ -31,6 +31,7 @@ g_economyBetEnable.
 */
 
 #include "server.h"
+#include "shared_ledger.h"
 
 #define BET_MAX_DUELS   16
 #define BET_MAX_BETS    128
@@ -496,7 +497,7 @@ qboolean SV_BetCommand(client_t* cl, const char* args)
 		Q_strncpyz(mine->account, cl->economyHandle, sizeof(mine->account));
 	}
 
-	cl->economyCredits -= amount;
+	if (!SV_SharedSpend(cl,amount)) { if(mine->amount==0) mine->active=qfalse; return qtrue; }
 	SV_EconomyPersistCredits(cl);
 	mine->amount += amount;
 

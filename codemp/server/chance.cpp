@@ -15,6 +15,7 @@ challenge lasts 60 seconds. Switched on with g_economyChanceEnable.
 */
 
 #include "server.h"
+#include "shared_ledger.h"
 
 #define CHANCE_CHALLENGE_MS 60000
 
@@ -114,9 +115,10 @@ static void Chance_Answer(client_t* cl, const char* answer)
 	client_t* winner = (pickedRed == rolledRed) ? cl : challenger;
 	client_t* loser = (winner == cl) ? challenger : cl;
 
-	loser->economyCredits -= bet;
+	if (!SV_SharedSpend(loser,bet,SV_SharedEnabled() ? winner->economyHandle : nullptr)) return;
 	SV_EconomyPersistCredits(loser);
 	winner->economyCredits += bet;
+    if (SV_SharedEnabled()) winner->economyCreditsSynced += bet;
 	SV_EconomyPersistCredits(winner);
 	SV_EconomyResultBanner(winner, rolledRed ? "Chance: ^1RED" : "Chance: ^4BLUE", bet);
 	SV_EconomyResultBanner(loser, rolledRed ? "Chance: ^1RED" : "Chance: ^4BLUE", -bet);

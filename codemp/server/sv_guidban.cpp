@@ -33,6 +33,7 @@ which mbiiez/guidbans.py takes as well.
 */
 
 #include "server.h"
+#include "shared_ledger.h"
 #include <fcntl.h>
 #include <sys/file.h>
 #include <sys/stat.h>
@@ -69,6 +70,9 @@ static int			guidBanCount;
 static guidSeen_t	guidSeen[GUIDSEEN_MAX];
 static int			guidSeenCount;
 static cvar_t		*sv_guidBanFile;
+static guidBan_t sharedBefore[GUIDBAN_MAX];
+static int sharedBeforeCount=0;
+static int sharedRevision=0;
 
 static const char *GuidBan_Path( void ) {
 	static char path[MAX_OSPATH];
@@ -131,6 +135,7 @@ static void GuidBan_Load( void ) {
 	char line[1024];
 
 	guidBanCount = 0;
+    sharedBeforeCount=0;sharedRevision=0;
 	if ( !f ) {
 		return;
 	}
@@ -139,6 +144,7 @@ static void GuidBan_Load( void ) {
 		int n = 0;
 
 		line[strcspn( line, "\r\n" )] = '\0';
+        if (!strncmp(line,"# MBIIEZ_SHARED_REVISION=",24)) sharedRevision=atoi(line+24);
 		if ( !line[0] || line[0] == '#' ) {
 			continue;
 		}
@@ -166,15 +172,36 @@ static void GuidBan_Load( void ) {
 		guidBanCount++;
 	}
 	fclose( f );
+    memcpy(sharedBefore,guidBans,guidBanCount*sizeof(guidBan_t));sharedBeforeCount=guidBanCount;
 }
 
 static void GuidBan_Save( void ) {
+    if (SV_SharedEnabled()) {
+        for (int i=0;i<sharedBeforeCount;++i) {
+            bool present=false;for(int j=0;j<guidBanCount;++j)if(!Q_stricmp(sharedBefore[i].guid,guidBans[j].guid))present=true;
+            if(!present && !SV_SharedBan("ban_delete",sharedBefore[i].guid,nullptr,sharedRevision))return;
+        }
+        for(int i=0;i<guidBanCount;++i) {
+            const guidBan_t &b=guidBans[i];const guidBan_t *before=nullptr;
+            for(int j=0;j<sharedBeforeCount;++j)if(!Q_stricmp(sharedBefore[j].guid,b.guid))before=&sharedBefore[j];
+            if(before && !memcmp(before,&b,sizeof(b)))continue;
+            cJSON *row=cJSON_CreateArray();
+            cJSON_AddItemToArray(row,cJSON_CreateString(b.guid));cJSON_AddItemToArray(row,cJSON_CreateNumber(b.drops));
+            cJSON_AddItemToArray(row,cJSON_CreateNumber(b.lastDrop));cJSON_AddItemToArray(row,cJSON_CreateString(b.name));
+            cJSON_AddItemToArray(row,cJSON_CreateString(b.ip));cJSON_AddItemToArray(row,cJSON_CreateNumber(b.added));
+            cJSON_AddItemToArray(row,cJSON_CreateString(b.banIp));cJSON_AddItemToArray(row,cJSON_CreateString(b.note));
+            bool ok=SV_SharedBan(before ? "ban_update" : "ban_set",b.guid,row,sharedRevision);cJSON_Delete(row);if(!ok)return;
+        }
+        memcpy(sharedBefore,guidBans,guidBanCount*sizeof(guidBan_t));sharedBeforeCount=guidBanCount;
+        return; // agent owns the projected file; journal entries are authoritative
+    }
 	FILE *f = fopen( GuidBan_Path(), "w" );
 
 	if ( !f ) {
 		Com_Printf( "GUID bans: can't write %s\n", GuidBan_Path() );
 		return;
 	}
+    if(SV_SharedEnabled())fprintf(f,"# MBIIEZ_SHARED_REVISION=%d\n",sharedRevision);
 	fprintf( f, "# GUID bans for every server. Tab separated, times in unix seconds:\n" );
 	fprintf( f, "# GUID\tdrops\tlast drop\tlast name\tlast ip\tadded\tfrom ip ban\tnote\n" );
 	for ( int i = 0; i < guidBanCount; i++ ) {
@@ -247,6 +274,12 @@ static void GuidSeen_Note( const char *addr, const char *guid, const char *name 
 	}
 	s->seen = (long)time( NULL );
 	GuidBan_CopyField( s->name, name, sizeof( s->name ) );
+    if(SV_SharedEnabled()) {
+        cJSON *event=cJSON_CreateObject(),*row=cJSON_CreateArray();
+        cJSON_AddStringToObject(event,"kind","guid_seen");cJSON_AddItemToArray(row,cJSON_CreateString(s->ip));
+        cJSON_AddItemToArray(row,cJSON_CreateString(s->guid));cJSON_AddItemToArray(row,cJSON_CreateNumber(s->seen));
+        cJSON_AddItemToArray(row,cJSON_CreateString(s->name));cJSON_AddItemToObject(event,"row",row);SV_SharedEvent(event);cJSON_Delete(event);
+    }
 }
 
 static guidBan_t *GuidBan_Find( const char *guid ) {
