@@ -71,7 +71,7 @@ except Exception:
 " 2>/dev/null | tail -n 1
 }
 
-echo "==> Finding caded.i386 instances..."
+echo "==> Finding caded.i386 / nxrp.i386 instances..."
 INSTANCES_TO_RESTART=()
 CONFIG_DIR="/root/mbiiez/configs"
 
@@ -81,11 +81,11 @@ if [ -d "$CONFIG_DIR" ]; then
             # Extract instance name from filename (without .json extension)
             instance_name=$(basename "$config_file" .json)
 
-            # Check if this instance uses caded.i386 as engine - the one binary
-            # this build always produces now, replacing the old per-feature
-            # spin.i386/gungame.i386 builds (chaos/gungame/economy/bounty all
-            # live in it together, toggled per-instance by cvars).
-            if grep -q '"engine"\s*:\s*"caded\.i386"' "$config_file"; then
+                # Check if this instance uses caded.i386 or nxrp.i386 as engine - the
+                # single binary this build produces now, replacing older per-feature
+                # builds. Also consider nxrp.i386 so web UIs that expose that option
+                # will be able to select this build.
+                if grep -Eq '"engine"\s*:\s*"(caded\.i386|nxrp\.i386)"' "$config_file"; then
                 if [ "$(is_instance_empty "$instance_name")" == "1" ]; then
                     echo "Stopping instance: $instance_name (empty)"
                     mbii -i "$instance_name" stop || true
@@ -112,7 +112,10 @@ else
 fi
 
 echo ""
-echo "==> Installing binary to /usr/bin/caded.i386..."
+# Install caded.i386 and provide a nxrp.i386 entry so external web UIs
+# that list available engines (caded.i386, mbiided.i386, nxrp.i386, etc.)
+# will see this build as an option.
+echo "==> Installing binary to /usr/bin/caded.i386 (and creating /usr/bin/nxrp.i386 symlink)..."
 # An instance with players connected (see is_instance_empty above) is
 # deliberately left running against the OLD binary rather than being kicked
 # - which means /usr/bin/caded.i386 can still be a live, currently-executing
@@ -125,6 +128,10 @@ echo "==> Installing binary to /usr/bin/caded.i386..."
 sudo cp "$BUILD_DIR/mbiided.i386" /usr/bin/caded.i386.new
 sudo chmod +x /usr/bin/caded.i386.new
 sudo mv -f /usr/bin/caded.i386.new /usr/bin/caded.i386
+
+# Create or update nxrp.i386 to point at the caded.i386 binary so the
+# mbiiez web interface recognizes "nxrp.i386" as a valid engine choice.
+sudo ln -sf /usr/bin/caded.i386 /usr/bin/nxrp.i386
 
 echo "==> Done! Binary installed at /usr/bin/caded.i386"
 
