@@ -2039,6 +2039,14 @@ static struct {
 	// Where each side respawns (by TEAM_RED / TEAM_BLUE): a point or a route
 	// (-1 both = the map's own spawns), and who's been seen in the game.
 	int  respawnPt[3], respawnRt[3], respawnTurn[3];
+	qboolean respawnByAction[3];      // a "respawn" action has set it: that wins over a spawn override
+	// Spawn overrides: a side spawns in an area instead of the map's spawns -
+	// at clear spots found in it as the scenario starts (Holo_FindSpawnSpots).
+	struct { int team; vec3_t org; float radius; } spawnZones[2];
+	int  numSpawnZones;
+	vec3_t spawnSpots[3][20];
+	float spawnYaw[3][20];
+	int  numSpawnSpots[3];
 	int  props[128];                  // props and items placed (entity numbers), taken away at the end
 	int  numProps;
 	// What the scenario has from its start (placed in the editor): props,
@@ -2402,6 +2410,16 @@ static qboolean Holo_Load(const char* file, char* err, size_t errSize)
 			}
 		}
 	}
+	cJSON_ArrayForEach(it, cJSON_GetObjectItemCaseSensitive(root, "spawnOverrides")) {
+		if (gHolo.numSpawnZones >= 2) break;
+		const char* team = HtStr(it, "team", "");
+		const int t = !Q_stricmp(team, "team1") ? TEAM_RED : !Q_stricmp(team, "team2") ? TEAM_BLUE : 0;
+		if (!t || (gHolo.numSpawnZones && gHolo.spawnZones[0].team == t)) continue; // one a side
+		auto& z = gHolo.spawnZones[gHolo.numSpawnZones++];
+		z.team = t;
+		HtVec(it, z.org);
+		z.radius = Q_max(64.0f, Q_min(4096.0f, HtNum(it, "radius", 256.0f)));
+	}
 	cJSON_ArrayForEach(it, cJSON_GetObjectItemCaseSensitive(root, "counters")) {
 		if (gHolo.numCounters >= 16) break;
 		Q_strncpyz(gHolo.counterIds[gHolo.numCounters], HtStr(it, "id", ""), sizeof(gHolo.counterIds[0]));
@@ -2751,7 +2769,7 @@ static qboolean Holo_Load(const char* file, char* err, size_t errSize)
 	for (int gi = 0; gi < gHolo.numGroups; gi++) {
 		startsSpawned = (startsSpawned || gHolo.groups[gi].spawnAtStart) ? qtrue : qfalse;
 	}
-	if (!gHolo.numTriggers && !startsSpawned && !gHolo.numPlaced) {
+	if (!gHolo.numTriggers && !startsSpawned && !gHolo.numPlaced && !gHolo.numSpawnZones) {
 		Q_strncpyz(err, "nothing happens in it - no triggers, no group spawns at the start, and nothing placed", errSize);
 		return qfalse;
 	}
@@ -3906,6 +3924,7 @@ static void Holo_RunActions(htTrigger_t* t, client_t* who)
 		case HT_DO_RESPAWN:
 			for (int t = TEAM_RED; t <= TEAM_BLUE; t++) {
 				if (!act->ref || act->ref == t) {
+					gHolo.respawnByAction[t] = qtrue;
 					gHolo.respawnPt[t] = act->spawnPt;
 					gHolo.respawnRt[t] = act->spawnRt;
 					gHolo.respawnTurn[t] = 0;
@@ -5162,6 +5181,94 @@ static void Holo_CheckTriggers(void)
 	gHolo.countdownDone = qfalse; // every trigger waiting for it has had it
 }
 
+// A spawn override's spots: a grid over its circle, each dropped onto the
+// floor as a player-sized box from a little above the area's own floor -
+// kept if it lands on walkable ground, with room for a player, out of water,
+// lava, slime, death fog and sky. Then up to 20, spread out, picked at random
+// from those. Facing the middle of the area.
+static void Holo_FindSpawnSpots(int zi)
+{
+	const auto& z = gHolo.spawnZones[zi];
+	const int t = z.team;
+	static vec3_t cand[1024];
+	int n = 0;
+	const float step = 48.0f, r = Q_max(16.0f, z.radius - 16.0f);
+	const vec3_t mins = { -15.0f, -15.0f, -24.0f }, maxs = { 15.0f, 15.0f, 40.0f };
+	const int solid = CONTENTS_SOLID | CONTENTS_PLAYERCLIP | CONTENTS_BODY | CONTENTS_TERRAIN;
+	const int bad = CONTENTS_LAVA | CONTENTS_SLIME | CONTENTS_WATER | CONTENTS_NODROP;
+	for (float dx = -r; dx <= r && n < (int)ARRAY_LEN(cand); dx += step) {
+		for (float dy = -r; dy <= r && n < (int)ARRAY_LEN(cand); dy += step) {
+			if (dx * dx + dy * dy > r * r) continue;
+			vec3_t start = { z.org[0] + dx, z.org[1] + dy, z.org[2] + 96.0f }, end = { start[0], start[1], z.org[2] - 160.0f };
+			trace_t tr;
+			SV_Trace(&tr, start, mins, maxs, end, ENTITYNUM_NONE, solid, qfalse, 0, 10);
+			if (tr.startsolid || tr.allsolid || tr.fraction >= 1.0f || tr.plane.normal[2] < 0.7f || (tr.surfaceFlags & SURF_SKY)) continue;
+			vec3_t feet = { tr.endpos[0], tr.endpos[1], tr.endpos[2] - 20.0f };
+			if ((SV_PointContents(tr.endpos, ENTITYNUM_NONE) | SV_PointContents(feet, ENTITYNUM_NONE)) & bad) continue;
+			VectorSet(cand[n], tr.endpos[0], tr.endpos[1], tr.endpos[2] - 24.0f); // the floor under it
+			n++;
+		}
+	}
+	// Shuffled, then the first that are far enough from those already taken
+	// (closer together only if the area's too small for 20 far apart).
+	for (int i = n - 1; i > 0; i--) {
+		const int j = Q_irand(0, i);
+		vec3_t tmp;
+		VectorCopy(cand[i], tmp); VectorCopy(cand[j], cand[i]); VectorCopy(tmp, cand[j]);
+	}
+	int got = 0;
+	for (float gap = 72.0f; gap >= 36.0f && got < 20; gap -= 18.0f) {
+		for (int i = 0; i < n && got < 20; i++) {
+			qboolean ok = qtrue;
+			for (int k = 0; k < got && ok; k++) {
+				ok = (Distance(gHolo.spawnSpots[t][k], cand[i]) >= gap) ? qtrue : qfalse;
+			}
+			if (ok) {
+				VectorCopy(cand[i], gHolo.spawnSpots[t][got]);
+				gHolo.spawnYaw[t][got] = RAD2DEG(atan2f(z.org[1] - cand[i][1], z.org[0] - cand[i][0]));
+				got++;
+			}
+		}
+	}
+	gHolo.numSpawnSpots[t] = got;
+	const char* line = va("Holotable: %s: spawn override for %s - %d spots (of %d clear places) in radius %.0f at %.0f %.0f %.0f\n",
+		gHolo.file, t == TEAM_RED ? "team1" : "team2", got, n, z.radius, z.org[0], z.org[1], z.org[2]);
+	Com_Printf("%s", line);
+	if (gLogPrintf) {
+		void* old = GVM_BeginNative();
+		gLogPrintf("%s", line);
+		GVM_EndNative(old);
+	}
+	if (got < 8) {
+		SV_SendServerCommand(NULL, "chat \"^5[Holotable]^3 The %s spawn area has room for only %d - %s.\"\n",
+			gHolo.teamNames[t][0] ? gHolo.teamNames[t] : (t == TEAM_RED ? "team 1" : "team 2"), got,
+			got ? "players share spots" : "they spawn at the map's own spawns");
+	}
+}
+
+// A spot of a side's spawn override for a player: the next in turn that
+// nobody's standing on. qfalse if the side has none (or an action took over).
+static qboolean Holo_SpawnSpot(int t, int self, vec3_t out, float* yaw)
+{
+	const int n = gHolo.numSpawnSpots[t];
+	if (t < TEAM_RED || t > TEAM_BLUE || !n || gHolo.respawnByAction[t]) {
+		return qfalse;
+	}
+	for (int tries = 0; tries < n; tries++) {
+		const int k = gHolo.respawnTurn[t]++ % n;
+		qboolean taken = qfalse;
+		for (int c = 0; c < sv_maxclients->integer && !taken; c++) {
+			taken = (c != self && Holo_PlayerIn(c) && Distance(svs.clients[c].gentity->playerState->origin, gHolo.spawnSpots[t][k]) < 48.0f) ? qtrue : qfalse;
+		}
+		if (!taken || tries == n - 1) {
+			VectorCopy(gHolo.spawnSpots[t][k], out);
+			*yaw = gHolo.spawnYaw[t][k];
+			return qtrue;
+		}
+	}
+	return qfalse;
+}
+
 // Players who've just spawned, on a side whose respawn a scenario moved:
 // to that point (spread round it) or the route's points in turn.
 static void Holo_RespawnFrame(void)
@@ -5176,6 +5283,14 @@ static void Holo_RespawnFrame(void)
 		client_t* cl = &svs.clients[c];
 		const int t = cl->gentity->playerState->persistant[PERS_TEAM];
 		if (t != TEAM_RED && t != TEAM_BLUE) {
+			continue;
+		}
+		vec3_t spot;
+		float yaw = 0.0f;
+		if (gHolo.respawnPt[t] < 0 && gHolo.respawnRt[t] < 0) {
+			if (Holo_SpawnSpot(t, c, spot, &yaw)) {
+				Holo_Teleport(cl, spot, yaw, 0);
+			}
 			continue;
 		}
 		const int k = gHolo.respawnTurn[t]++;
@@ -5283,6 +5398,7 @@ static struct {
 	int mode;
 	int readyAt;           // svs.time to start it (set once the map's back)
 	int giveUpAt;          // svs.time to drop it if the map never comes back
+	qboolean roundOnly;    // waiting on a round restart (map_restart), not a map reload
 } gHoloPending;
 
 static qboolean Holo_Start(client_t* cl, const char* file, const char* label, const char* verb, const char* by = NULL, qboolean extendRound = qtrue);
@@ -5339,6 +5455,31 @@ void SV_HoloMapChange(const char* map)
 	Com_Printf("Holotable: new map - the server's own teams back (%s / %s)\n", Cvar_VariableString("g_siegeTeam1"), Cvar_VariableString("g_siegeTeam2"));
 }
 
+// A scenario that moves where a side spawns: the round restarts first, so
+// everyone starts in the new places; it starts once the new round's up.
+static qboolean Holo_HasSpawnOverride(const cJSON* root)
+{
+	const cJSON* z = root ? cJSON_GetObjectItemCaseSensitive(root, "spawnOverrides") : NULL;
+	return (cJSON_IsArray(z) && cJSON_GetArraySize(z) > 0) ? qtrue : qfalse;
+}
+
+static void Holo_RestartRoundThenStart(client_t* cl, const char* file, const char* label, const char* verb)
+{
+	memset(&gHoloPending, 0, sizeof(gHoloPending));
+	gHoloPending.waiting = qtrue;
+	gHoloPending.roundOnly = qtrue;
+	Q_strncpyz(gHoloPending.file, file, sizeof(gHoloPending.file));
+	Q_strncpyz(gHoloPending.label, label, sizeof(gHoloPending.label));
+	Q_strncpyz(gHoloPending.verb, verb, sizeof(gHoloPending.verb));
+	Q_strncpyz(gHoloPending.who, cl ? cl->name : "", sizeof(gHoloPending.who));
+	gHoloPending.client = cl ? (int)(cl - svs.clients) : -1;
+	gHoloPending.mode = Cvar_VariableIntegerValue("g_Authenticity");
+	gHoloPending.giveUpAt = svs.time + 30000;
+	SV_SendServerCommand(NULL, "chat \"^5[Holotable] ^5%s^7 moves where you spawn - restarting the round now.\"\n", label);
+	Com_Printf("Holotable: restarting the round for %s (spawn override)\n", file);
+	Cbuf_AddText("map_restart 0\n");
+}
+
 static void Holo_Play(client_t* cl, const char* file, const char* label, const char* verb)
 {
 	Holo_PutAwayBackground();
@@ -5356,7 +5497,14 @@ static void Holo_Play(client_t* cl, const char* file, const char* label, const c
 	const qboolean teamsChange = (mode == 4 && (Q_stricmp(teams[0], Cvar_VariableString("g_siegeTeam1"))
 		|| Q_stricmp(teams[1], Cvar_VariableString("g_siegeTeam2")))) ? qtrue : qfalse;
 	if ((mode < 0 || mode == now) && !teamsChange) {
-		Holo_Start(cl, file, label, verb);
+		cJSON* again = Holo_ReadFile(file);
+		const qboolean restart = Holo_HasSpawnOverride(again);
+		cJSON_Delete(again);
+		if (restart) {
+			Holo_RestartRoundThenStart(cl, file, label, verb);
+		} else {
+			Holo_Start(cl, file, label, verb);
+		}
 		return;
 	}
 	if (teamsChange) {
@@ -5480,7 +5628,20 @@ static qboolean Holo_Start(client_t* cl, const char* file, const char* label, co
 		}
 	}
 	Holo_PlaceAll();
+	// Spawn overrides: their spots, and everyone already in on that side moved
+	// to them (the round's just restarted for it - see Holo_Play).
 	Holo_ReadTeamNames();
+	for (int zi = 0; zi < gHolo.numSpawnZones; zi++) {
+		Holo_FindSpawnSpots(zi);
+	}
+	for (int c = 0; c < sv_maxclients->integer && gHolo.numSpawnZones; c++) {
+		if (!Holo_PlayerIn(c)) continue;
+		vec3_t spot;
+		float yaw;
+		if (Holo_SpawnSpot(svs.clients[c].gentity->playerState->persistant[PERS_TEAM], c, spot, &yaw)) {
+			Holo_Teleport(&svs.clients[c], spot, yaw, 0);
+		}
+	}
 	if (gHolo.joinTeam) {
 		// One side only: MBII's team balance would refuse to stack it.
 		Q_strncpyz(gHolo.balanceWas, Cvar_VariableString("g_balance"), sizeof(gHolo.balanceWas));
@@ -5950,6 +6111,16 @@ static qboolean Holo_AutoStart(qboolean extendRound)
 	Q_strncpyz(file, gHoloList[pick].file, sizeof(file));
 	Q_strncpyz(label, gHoloList[pick].name, sizeof(label));
 	Holo_PutAwayBackground();
+	if (extendRound) {
+		// Mid-round (the timer): one that moves spawns restarts the round first.
+		cJSON* root = Holo_ReadFile(file);
+		const qboolean restart = Holo_HasSpawnOverride(root);
+		cJSON_Delete(root);
+		if (restart) {
+			Holo_RestartRoundThenStart(NULL, file, label, "starts");
+			return qtrue;
+		}
+	}
 	if (!Holo_Start(NULL, file, label, "starts", "The Holotable", extendRound)) {
 		return qfalse;
 	}
@@ -6161,7 +6332,8 @@ void SV_SocialEnsureNpcFiles(void)
 void SV_SocialGameInit(void)
 {
 	if (gHoloPending.waiting && !gHoloPending.readyAt) {
-		gHoloPending.readyAt = svs.time + 8000; // players reloading the map first
+		// Players reloading the map first; a round restart keeps them in.
+		gHoloPending.readyAt = svs.time + (gHoloPending.roundOnly ? 1500 : 8000);
 	}
 	// A new round or map frees every entity, scenarios included (one may
 	// start again once the round is under way: Holo_AutoRoundFrame).
