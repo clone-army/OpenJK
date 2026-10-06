@@ -338,6 +338,7 @@ if(BuildMPEngine OR BuildMPDed)
 		"${MPDir}/server/sv_bot.cpp"
 		"${MPDir}/server/sv_ccmds.cpp"
 		"${MPDir}/server/sv_smod.cpp"		
+		"${MPDir}/server/nxrp/nxrp_base.cpp"
 		"${MPDir}/server/sv_challenge.cpp"
 		"${MPDir}/server/sv_client.cpp"
 		"${MPDir}/server/shared_ledger.cpp"

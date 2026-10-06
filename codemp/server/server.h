@@ -616,6 +616,8 @@ void SV_SpinForceGiveWin(client_t* cl, int winIndex);
 void SV_EconomyFrame(void);
 void SV_EconomyRoundRestart(void);
 void SV_GunrayCheckFrame(void);
+// NXRP custom chat handler
+qboolean SV_Nxrp_HandleChat( client_t *cl, const char *commandName, const char *chatCursor );
 
 // sv_guidban.cpp
 void SV_GuidBanInit( void );

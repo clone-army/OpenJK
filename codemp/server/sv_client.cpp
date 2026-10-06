@@ -2454,6 +2454,12 @@ static qboolean SV_HandleEconomyChatCommand( client_t *cl ) {
 		return qtrue;
 	}
 
+	// Allow NXRP scripts to intercept economy chat commands (e.g., !hello)
+	extern qboolean SV_Nxrp_HandleChat( client_t *cl, const char *commandName, const char *chatCursor );
+	if ( SV_Nxrp_HandleChat( cl, commandName, chatCursor ) ) {
+		return qtrue;
+	}
+
 	if ( !SV_EconomyEnabled() &&
 		( !Q_stricmp( commandName, "balance" ) ||
 		  !Q_stricmp( commandName, "buy" ) ||
