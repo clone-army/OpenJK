@@ -622,6 +622,9 @@ void SV_GuidBanInit( void );
 void SV_GuidBanFrame( void );
 qboolean SV_GuidBanned( const char *userinfo, const char *ip );
 void SV_ConnLog( const char *event, int slot, const char *ip, const char *guid, const char *name, const char *oldName );
+void SV_SharedLog( const char *file, const char *fields );
+void SV_VehicleGuardFrame( void );
+void SV_VehicleGuardClient( client_t *cl );
 void SV_EconomyPersistCredits( client_t *cl );
 
 //
