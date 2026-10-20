@@ -2248,7 +2248,8 @@ static qboolean SV_ChatFloodCheck( client_t *cl ) {
 // no added benefit once the pick is already blocked.
 // Siege classes that break the server, by class token (the "sc" key a pick
 // sends and CS_PLAYERS carries), with a name for the messages. Nute Gunray
-// crashes it; R2-D2 (h5_AstroR2, Legends) is broken too. socialOnly ones
+// crashes it; R2-D2 (h5_AstroR2, Legends) and Palpatine (h7_Palp) are
+// broken too. socialOnly ones
 // are only blocked on social servers (g_socialMode).
 static const struct { const char *cls; const char *name; qboolean socialOnly; } kBlockedClasses[] = {
 	{ "v7_NuteG",     "Nute Gunray",    qfalse },
@@ -2259,7 +2260,7 @@ static const struct { const char *cls; const char *name; qboolean socialOnly; } 
 	{ "v7_Veers",     "Veers",          qtrue },
 	{ "v7_Enoch",     "Captain Enoch",  qtrue },
 	{ "h7_RebEngie",  "Rebel Engineer", qtrue },
-	{ "h7_Palp",      "Palpatine",      qtrue },
+	{ "h7_Palp",      "Palpatine",      qfalse },
 };
 
 static const char *SV_BlockedClassName( const char *cls ) {
