@@ -2259,6 +2259,7 @@ static const struct { const char *cls; const char *name; qboolean socialOnly; } 
 	{ "v7_Veers",     "Veers",          qtrue },
 	{ "v7_Enoch",     "Captain Enoch",  qtrue },
 	{ "h7_RebEngie",  "Rebel Engineer", qtrue },
+	{ "h7_Palp",      "Palpatine",      qtrue },
 };
 
 static const char *SV_BlockedClassName( const char *cls ) {
