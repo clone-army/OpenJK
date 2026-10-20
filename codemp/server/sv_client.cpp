@@ -359,6 +359,10 @@ gotnewcl:
 
 	SV_UserinfoChanged( newcl );
 
+	if ( from.type != NA_BOT ) {
+		SV_ConnLog( "connect", clientNum, ip, Info_ValueForKey( newcl->userinfo, "ja_guid" ), newcl->name, NULL );
+	}
+
 	// send the connect packet to the client
 	NET_OutOfBandPrint( NS_SERVER, from, "connectResponse" );
 
@@ -1174,8 +1178,12 @@ void SV_UserinfoChanged( client_t *cl ) {
 	char	*val=NULL, *ip=NULL;
 	int		i=0, len=0;
 
-	// name for C code
-	Q_strncpyz( cl->name, Info_ValueForKey (cl->userinfo, "name"), sizeof(cl->name) );
+	// name for C code - a player in the game changing it goes in connections.log
+	const char *newName = Info_ValueForKey( cl->userinfo, "name" );
+	if ( cl->state >= CS_CONNECTED && cl->name[0] && strcmp( cl->name, newName ) && cl->netchan.remoteAddress.type != NA_BOT ) {
+		SV_ConnLog( "rename", (int)( cl - svs.clients ), NET_AdrToString( cl->netchan.remoteAddress ), Info_ValueForKey( cl->userinfo, "ja_guid" ), newName, cl->name );
+	}
+	Q_strncpyz( cl->name, newName, sizeof(cl->name) );
 
 	// rate command
 
