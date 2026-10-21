@@ -38,6 +38,11 @@ botlib_export_t	*botlib_export;
 static gameExport_t *ge; // game export table
 static vm_t *gvm; // game vm, valid for legacy and new api
 
+// for sv_vehguard.cpp, which reads the game's anim table
+void *SV_GameDllHandle( void ) {
+	return gvm ? gvm->dllHandle : NULL;
+}
+
 //
 // game vmMain calls
 //
@@ -1571,6 +1576,7 @@ static void SV_G2API_SetGhoul2ModelIndexes( void *ghoul2, qhandle_t *modelList, 
 
 static qboolean SV_G2API_HaveWeGhoul2Models( void *ghoul2) {
 	if ( !ghoul2 ) return qfalse;
+	if ( SV_VehicleGuardGhoul2( "havemodels", ghoul2 ) ) return qfalse;
 	return re->G2API_HaveWeGhoul2Models( *((CGhoul2Info_v *)ghoul2) );
 }
 
@@ -1695,6 +1701,8 @@ static int SV_G2API_Ghoul2Size( void *ghlInfo ) {
 
 static int SV_G2API_AddBolt( void *ghoul2, int modelIndex, const char *boneName ) {
 	if ( !ghoul2 ) return -1;
+	if ( SV_VehicleGuardGhoul2( "addbolt", ghoul2 ) ) return -1;
+	SV_VehicleGuardBolt( ghoul2 );
 	return re->G2API_AddBolt( *((CGhoul2Info_v *)ghoul2), modelIndex, boneName );
 }
 

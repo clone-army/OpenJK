@@ -625,6 +625,9 @@ void SV_ConnLog( const char *event, int slot, const char *ip, const char *guid, 
 void SV_SharedLog( const char *file, const char *fields );
 void SV_VehicleGuardFrame( void );
 void SV_VehicleGuardClient( client_t *cl );
+void SV_VehicleGuardBolt( void *ghoul2 );
+qboolean SV_VehicleGuardGhoul2( const char *where, void *ghoul2 );
+void *SV_GameDllHandle( void );
 void SV_EconomyPersistCredits( client_t *cl );
 
 //
